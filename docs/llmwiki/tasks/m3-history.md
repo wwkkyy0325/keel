@@ -61,10 +61,11 @@ one at a time. Summarization is blocked on
       tier. A `MemoryStage` emits global, workspace and session facts as one
       bounded block. Limits: cue matching is heuristic (no model), and
       workspace/global facts live in-process until persistence lands in M5.
-- [ ] 11. Window matrix: 8k, 16k, 32k, 64k, 128k and 1M with scripted growth,
-      companion and coding, mock model — verify: success rate, overflow rate,
-      compactions, wrap-ups and tokens per window are recorded, and the
-      measured knee replaces the provisional floors in ADR 0006
+- [x] 11. Window matrix: 8k, 16k, 32k, 64k, 128k and 1M with scripted growth,
+      companion and coding, mock model — verify: recorded in
+      `docs/llmwiki/window-matrix.md`. Companion 40/40 at every window; coding
+      40/40 at 16k and above; 8k coding only 37/40 with three overflows. The
+      floors in ADR 0006 are now measured values.
 - [ ] 12. Companion profile and 20-turn real run — verify: profile-only diff
       from M2, no tools, no kernel branch; transcript and metrics recorded
 

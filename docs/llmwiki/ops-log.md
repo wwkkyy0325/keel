@@ -542,3 +542,13 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
   stores; `SegmentChange.forgotten` feeds `FactForgotten`.
 - `MemoryStage` caps itself at a quarter of the allowance.
 - Verification: 191 tests; fmt and clippy clean.
+
+### M3 window matrix
+
+- Added a deterministic growth model and a matrix test over six windows. The
+  coding variant also runs one echo call per turn so history carries tools.
+- Measured: companion 40/40 at 8k and above; coding 40/40 at 16k and above;
+  8k coding 37/40 with three `ContextOverflow` turns and 35 wrap-ups.
+- Wrote `docs/llmwiki/window-matrix.md` and updated ADR 0006 and the profile
+  spec to cite the measured floors.
+- Verification: 192 tests; fmt and clippy clean.

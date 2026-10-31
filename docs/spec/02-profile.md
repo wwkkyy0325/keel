@@ -189,8 +189,8 @@ New questions require an ADR and a second consumer.
 - `budget_tokens` must be positive and, together with `max_output_tokens`,
   must not exceed `context_window`. It is the working-set target, so it may be
   far below the window.
-- A coding profile below 16k or a no-tool profile below 8k is rejected until
-  the window-matrix test in ADR 0006 moves those floors.
+- A coding profile below 16k or a no-tool profile below 8k is rejected;
+  those floors are measured in `docs/llmwiki/window-matrix.md`.
 - `thinking_budget` must be within the provider's supported range.
 - `verification.mode = tests` requires a test runner tool.
 - `permission.level` is `workspace_auto` or `full_auto`; it cannot be escalated

@@ -509,3 +509,13 @@
   more than a quarter of the context allowance.
 - Verification: 191 tests; tier placement, global gating, contradiction
   demotion and explicit forgetting are covered.
+
+### M3 window matrix
+
+- Added `crates/keel-runtime/tests/window_matrix.rs`: 40 deterministic turns at
+  8k, 16k, 32k, 64k, 128k and 1M for a no-tool and a tool-using profile, with
+  digests, records, wrap-ups and overflow counted.
+- Results: companion 40/40 at every window; coding 40/40 at 16k and above; 8k
+  coding only 37/40 with three overflows and 35 wrap-ups.
+- Recorded the run in `docs/llmwiki/window-matrix.md`; the ADR 0006 floors of
+  16k coding and 8k no-tool are now measured, not provisional.

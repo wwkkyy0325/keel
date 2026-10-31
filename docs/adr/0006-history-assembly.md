@@ -168,8 +168,10 @@ to `max_output_tokens`, current input about 200 tokens. That leaves roughly:
 | 32k and above | comfortable for coding | — |
 
 Below the floor the config is rejected with a clear error rather than running
-and thrashing. These numbers are provisional; the window-matrix test in the M3
-task doc moves them with evidence. The output reserve is a cap, not a constant
+and thrashing. These numbers are measured: a 40-turn scripted run on
+2026-11-03 (`docs/llmwiki/window-matrix.md`) gave 40/40 for a no-tool profile
+at 8k, 40/40 for a tool-using profile at 16k, and only 37/40 with three
+overflows at 8k with tools. The output reserve is a cap, not a constant
 charge: a tool-call turn reserves less than a final-answer turn.
 
 ### 4. Compression ladder and triggers
