@@ -119,3 +119,17 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 - Verification: runtime test checks the event and outcome and confirms the
   turn still completes; CLI smoke test shows the notice after the turn output.
 - Commit: `refactor: attach secret notice to the turn`.
+
+### M2 — Acceptance verifier (compute and file hash)
+
+- Added the acceptance checklist types to `keel-core` and
+  `AcceptanceVerifier` to `keel-runtime`.
+- Compute verification uses a bounded arithmetic parser; file hashes use
+  SHA-256 over a workspace-relative path and refuse traversal.
+- Command, test and human items return `Unverified` until their execution path
+  exists.
+- Recorded deferred context/profile/pipeline work with triggers in
+  `docs/llmwiki/backlog.md`.
+- Verification: `cargo test --workspace` (112 tests), clippy, fmt and
+  `cargo deny check`.
+- Commit: `feat: add acceptance verifier for compute and file hashes`.

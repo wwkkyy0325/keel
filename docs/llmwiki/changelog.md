@@ -90,3 +90,16 @@
 - The event log still redacts the input and final text.
 - Verification: runtime test checks the event and outcome and confirms the
   turn still completes; CLI smoke test shows the notice after the turn output.
+
+### Acceptance verifier
+
+- Added `AcceptanceItem`, `VerifySpec`, `Evidence` and `VerificationReport` to
+  `keel-core`; the model cannot construct passing evidence.
+- Added `AcceptanceVerifier` with real compute and file-hash checks. Compute
+  uses a bounded arithmetic parser; file hashes use SHA-256 over a
+  workspace-relative path.
+- Command, test and human items return `Unverified` until the structured shell
+  and confirmation paths land.
+- Recorded deferred context, profile and pipeline-registry work in
+  `docs/llmwiki/backlog.md` with triggers.
+- Verification: 112 tests; clippy, fmt and `cargo deny check` pass.

@@ -17,6 +17,7 @@ pub mod policy;
 pub mod secret;
 pub mod state;
 pub mod tool;
+pub mod verification;
 
 pub use cancel::CancelToken;
 pub use context::{estimate_tokens, BuildCtx, ContextStage, Fragment};
@@ -45,3 +46,4 @@ pub use tool::{
     ArgValue, ParamKind, ParamSpec, RiskLevel, Tool, ToolArgs, ToolCtx, ToolOutcome, ToolResult,
     ToolSchema,
 };
+pub use verification::{AcceptanceItem, Evidence, EvidenceOutcome, VerificationReport, VerifySpec};

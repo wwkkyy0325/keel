@@ -2,6 +2,7 @@
 //! dispatch, context assembly, policy resolution, minimal permissions and the
 //! mock model used by M1.
 
+mod calculator;
 pub mod context;
 pub mod dispatch;
 pub mod driver;
@@ -15,6 +16,7 @@ pub mod profile;
 pub mod registry;
 pub mod tools;
 pub mod trash;
+pub mod verification;
 
 pub use context::{BuiltContext, ContextBuilder, LatestStage, SystemStage};
 pub use dispatch::ToolDispatcher;
@@ -29,3 +31,4 @@ pub use profile::{from_profile_str, load_profile, validate_config};
 pub use registry::ToolRegistry;
 pub use tools::{EchoTool, ReadFileTool, WriteFileTool};
 pub use trash::{LocalTrashStore, TrashEntry, TrashStore};
+pub use verification::AcceptanceVerifier;
