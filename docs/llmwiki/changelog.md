@@ -174,3 +174,9 @@
 - A key was pasted into the tracked `.env.example`. Moved it to the gitignored
   `.env`, restored the example to a placeholder, and advised rotation. No key
   is present in the tracked files.
+
+### Real-model turn limits
+
+- Raised the default turn budget to 12 model calls, 30 s per tool and 180 s per
+  turn so a real provider can finish a coding round without a local timeout.
+- Verification: 123 tests, clippy, fmt and `cargo deny check`.

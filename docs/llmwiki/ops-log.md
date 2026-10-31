@@ -205,3 +205,9 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 - A key was pasted into tracked `.env.example`. Moved it to gitignored `.env`,
   restored the example placeholder, and advised rotation.
 - No key is present in tracked files; `.env` remains ignored.
+
+### Real-model turn limits
+
+- Raised defaults to 12 model calls, 30 s tool timeout and 180 s turn timeout.
+- Verification: 123 tests; clippy, fmt and `cargo deny check`.
+- Commit: `fix: raise turn limits for real model runs`.

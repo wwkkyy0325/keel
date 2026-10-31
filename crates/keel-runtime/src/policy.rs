@@ -30,10 +30,10 @@ impl RuntimeConfig {
     /// questions; the host owns timeouts and call budgets.
     pub fn limits(&self) -> TurnLimits {
         TurnLimits {
-            max_model_calls: 8,
+            max_model_calls: 12,
             max_tool_calls: self.tool_budget,
-            tool_timeout: Duration::from_secs(5),
-            turn_timeout: Duration::from_secs(30),
+            tool_timeout: Duration::from_secs(30),
+            turn_timeout: Duration::from_secs(180),
         }
     }
 }
