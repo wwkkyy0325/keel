@@ -15,6 +15,7 @@ license = "Apache-2.0"
 
 [workspace.dependencies]
 async-trait = "0.1"
+dotenvy = "0.15"
 keel-core = { version = "0.1.0", path = "crates/keel-core" }
 keel-model-openai = { version = "0.1.0", path = "crates/keel-model-openai" }
 keel-runtime = { version = "0.1.0", path = "crates/keel-runtime" }

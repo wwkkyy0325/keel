@@ -19,6 +19,8 @@ pub struct RuntimeConfig {
     pub memory: MemoryPolicy,
     pub permission_level: keel_core::PermissionLevel,
     pub model_route: ModelRoute,
+    pub model_base_url: Option<String>,
+    pub api_key_env: Option<String>,
     pub max_output_tokens: u32,
     pub interaction: InteractionPolicy,
 }

@@ -44,6 +44,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             provider: "mock".to_owned(),
             model: "mock-benchmark".to_owned(),
         },
+        model_base_url: None,
+        api_key_env: None,
         max_output_tokens: 256,
         interaction: InteractionPolicy::default(),
     };

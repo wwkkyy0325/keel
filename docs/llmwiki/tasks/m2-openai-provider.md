@@ -4,7 +4,7 @@
 
 - [x] 1. Wire mapping: request JSON, message/tool mapping, tool-call accumulator, interaction control tool — verify: `cargo test -p keel-model-openai`
 - [x] 2. Streaming HTTP provider: SSE parsing, error mapping, cancellation — verify: local HTTP server tests
-- [ ] 3. Host wiring: profile selects mock or OpenAI-compatible provider — verify: CLI smoke test
+- [x] 3. Host wiring: profile selects mock or OpenAI-compatible provider — verify: CLI smoke test
 - [ ] 4. Commit each step separately
 
 ## Decisions
@@ -28,4 +28,8 @@
 - Workspace tests, clippy and `cargo deny check` pass.
 - The provider handles text deltas, reasoning deltas, accumulated tool calls,
   control-tool interactions, usage, HTTP errors, stream cuts and cancellation.
-- Host wiring is still pending: the CLI always uses the mock provider.
+- Host wiring: the CLI loads `.env`, selects mock or `openai-compatible` from
+  the profile, and reads the key from `api_key_env`. Missing keys point to
+  `.env.example` and never enter the chat.
+- `variants/coding/profile.openai.toml` is the runnable OpenAI-compatible
+  profile; the mock profile remains network-free.

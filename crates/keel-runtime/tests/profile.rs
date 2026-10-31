@@ -62,6 +62,25 @@ fn coding_profile_loads() {
 }
 
 #[test]
+fn openai_profile_loads_and_validates() {
+    let config = load_profile(&repo_root().join("variants/coding/profile.openai.toml")).unwrap();
+    assert_eq!(config.profile_name, "coding-openai");
+    assert_eq!(config.model_route.provider, "openai-compatible");
+    assert_eq!(config.model_route.model, "gpt-4o-mini");
+    assert_eq!(
+        config.model_base_url.as_deref(),
+        Some("https://api.openai.com/v1")
+    );
+    assert_eq!(config.api_key_env.as_deref(), Some("OPENAI_API_KEY"));
+    validate_config(
+        &config,
+        &common::standard_registry(&repo_root()),
+        &common::standard_context(),
+    )
+    .unwrap();
+}
+
+#[test]
 fn companion_profile_loads() {
     let config = load_profile(&repo_root().join("variants/companion/profile.toml")).unwrap();
     assert_eq!(config.profile_name, "companion");

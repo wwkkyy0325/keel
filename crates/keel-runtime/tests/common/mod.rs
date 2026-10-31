@@ -46,6 +46,8 @@ pub fn runtime_config(
             provider: "mock".to_owned(),
             model: "mock-test".to_owned(),
         },
+        model_base_url: None,
+        api_key_env: None,
         max_output_tokens: 1024,
         interaction: InteractionPolicy::default(),
     }

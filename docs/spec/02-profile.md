@@ -24,17 +24,11 @@ extends = "default"
 
 [model]
 provider = "openai-compatible"
-route = "coding"
+model = "gpt-4o-mini"
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"   # name only; never the key itself
 thinking_budget = 1024
-temperature = 0.2
 max_output_tokens = 4096
-
-[model.roles]
-main = "coding"
-compact = "cheap"
-subagent = "coding"
-verifier = "coding"
-commit = "coding"
 
 [context]
 stages = ["system", "best_practices", "task_state", "memory", "history", "latest"]
@@ -75,6 +69,10 @@ export = "local-jsonl"
 system = "prompts/coding.md"
 style = "direct"
 ```
+
+M1/M2 parse the subset used by the runnable files under `variants/`; unknown
+fields are errors. Profile inheritance, role-specific routes, memory and
+telemetry sections are target schema and arrive with later milestones.
 
 ## Permissions, sandbox and interactions
 

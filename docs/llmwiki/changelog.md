@@ -63,3 +63,11 @@
 - The CLI refuses secret-like input before the model call and directs the user
   to `.env.example`; the event log redacts detected secrets.
 - Added `.env.example`; `.env` stays gitignored.
+
+### Host provider selection
+
+- Profiles can select `mock` or `openai-compatible` with `base_url` and an
+  `api_key_env` name.
+- The CLI loads `.env` and reads the key from the environment; missing keys
+  point to `.env.example`.
+- Added `variants/coding/profile.openai.toml`.

@@ -63,6 +63,17 @@ cargo run -p keel-cli -- --profile variants/companion/profile.toml --input "hell
 The M1 mock model makes no network calls. The coding profile exercises one
 `echo` tool call; the companion profile exercises the no-tools policy.
 
+For a real OpenAI-compatible endpoint:
+
+```bash
+cp .env.example .env
+# edit .env and set OPENAI_API_KEY
+cargo run -p keel-cli -- --profile variants/coding/profile.openai.toml --input "hello"
+```
+
+The CLI loads `.env` automatically. Credentials stay in `.env` or the OS
+keyring, never in the chat or a profile.
+
 M1 uses two permission levels: `workspace_auto` is the logical sandbox and
 `full_auto` removes the workspace boundary while keeping the hard deny list.
 Deletion is recoverable through the trash; interactions (questions, plan

@@ -2,13 +2,37 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use keel_core::{detect_secret, ArgValue, CancelToken, KernelError, Policy, ToolArgs};
+use async_trait::async_trait;
+use keel_core::{
+    detect_secret, ArgValue, CancelToken, KernelError, ModelError, ModelProvider, ModelRequest,
+    ModelStream, Policy, ToolArgs,
+};
+use keel_model_openai::{OpenAiConfig, OpenAiProvider};
 use keel_runtime::{
     load_profile, validate_config, ContextBuilder, DeferAllInteractionPort, EchoTool, EventLog,
     InteractionBroker, LatestStage, LocalTrashStore, MockModel, MockStep, PermissionEngine,
     ReadFileTool, RuntimeConfig, SystemStage, ToolRegistry, TurnDriver, TurnDriverConfig,
     WriteFileTool,
 };
+
+enum HostModel {
+    Mock(MockModel),
+    OpenAi(OpenAiProvider),
+}
+
+#[async_trait]
+impl ModelProvider for HostModel {
+    async fn stream(
+        &self,
+        request: ModelRequest,
+        cancel: &CancelToken,
+    ) -> Result<ModelStream, ModelError> {
+        match self {
+            Self::Mock(model) => model.stream(request, cancel).await,
+            Self::OpenAi(model) => model.stream(request, cancel).await,
+        }
+    }
+}
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -22,6 +46,7 @@ async fn main() -> ExitCode {
 }
 
 async fn run() -> Result<(), KernelError> {
+    dotenvy::dotenv().ok();
     let (profile_path, input) = parse_args()?;
     reject_secret_input(&input)?;
     let config = load_profile(&profile_path)?;
@@ -51,7 +76,7 @@ async fn run() -> Result<(), KernelError> {
         config.interaction,
         events.clone(),
     ));
-    let model = MockModel::new(script_for(&config, &input));
+    let model = build_model(&config, &input)?;
     let policy: Arc<dyn Policy> = Arc::new(config.clone());
     let driver = TurnDriver::new(
         model,
@@ -83,6 +108,38 @@ async fn run() -> Result<(), KernelError> {
             .map(|error| error.to_string())
             .unwrap_or_else(|| format!("turn ended in {}", outcome.state));
         Err(KernelError::Internal { message })
+    }
+}
+
+fn build_model(config: &RuntimeConfig, input: &str) -> Result<HostModel, KernelError> {
+    match config.model_route.provider.as_str() {
+        "mock" => Ok(HostModel::Mock(MockModel::new(script_for(config, input)))),
+        "openai" | "openai-compatible" => {
+            let base_url = config
+                .model_base_url
+                .clone()
+                .unwrap_or_else(|| "https://api.openai.com/v1".to_owned());
+            let api_key_env = config
+                .api_key_env
+                .clone()
+                .unwrap_or_else(|| "OPENAI_API_KEY".to_owned());
+            let api_key = std::env::var(&api_key_env).map_err(|_| {
+                invalid_config(format!(
+                    "{api_key_env} is not set. Copy .env.example to .env and fill it locally; never paste keys into the chat."
+                ))
+            })?;
+            if api_key.trim().is_empty() {
+                return Err(invalid_config(format!("{api_key_env} is empty")));
+            }
+            let provider = OpenAiProvider::new(OpenAiConfig {
+                base_url,
+                api_key,
+                model: config.model_route.model.clone(),
+            })
+            .map_err(|error| invalid_config(error.to_string()))?;
+            Ok(HostModel::OpenAi(provider))
+        }
+        other => Err(invalid_config(format!("unknown model provider `{other}`"))),
     }
 }
 

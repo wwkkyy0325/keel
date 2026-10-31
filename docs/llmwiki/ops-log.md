@@ -54,6 +54,8 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 - `feat: implement M1 kernel with permissions and interactions`
 - `feat: add OpenAI-compatible wire mapping`
 - `feat: add streaming OpenAI-compatible provider`
+- `feat: refuse and redact secrets`
+- `feat: select model provider from profile`
 
 ### M2 — OpenAI-compatible wire mapping
 
@@ -86,3 +88,14 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 - The event log redacts `TurnStarted` input and `TurnFinished` text before
   append.
 - Added `.env.example`; `.env` remains gitignored.
+
+### M2 — Host provider selection
+
+- Added `base_url` and `api_key_env` to the profile model section and
+  `RuntimeConfig`.
+- CLI loads `.env`, selects mock or `openai-compatible`, and reads the key from
+  the named environment variable.
+- Added `variants/coding/profile.openai.toml`; the mock profile remains the
+  network-free default.
+- Verification: profile tests, CLI mock smoke test, workspace tests, clippy and
+  `cargo deny check`.
