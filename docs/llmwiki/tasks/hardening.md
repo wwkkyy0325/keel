@@ -14,7 +14,9 @@ failures observable before memory and compaction change the system.
 - [x] 4. Public permissive cases (HumanEval+/MBPP+) as code-correctness smoke
       tests, downloaded locally and never vendored — verify: importer and
       provenance (local-file path tested; HumanEval+ 20/20 and MBPP+ 19/20
-      through the local proxy)
+      through the local proxy; 20 + 20 is the regression baseline. A 50 + 50
+      expansion is deferred for cost, and the suite stops at 300k tokens by
+      default.)
 - [x] 5. Fault injection: provider 429/500 retry path, stream cut, model-call
       bound, tool repeat, verification failure, context overflow — verify:
       provider and driver tests

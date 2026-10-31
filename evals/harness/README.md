@@ -30,6 +30,10 @@ python evals/harness/run_suite.py --profile variants/coding/profile.toml
 `--profile` is useful for a network-free mock smoke run; those cases will not
 solve, so use it only to exercise the harness.
 
+The suite defaults to a **300,000 token** stop. It checks cumulative usage
+before each case, so a run cannot silently spend without bound. Set
+`--max-total-tokens N` for a different cap, or `0` to disable it.
+
 ## Datasets
 
 Downloaded public datasets belong in a gitignored cache, not in `setup/`.

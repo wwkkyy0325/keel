@@ -46,3 +46,6 @@ This is a genuine ambiguity in the public prompt, not an importer failure.
 - One model seed and one provider.
 - The datasets server required a local proxy; the download path was exercised
   through it.
+- **This 20 + 20 set is the regression baseline.** Expanding to 50 + 50 was
+  deferred for cost. The suite now stops at 300,000 cumulative tokens by
+  default.

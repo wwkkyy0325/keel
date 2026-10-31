@@ -293,3 +293,5 @@
   helper) and generated a setup skeleton from the canonical signature.
 - Fixed suite filters to compare POSIX paths on Windows.
 - Report: `evals/reports/2026-11-02-public-suite.md`.
+- Added a 300,000-token suite stop; 20 + 20 is the regression baseline and a
+  50 + 50 expansion was deferred for cost.

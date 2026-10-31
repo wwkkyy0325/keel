@@ -320,3 +320,6 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
   filtering.
 - Report: `evals/reports/2026-11-02-public-suite.md`.
 - Commit: `fix: select MBPP entry points and add public suite report`.
+- Added a 300,000-token suite stop; 20 + 20 is the regression baseline and a
+  50 + 50 expansion was deferred for cost.
+- Commit: `feat: cap eval suite spend`.
