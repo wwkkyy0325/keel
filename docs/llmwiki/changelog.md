@@ -663,6 +663,17 @@
 - Verification: 230 tests; fmt and clippy clean. Arm results are tracked in
   `docs/llmwiki/tasks/ablation.md`.
 
+### Structured memo fallback
+
+- When the model summary fails or times out, the kernel now writes a
+  deterministic memo from the structured records, keeps the previous memo text
+  and covers only the records that fit the budget. Uncovered records stay
+  visible. `SummaryUpdated.fallback` reports the path.
+- The full-15 pilot showed `summarizer returned no text`, which left no memo
+  and therefore no recall candidates; the fallback keeps the memory pipeline
+  alive when the model call fails.
+- Verification: 232 tests; fmt and clippy clean.
+
 ### Recall budget and mid-turn compaction
 
 - Recall now takes a quarter of the remaining history allowance (minimum 400
