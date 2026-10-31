@@ -28,9 +28,17 @@ editing surface.
 - [x] Novel variant uses `task_state` and `todo`; the project seeds 50 chapter
       tasks and shortens chapters to 1,800-2,200 characters — verify: prompts
       and todos regenerate from the chapter table
+- [x] Two-task tool smoke: the model marked both host tasks completed and the
+      list closed itself — verify: `tasks: closed=completed completed=2
+      failed=0 total=2`
 - [ ] Ten-chapter smoke: no chapter drift, no gap list in the state file, all
-      ten chapters present — verify: run and inspect the log, validator and
-      task summary
+      ten chapters present — result: the todo fixed the drift (state last=2,
+      no gap list; tasks stayed `done=2`), but the model stopped writing after
+      chapter 2. The first run produced five chapters with four context
+      overflows; the bounded-tool run produced two chapters and one overflow.
+      Turns 3-10 were status reports, not `write_file` calls. Next: a
+      chapter-only prompt that reads state only, forbids planning/gap review,
+      and writes one chapter; retry three chapters before the full run.
 
 ## Verification commands
 
