@@ -83,9 +83,10 @@ domain tools. See ADR 0002 and ADR 0003.
 ## Secrets
 
 Keys never go into the chat or the repository. Put credentials in `.env`
-(gitignored; copy `.env.example`) or the OS keyring. The CLI refuses input that
-looks like a key and the event log redacts detected secrets. If a real key was
-ever pasted into a chat, rotate it.
+(gitignored; copy `.env.example`) or the OS keyring. The CLI warns when input
+looks like a key but does not block it, since test keys and hashes trigger the
+same patterns; the event log redacts detected secrets. If a real key was ever
+pasted into a chat, rotate it.
 
 ## Verification
 

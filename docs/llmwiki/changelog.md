@@ -71,3 +71,13 @@
 - The CLI loads `.env` and reads the key from the environment; missing keys
   point to `.env.example`.
 - Added `variants/coding/profile.openai.toml`.
+
+### Secret input policy
+
+- Replaced the hard refusal of secret-like input with a warning. Test keys,
+  hashes and config examples trigger the same patterns, so blocking them made
+  the CLI unusable.
+- The event log still redacts detected secrets before append; `.env` remains
+  the supported credential path.
+- Verification: CLI test covers a provider-style key, ordinary text and a
+  SHA-256 hash; workspace tests, clippy and `cargo deny check` pass.

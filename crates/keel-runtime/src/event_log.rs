@@ -61,8 +61,7 @@ impl EventLog {
 }
 
 /// The event log is an audit record and may be exported. Redact detected
-/// secrets before they reach disk; the host still refuses secret-bearing input
-/// before the model call.
+/// secrets before they reach disk; the host warns but does not block input.
 fn redact_event(event: Event) -> Event {
     match event {
         Event::TurnStarted { turn_id, input } => Event::TurnStarted {

@@ -99,3 +99,13 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
   network-free default.
 - Verification: profile tests, CLI mock smoke test, workspace tests, clippy and
   `cargo deny check`.
+
+### Secret input policy
+
+- Changed secret-like input handling from refusal to warning. False positives
+  on test keys, hashes and config examples made refusal unusable.
+- The event log still redacts detected secrets; `.env` remains the credential
+  path.
+- Verification: CLI test covers a provider-style key, ordinary text and a
+  SHA-256 hash; workspace tests, clippy and `cargo deny check`.
+- Commit: `fix: warn on secret-like input instead of blocking`.

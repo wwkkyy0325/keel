@@ -5,7 +5,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use keel_core::{
     detect_secret, ArgValue, CancelToken, KernelError, ModelError, ModelProvider, ModelRequest,
-    ModelStream, Policy, ToolArgs,
+    ModelStream, Policy, SecretKind, ToolArgs,
 };
 use keel_model_openai::{OpenAiConfig, OpenAiProvider};
 use keel_runtime::{
@@ -48,7 +48,7 @@ async fn main() -> ExitCode {
 async fn run() -> Result<(), KernelError> {
     dotenvy::dotenv().ok();
     let (profile_path, input) = parse_args()?;
-    reject_secret_input(&input)?;
+    let _ = warn_if_secret_input(&input);
     let config = load_profile(&profile_path)?;
 
     let workspace = std::env::current_dir().map_err(|error| KernelError::Io {
@@ -192,15 +192,16 @@ fn invalid_config(message: impl Into<String>) -> KernelError {
     }
 }
 
-fn reject_secret_input(input: &str) -> Result<(), KernelError> {
-    if let Some(kind) = detect_secret(input) {
-        eprintln!("warning: the input looks like a {} secret.", kind.as_str());
-        eprintln!(
-            "Keys never belong in the chat. Remove it, rotate it if it was real, and put it in .env (see .env.example)."
-        );
-        return Err(invalid_config("secret detected in input"));
-    }
-    Ok(())
+/// Warns about secret-like input but never blocks it. Detectors produce false
+/// positives on test keys, hashes and config examples, so the host leaves the
+/// decision to the user; the event log still redacts before writing.
+fn warn_if_secret_input(input: &str) -> Option<SecretKind> {
+    let kind = detect_secret(input)?;
+    eprintln!(
+        "warning: possible secret detected ({}). Continuing; if it is real, rotate it and keep credentials in .env (see .env.example). The event log redacts detected secrets.",
+        kind.as_str()
+    );
+    Some(kind)
 }
 
 #[cfg(test)]
@@ -208,8 +209,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn secret_like_input_is_refused() {
-        assert!(reject_secret_input("my key sk-1234567890abcdefghij").is_err());
-        assert!(reject_secret_input("please summarize the design").is_ok());
+    fn secret_like_input_warns_but_does_not_block() {
+        assert_eq!(
+            warn_if_secret_input("my key sk-1234567890abcdefghij"),
+            Some(SecretKind::OpenAi)
+        );
+        assert_eq!(warn_if_secret_input("please summarize the design"), None);
+        assert_eq!(
+            warn_if_secret_input(
+                "sha256 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+            ),
+            None
+        );
     }
 }

@@ -150,7 +150,9 @@ domain tool list is unchanged.
   or keyring names, never inline values.
 - The agent never asks the user to paste a key into chat; it points to
   `.env.example` or the keyring.
-- Input detected as a secret is refused before the model call.
+- Input detected as a secret produces a warning and is not blocked. Detection
+  is best-effort and false positives (test keys, hashes, config examples) must
+  not make the host unusable.
 - The event log redacts detected secrets before append.
 - Secrets never appear in code, logs, tests, prompts or git.
 

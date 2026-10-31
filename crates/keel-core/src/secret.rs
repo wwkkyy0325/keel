@@ -31,8 +31,9 @@ impl SecretKind {
     }
 }
 
-/// Detects a likely secret in free text. False positives are acceptable here:
-/// the caller should warn and stop rather than risk sending a key to a model.
+/// Detects a likely secret in free text. False positives are expected: test
+/// keys, hashes and config examples look similar. Callers should warn and
+/// redact rather than block, so the detector stays usable.
 pub fn detect_secret(text: &str) -> Option<SecretKind> {
     if text.contains("-----BEGIN") && text.contains("PRIVATE KEY-----") {
         return Some(SecretKind::PrivateKey);
