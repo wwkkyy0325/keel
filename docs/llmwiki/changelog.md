@@ -663,6 +663,15 @@
 - Verification: 230 tests; fmt and clippy clean. Arm results are tracked in
   `docs/llmwiki/tasks/ablation.md`.
 
+### Interjection contract
+
+- Added ADR 0010: interjections are queued user messages delivered at safe
+  points, not interactions and not cancellations. The host chooses `queue`,
+  `interrupt` or `next_turn`; delivery never splits a tool-call/result pair and
+  never happens during a stream.
+- The contract is fixed now; implementation waits for a host with a mid-turn
+  reader. The line-based CLI already queues between turns through stdin.
+
 ### Derived current task
 
 - `TodoList::current` returns the explicit `in_progress` item or the first
