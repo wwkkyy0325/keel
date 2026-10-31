@@ -168,6 +168,39 @@ fallback is safer but adds records to an already tight context.
 The fixes are validated on the slices. The full 50-turn rerun is still
 pending; the slices are not a substitute for it.
 
+## Local 26B attempt
+
+The local Gemma 4 26B was run at 32k server context and a 20k working set with
+8k output, using the same per-turn checker and `--stop-on-error`.
+
+- 15-turn slice: turn 1 ended `Error`. The model wrote `ch-001.md` (1,667 CJK)
+  but not `state/continuity.md`; it pasted the state into the answer. The
+  checker failed with `state says chapter 0, but the request is chapter 1`,
+  reprompted twice (7 model calls, 43s), and the host stopped.
+- Micro-slice with an explicit “write state with write_file, do not paste it”
+  instruction: turn 1 passed (chapter and state written); turn 2 ended `Error`
+  with `missing chapters: [2]; requested chapter 2 is missing`. The model
+  marked task 2 completed and put the chapter summary in the answer, but did
+  not write the file. The checker caught it, reprompted, and the host stopped.
+- Resources while loaded: 13.6 GB / 16 GB VRAM and about 0.4 GB free physical
+  memory. The server was stopped after each attempt; the GPU returned to
+  ~837 MiB and about 12 GB free RAM.
+
+What this shows:
+
+- The acceptance and stop-on-error fixes do their job: a missing state or a
+  missing chapter is now a bounded failure, not a silent advance.
+- The 26B can write one chapter when the prompt is explicit about `write_file`,
+  but it does not reliably use tools for the next chapter. The earlier 24-turn
+  no-tool companion passed; the multi-chapter tool workflow is the weak axis.
+- Task completion is not evidence-gated: the list closed as `completed` while
+  `ch-002.md` was missing. Acceptance remains the authority; a host that trusts
+  the task list alone would be misled. A future fix is to revert the task on a
+  failed acceptance or require evidence for host task completion.
+- The 26B is not a good fit for a shared machine: 13.6 GB VRAM and ~0.4 GB free
+  RAM is too tight. DeepSeek remains the model for the 50-turn fusion; the 26B
+  is useful for the no-tool memory probes when the machine is idle.
+
 ## Verdict
 
 The kernel mechanisms work individually and in smaller runs, but the 57-turn

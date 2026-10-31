@@ -717,7 +717,16 @@
   `之前说`/`之前提` instead of bare `之前`/`前面`.
 - 3-turn micro-slice after the marker fix: 3/3 Done, 0 overflow, 2/2 chapters,
   2/2 tasks closed, no recall on chapter turns, the probe answered correctly.
-  The full 50-turn rerun is still pending.
+- Local 26B attempt at 20k/8k: the 15-turn slice stopped at turn 1 because the
+  state file was not written (chapter 1 had 1,667 CJK); a micro-slice passed
+  chapter 1 but missed `ch-002.md` while marking task 2 completed. Acceptance
+  caught both and `--stop-on-error` stopped. The 26B used 13.6 GB VRAM and left
+  about 0.4 GB free RAM; it was stopped after each attempt. The 26B can write
+  one chapter when told to use `write_file`, but not reliably the next one.
+- Task completion is not evidence-gated: the task list can close as
+  `completed` while the expected file is missing. Acceptance remains the
+  authority; a host-side revert or evidence rule is a follow-up.
+- The full 50-turn rerun on DeepSeek is still pending.
 
 ### Fusion run: negative result at 16k
 

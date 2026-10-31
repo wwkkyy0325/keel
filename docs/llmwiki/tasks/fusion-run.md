@@ -51,8 +51,17 @@ host is shared, so the run uses the remote DeepSeek endpoint.
 - [x] Run a 3-turn micro-slice after the marker fix. Verify: 3/3 Done, 0
       overflow, 2/2 chapters, 2/2 tasks closed, no recall on chapter turns,
       probe answered correctly.
-- [ ] Run the full 50-turn rerun with the 24k profile, per-turn acceptance,
-      narrowed markers and `--stop-on-error`. The slices are not a substitute.
+- [x] Try the local 26B on the slice. Verify: 15-turn slice stopped at turn 1
+      because the state was not written; a micro-slice passed chapter 1 but
+      missed `ch-002.md` while marking task 2 completed. Acceptance caught both;
+      `--stop-on-error` stopped. Resource: 13.6 GB VRAM, ~0.4 GB free RAM.
+- [ ] Run the full 50-turn rerun on DeepSeek with the 24k profile, per-turn
+      acceptance, narrowed markers and `--stop-on-error`. The slices are not a
+      substitute.
+- [ ] Consider evidence-gating host task completion: a task marked `completed`
+      without the expected artifact, or a turn that fails acceptance, should
+      not leave the list closed as `completed`. Host-side revert or kernel
+      evidence rule; not implemented.
 
 ## Verify criteria
 

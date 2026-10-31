@@ -38,7 +38,9 @@ claim of failure.
 | 57-turn fusion run | tools, todo, memo, recall, elision, acceptance, probes | **Failed at 16k**: 49/57 Done, 28/50 chapters, 8 overflow, acceptance missed 16 silent skips |
 | 15-turn fusion slice | tools, sequential todo, 24k, per-turn acceptance, memo, recall | 15/15 Done, 0 overflow, 14/14 chapters, 14/14 tasks closed, acceptance 15/15; recall marker noise fixed afterwards |
 | 3-turn micro-slice | same, narrowed recall markers | 3/3 Done, 0 overflow, 2/2 chapters, 2/2 tasks closed, no recall on chapter turns |
-| Full 50-turn rerun | same as the slice | Pending |
+| Local 26B 15-turn slice | tools, sequential todo, 20k, per-turn acceptance | 1 turn: chapter written, state missing; acceptance caught; stopped |
+| Local 26B micro-slice | same, explicit state instruction | 1/2 chapters; turn 2 missing `ch-002.md` while task 2 completed; acceptance caught; stopped |
+| Full 50-turn rerun | DeepSeek, 24k, per-turn acceptance | Pending |
 
 ## Memory abilities
 
