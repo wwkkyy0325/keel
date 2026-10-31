@@ -1,0 +1,30 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Secrets
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Runtime data
+data/
+*.db
+*.db-shm
+*.db-wal
+*.log
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Evaluation artifacts (keep reports, ignore raw captures)
+evals/reports/raw/
