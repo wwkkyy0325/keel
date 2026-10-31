@@ -694,6 +694,20 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
   current turn.
 - Verification: 226+ tests; fmt and clippy clean.
 
+### Kernel ablation results
+
+- Five arms, fifteen chapters, one fixed chapter-only prompt:
+  `full` 15/15 closed, 0 overflow, 776k input;
+  `no-todo` 14/15, no list, 452k input;
+  `no-recall` 15/15 closed, 725k input;
+  `no-memo` 14/15, 788k input;
+  `unbounded` 15 chapters, 1 overflow, 3 elisions, 871k input.
+- Bounded live results plus mid-turn elision is the clearest kernel effect.
+  The task list is the clearest overhead: two tool round-trips per chapter.
+  Memo/recall effects are hidden by the state file, so this workload cannot
+  show their value.
+- Report: `evals/reports/2026-11-03-kernel-ablation.md`.
+
 ### Structured memo fallback
 
 - `fallback_memo` builds `[structured fallback summary]` from the new record,

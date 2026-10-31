@@ -663,6 +663,21 @@
 - Verification: 230 tests; fmt and clippy clean. Arm results are tracked in
   `docs/llmwiki/tasks/ablation.md`.
 
+### Kernel ablation results
+
+- Ran five fifteen-chapter arms under one fixed protocol: full, no-todo,
+  no-recall, no-memo and unbounded. Report:
+  `evals/reports/2026-11-03-kernel-ablation.md`.
+- Bounding live tool results is load-bearing: the-four bounded arms had zero
+  overflow; unbounded needed three elisions and still overflowed once.
+- The task list buys tracking and closure but costs the most observed overhead:
+  full used 776k input tokens and closed 15/15; no-todo used 452k and wrote
+  14/15 without closure. Two todo round-trips per chapter are the likely cost.
+- Memo and recall are not load-bearing in this workload: the state file carries
+  the story. No-recall still wrote 15/15 and used slightly less input; no-memo
+  wrote 14/15 with similar input. Probes or a state-less workload are needed.
+- Missing chapters in no-memo and no-todo are single-run model variance.
+
 ### Structured memo fallback
 
 - When the model summary fails or times out, the kernel now writes a

@@ -40,11 +40,24 @@ removed at a time.
 
 ## Arms
 
-- [ ] `full`: memo + recall + todo + bounded tools
-- [ ] `no-todo`: no task list or tool
-- [ ] `no-recall`: no lexical recall
-- [ ] `no-memo`: no rolling summary; sealed records render
-- [ ] `unbounded`: live tool results are not clipped
+- [x] `full`: memo + recall + todo + bounded tools — 15/15, closed, 0 overflow
+- [x] `no-todo`: no task list or tool — 14/15, no closure, 451k input
+- [x] `no-recall`: no lexical recall — 15/15, closed, 725k input
+- [x] `no-memo`: no rolling summary; sealed records render — 14/15, 788k input
+- [x] `unbounded`: live tool results are not clipped — 15 chapters, 1 overflow,
+      three elisions, 871k input
+
+## Results
+
+See `evals/reports/2026-11-03-kernel-ablation.md`. The short version:
+
+- bounding live tool results is load-bearing: bounded arms had zero overflow,
+  unbounded still overflowed after three elisions;
+- the task list buys tracking and a terminal state at a large token cost
+  (two todo round-trips per chapter);
+- memo and recall are not load-bearing in this workload because the state file
+  carries the story; they need probes or a state-less workload to measure;
+- missing chapters in `no-memo` and `no-todo` are single-run model variance.
 
 ## Metrics
 
