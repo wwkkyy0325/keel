@@ -53,6 +53,20 @@ fn harness_with(
     reply: &str,
     summarizer: Option<Arc<dyn Summarizer>>,
 ) -> Harness {
+    harness_options(
+        budget_tokens,
+        reply,
+        summarizer,
+        keel_runtime::KernelOptions::default(),
+    )
+}
+
+fn harness_options(
+    budget_tokens: u32,
+    reply: &str,
+    summarizer: Option<Arc<dyn Summarizer>>,
+    options: keel_runtime::KernelOptions,
+) -> Harness {
     let dir = tempfile::tempdir().unwrap();
     let events = Arc::new(EventLog::new());
     let mut config = common::runtime_config(&["echo"], 4, PermissionLevel::WorkspaceAuto);
@@ -99,7 +113,7 @@ fn harness_with(
             context_window: config.context_window,
             limits: common::test_limits(),
             todos: None,
-            options: keel_runtime::KernelOptions::default(),
+            options,
         },
     );
 
@@ -528,6 +542,95 @@ async fn an_absorbed_topic_is_recalled_by_its_terms() {
         })
         .expect("recall block");
     assert!(recalled.content.contains("marlin"), "{}", recalled.content);
+}
+
+#[tokio::test]
+async fn memo_off_keeps_records_in_context() {
+    let calls = Arc::new(AtomicU32::new(0));
+    let inputs = Arc::new(Mutex::new(Vec::new()));
+    let summarizer = Arc::new(FixedSummarizer {
+        calls: calls.clone(),
+        inputs,
+        text: "MODEL SUMMARY".to_owned(),
+    });
+    let harness = harness_options(
+        4096,
+        "ack",
+        Some(summarizer),
+        keel_runtime::KernelOptions {
+            memo: false,
+            ..Default::default()
+        },
+    );
+
+    for input in [
+        "fix the parser bug",
+        "write a haiku about the sea",
+        "what is the weather today",
+    ] {
+        assert!(
+            harness
+                .driver
+                .run(input, CancelToken::new())
+                .await
+                .is_done(),
+            "{input}"
+        );
+    }
+
+    assert_eq!(calls.load(Ordering::Relaxed), 0);
+    let requests = harness.requests.lock().unwrap();
+    assert!(requests[2]
+        .iter()
+        .all(|message| { !message.content.starts_with("[conversation summary") }));
+    assert!(requests[2].iter().any(|message| {
+        message.content.starts_with("[earlier segments]")
+            && message.content.contains("fix the parser bug")
+    }));
+}
+
+#[tokio::test]
+async fn recall_off_has_no_recall_block() {
+    let calls = Arc::new(AtomicU32::new(0));
+    let inputs = Arc::new(Mutex::new(Vec::new()));
+    let summarizer = Arc::new(FixedSummarizer {
+        calls,
+        inputs,
+        text: "MODEL SUMMARY".to_owned(),
+    });
+    let harness = harness_options(
+        4096,
+        "ack",
+        Some(summarizer),
+        keel_runtime::KernelOptions {
+            recall: false,
+            ..Default::default()
+        },
+    );
+
+    for input in [
+        "plan the marlin config",
+        "write a haiku about the sea",
+        "what is the weather today",
+        "where is the marlin config",
+    ] {
+        assert!(
+            harness
+                .driver
+                .run(input, CancelToken::new())
+                .await
+                .is_done(),
+            "{input}"
+        );
+    }
+
+    let requests = harness.requests.lock().unwrap();
+    assert!(requests[3]
+        .iter()
+        .all(|message| !message.content.starts_with("[recalled earlier segments]")));
+    assert!(requests[3]
+        .iter()
+        .any(|message| message.content.starts_with("[conversation summary")));
 }
 
 #[tokio::test]
