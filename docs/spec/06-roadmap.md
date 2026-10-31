@@ -36,21 +36,26 @@ no network or real model.
 
 ## M2 — One real provider and coding profile (1-2 weeks)
 
-- [ ] OpenAI-compatible streaming provider.
+- [x] OpenAI-compatible streaming provider.
 - [x] `keel-policy`: profile schema, resolution, `RuntimeConfig`.
-- [ ] Coding profile + 6 tools.
-- [ ] One coding case passes `verify.sh`.
-- [ ] Kernel overhead benchmark recorded.
+- [x] Coding profile + 6 tools.
+- [x] One coding case passes `verify.sh`.
+- [x] Kernel overhead benchmark recorded.
 
 Done when: one task is solved end-to-end with a real model.
 
 ## M3 — Companion profile (1 week)
 
-- [ ] Persona stage, episodic memory, no tools.
-- [ ] Companion profile.
-- [ ] 20-turn conversation runs with no kernel changes.
+- [x] Persona stage, episodic memory, no tools.
+- [x] Companion profile.
+- [x] 20-turn conversation runs with no kernel changes.
 
 Done when: the only diff from M2 is profile/plugin data.
+
+Episodic memory is the segment record store plus the three-tier fact store;
+vector recall is deferred. A real 20-turn companion run and a real 20-turn
+coding session both finished 20/20. The only open M3 item is the summarization
+research in `docs/llmwiki/tasks/m3-summarization-research.md`.
 
 ## M4 — Plugins (2-3 weeks)
 
