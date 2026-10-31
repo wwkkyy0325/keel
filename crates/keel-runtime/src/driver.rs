@@ -32,6 +32,29 @@ const MODEL_CALL_TIMEOUT: Duration = Duration::from_secs(120);
 const SUMMARY_TIMEOUT: Duration = Duration::from_secs(30);
 use crate::TurnLimits;
 
+/// Host-side mechanism switches used by ablations.
+///
+/// Defaults keep every mechanism on. These are evaluation controls, not
+/// variant policy: they exist so one mechanism can be removed while the
+/// prompt, model and workload stay fixed.
+#[derive(Debug, Clone, Copy)]
+pub struct KernelOptions {
+    pub recall: bool,
+    pub memo: bool,
+    /// Bound live tool results with the same head/tail summary used for history.
+    pub bounded_tools: bool,
+}
+
+impl Default for KernelOptions {
+    fn default() -> Self {
+        Self {
+            recall: true,
+            memo: true,
+            bounded_tools: true,
+        }
+    }
+}
+
 /// Host configuration that is not one of the seven policy questions.
 pub struct TurnDriverConfig {
     pub events: Arc<EventLog>,
@@ -44,6 +67,7 @@ pub struct TurnDriverConfig {
     pub limits: TurnLimits,
     /// Kernel-owned task list. The host seeds it and the `todo` tool edits it.
     pub todos: Option<Arc<Mutex<TodoList>>>,
+    pub options: KernelOptions,
 }
 
 const WRAP_UP: &str = "Context is nearly exhausted. Do not start new work. \
@@ -136,6 +160,7 @@ pub struct TurnDriver<M> {
     overhead: AtomicU64,
     summarizer: Option<Arc<dyn Summarizer>>,
     todos: Option<Arc<Mutex<TodoList>>>,
+    options: KernelOptions,
     /// Pressure read on the previous turn; the summary update happens before
     /// this turn's context is assembled, so this is the freshest signal.
     last_level: Mutex<PressureLevel>,
@@ -178,6 +203,7 @@ impl<M: ModelProvider> TurnDriver<M> {
             overhead: AtomicU64::new(0),
             summarizer: None,
             todos: config.todos,
+            options: config.options,
             last_level: Mutex::new(PressureLevel::Green),
             next_turn: AtomicU64::new(1),
         }
@@ -438,135 +464,137 @@ impl<M: ModelProvider> TurnDriver<M> {
 
         // One rewritten summary per seal. The structured records stay the
         // fallback when the call fails, and open items are never absorbed.
-        if let (Some(summarizer), Some(segment_id), Some(record), Some(messages)) = (
-            self.summarizer.as_ref(),
-            change.sealed,
-            sealed_record.as_ref(),
-            transcript.as_ref(),
-        ) {
-            let compact = {
-                let level = *self
-                    .last_level
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                level >= PressureLevel::Orange
-            };
-            let budget = if compact {
-                (memo_budget(recipe.budget_tokens) / 2).max(MEMO_BUDGET_FLOOR)
-            } else {
-                memo_budget(recipe.budget_tokens)
-            };
-            let max_input = self
-                .context_window
-                .saturating_sub(budget)
-                .saturating_sub(SUMMARY_INPUT_MARGIN);
-
-            let mut input_text = String::from("[previous summary]\n");
-            match &previous_summary {
-                Some(text) => input_text.push_str(text),
-                None => input_text.push_str("(none)"),
-            }
-            input_text.push_str("\n\n[newest segment record]\n");
-            input_text.push_str(&render_summary_record(segment_id, record));
-
-            let mut lines: Vec<String> = Vec::new();
-            let mut included: Vec<u32> = Vec::new();
-            let mut fixed_tokens = estimate_tokens(&input_text);
-            for (id, older) in absorbable.iter().rev() {
-                let line = render_summary_record(*id, older);
-                let tokens = estimate_tokens(&line);
-                if fixed_tokens
-                    .saturating_add(tokens)
-                    .saturating_add(MIN_TRANSCRIPT_TOKENS)
-                    > max_input
-                {
-                    break;
-                }
-                fixed_tokens = fixed_tokens.saturating_add(tokens);
-                lines.push(line);
-                included.push(*id);
-            }
-            lines.reverse();
-            included.reverse();
-            input_text.push_str("\n[older finished segments]\n");
-            for line in &lines {
-                input_text.push_str(line);
-            }
-
-            let transcript_budget = max_input
-                .saturating_sub(fixed_tokens)
-                .max(MIN_TRANSCRIPT_TOKENS);
-            let transcript_body = transcript_text(messages);
-            let transcript_body = clip_to_tokens(&transcript_body, transcript_budget);
-            input_text.push_str("\n[newest segment transcript]\n");
-            input_text.push_str(&transcript_body);
-            input_text.push('\n');
-
-            let mut covers = Vec::new();
-            if record.pending.is_empty() {
-                covers.push(segment_id);
-            }
-            covers.extend(included.iter().copied());
-
-            if !covers.is_empty() {
-                let result = tokio::select! {
-                    _ = cancel.cancelled() => None,
-                    result = tokio::time::timeout(
-                        SUMMARY_TIMEOUT,
-                        summarizer.summarize(&input_text, budget, cancel),
-                    ) => Some(result),
+        if self.options.memo {
+            if let (Some(summarizer), Some(segment_id), Some(record), Some(messages)) = (
+                self.summarizer.as_ref(),
+                change.sealed,
+                sealed_record.as_ref(),
+                transcript.as_ref(),
+            ) {
+                let compact = {
+                    let level = *self
+                        .last_level
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    level >= PressureLevel::Orange
                 };
-                match result {
-                    Some(Ok(Ok(summary))) => {
-                        let mut session = self
-                            .session
-                            .lock()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner());
-                        let revision = session.set_summary(&summary.text, &covers, budget);
-                        drop(session);
-                        if let Some(revision) = revision {
-                            stats.usage.input_tokens = stats
-                                .usage
-                                .input_tokens
-                                .saturating_add(summary.usage.input_tokens);
-                            stats.usage.output_tokens = stats
-                                .usage
-                                .output_tokens
-                                .saturating_add(summary.usage.output_tokens);
-                            self.events.append(Event::SummaryUpdated {
+                let budget = if compact {
+                    (memo_budget(recipe.budget_tokens) / 2).max(MEMO_BUDGET_FLOOR)
+                } else {
+                    memo_budget(recipe.budget_tokens)
+                };
+                let max_input = self
+                    .context_window
+                    .saturating_sub(budget)
+                    .saturating_sub(SUMMARY_INPUT_MARGIN);
+
+                let mut input_text = String::from("[previous summary]\n");
+                match &previous_summary {
+                    Some(text) => input_text.push_str(text),
+                    None => input_text.push_str("(none)"),
+                }
+                input_text.push_str("\n\n[newest segment record]\n");
+                input_text.push_str(&render_summary_record(segment_id, record));
+
+                let mut lines: Vec<String> = Vec::new();
+                let mut included: Vec<u32> = Vec::new();
+                let mut fixed_tokens = estimate_tokens(&input_text);
+                for (id, older) in absorbable.iter().rev() {
+                    let line = render_summary_record(*id, older);
+                    let tokens = estimate_tokens(&line);
+                    if fixed_tokens
+                        .saturating_add(tokens)
+                        .saturating_add(MIN_TRANSCRIPT_TOKENS)
+                        > max_input
+                    {
+                        break;
+                    }
+                    fixed_tokens = fixed_tokens.saturating_add(tokens);
+                    lines.push(line);
+                    included.push(*id);
+                }
+                lines.reverse();
+                included.reverse();
+                input_text.push_str("\n[older finished segments]\n");
+                for line in &lines {
+                    input_text.push_str(line);
+                }
+
+                let transcript_budget = max_input
+                    .saturating_sub(fixed_tokens)
+                    .max(MIN_TRANSCRIPT_TOKENS);
+                let transcript_body = transcript_text(messages);
+                let transcript_body = clip_to_tokens(&transcript_body, transcript_budget);
+                input_text.push_str("\n[newest segment transcript]\n");
+                input_text.push_str(&transcript_body);
+                input_text.push('\n');
+
+                let mut covers = Vec::new();
+                if record.pending.is_empty() {
+                    covers.push(segment_id);
+                }
+                covers.extend(included.iter().copied());
+
+                if !covers.is_empty() {
+                    let result = tokio::select! {
+                        _ = cancel.cancelled() => None,
+                        result = tokio::time::timeout(
+                            SUMMARY_TIMEOUT,
+                            summarizer.summarize(&input_text, budget, cancel),
+                        ) => Some(result),
+                    };
+                    match result {
+                        Some(Ok(Ok(summary))) => {
+                            let mut session = self
+                                .session
+                                .lock()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner());
+                            let revision = session.set_summary(&summary.text, &covers, budget);
+                            drop(session);
+                            if let Some(revision) = revision {
+                                stats.usage.input_tokens = stats
+                                    .usage
+                                    .input_tokens
+                                    .saturating_add(summary.usage.input_tokens);
+                                stats.usage.output_tokens = stats
+                                    .usage
+                                    .output_tokens
+                                    .saturating_add(summary.usage.output_tokens);
+                                self.events.append(Event::SummaryUpdated {
+                                    turn_id,
+                                    revision,
+                                    covers,
+                                    chars: summary.text.chars().count() as u32,
+                                    budget,
+                                });
+                            }
+                        }
+                        Some(Ok(Err(error))) => {
+                            let mut session = self
+                                .session
+                                .lock()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner());
+                            session.mark_summary_missing();
+                            drop(session);
+                            self.events.append(Event::SummaryFailed {
                                 turn_id,
-                                revision,
-                                covers,
-                                chars: summary.text.chars().count() as u32,
-                                budget,
+                                reason: format!("{error:?}"),
                             });
                         }
+                        Some(Err(_)) => {
+                            let mut session = self
+                                .session
+                                .lock()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner());
+                            session.mark_summary_missing();
+                            drop(session);
+                            self.events.append(Event::SummaryFailed {
+                                turn_id,
+                                reason: "timeout".to_owned(),
+                            });
+                        }
+                        None => {}
                     }
-                    Some(Ok(Err(error))) => {
-                        let mut session = self
-                            .session
-                            .lock()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner());
-                        session.mark_summary_missing();
-                        drop(session);
-                        self.events.append(Event::SummaryFailed {
-                            turn_id,
-                            reason: format!("{error:?}"),
-                        });
-                    }
-                    Some(Err(_)) => {
-                        let mut session = self
-                            .session
-                            .lock()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner());
-                        session.mark_summary_missing();
-                        drop(session);
-                        self.events.append(Event::SummaryFailed {
-                            turn_id,
-                            reason: "timeout".to_owned(),
-                        });
-                    }
-                    None => {}
                 }
             }
         }
@@ -581,7 +609,11 @@ impl<M: ModelProvider> TurnDriver<M> {
                 session.records(),
                 session.all_facts(),
                 session.summary().cloned(),
-                session.recall(input),
+                if self.options.recall {
+                    session.recall(input)
+                } else {
+                    Vec::new()
+                },
                 session.last_turn_tokens(),
             )
         };
@@ -608,7 +640,11 @@ impl<M: ModelProvider> TurnDriver<M> {
             input,
             history: &history,
             records: &records,
-            summary: summary.as_ref(),
+            summary: if self.options.memo {
+                summary.as_ref()
+            } else {
+                None
+            },
             recalled: &recalled,
             todos: todos.as_ref(),
             facts: &facts,
@@ -1017,10 +1053,15 @@ impl<M: ModelProvider> TurnDriver<M> {
                     let output =
                         summarize_output(&self.workspace_root, turn_id.get(), index, &content)
                             .await;
+                    let live = if self.options.bounded_tools {
+                        output.clone()
+                    } else {
+                        content
+                    };
                     messages.push(Arc::new(Message::tool_result(
                         result.call_id,
                         &result.tool,
-                        output.clone(),
+                        live,
                     )));
 
                     let status = match &result.outcome {

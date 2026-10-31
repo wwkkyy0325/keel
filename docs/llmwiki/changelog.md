@@ -650,3 +650,15 @@
   for history, so a large `read_file` cannot overflow the current turn.
 - Verification: 226+ tests; fmt and clippy clean. The ten-chapter smoke is
   tracked in `docs/llmwiki/tasks/task-state.md`.
+
+### Kernel ablation switches
+
+- Added `KernelOptions { recall, memo, bounded_tools }` to the driver and CLI
+  flags `--no-recall`, `--no-memo`, `--unbounded-tools`, `--no-todo`. The
+  defaults keep every mechanism on; the switches exist for controlled
+  ablations, not variant policy.
+- Added a fixed ten-chapter ablation workload in
+  `D:\workspace-new\wwkkyy0325\ascent-ablation`: 1,200-1,800 characters,
+  chapter-only prompt, ten host tasks, one arm per mechanism removed.
+- Verification: 230 tests; fmt and clippy clean. Arm results are tracked in
+  `docs/llmwiki/tasks/ablation.md`.

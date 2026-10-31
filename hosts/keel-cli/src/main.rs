@@ -13,10 +13,10 @@ use keel_core::{
 use keel_model_openai::{OpenAiConfig, OpenAiProvider};
 use keel_runtime::{
     load_profile, validate_config, CodeSearchTool, ContextBuilder, EchoTool, EventLog,
-    HistoryStage, InteractionBroker, LatestStage, ListDirTool, LocalTrashStore, MemoryStage,
-    MockModel, MockStep, PermissionEngine, ProviderSummarizer, ReadFileTool, RuntimeConfig,
-    ShellTool, Summarizer, SystemStage, TaskStateStage, TodoTool, ToolRegistry, TurnDriver,
-    TurnDriverConfig, TurnOutcome, WriteFileTool,
+    HistoryStage, InteractionBroker, KernelOptions, LatestStage, ListDirTool, LocalTrashStore,
+    MemoryStage, MockModel, MockStep, PermissionEngine, ProviderSummarizer, ReadFileTool,
+    RuntimeConfig, ShellTool, Summarizer, SystemStage, TaskStateStage, TodoTool, ToolRegistry,
+    TurnDriver, TurnDriverConfig, TurnOutcome, WriteFileTool,
 };
 use terminal::TerminalInteractionPort;
 
@@ -53,15 +53,22 @@ async fn main() -> ExitCode {
 async fn run() -> Result<(), KernelError> {
     dotenvy::dotenv().ok();
     let args = parse_args()?;
-    let config = load_profile(&args.profile)?;
+    let mut config = load_profile(&args.profile)?;
+    if args.no_todo {
+        config.visible_tool_names.retain(|name| name != "todo");
+    }
 
     let permissions = Arc::new(PermissionEngine::new(
         args.workspace,
         config.permission_level,
     )?);
 
-    let todos = Arc::new(Mutex::new(TodoList::new()));
-    if let Some(path) = &args.todo_file {
+    let todos = if args.no_todo {
+        None
+    } else {
+        Some(Arc::new(Mutex::new(TodoList::new())))
+    };
+    if let (Some(todos), Some(path)) = (&todos, &args.todo_file) {
         let text = std::fs::read_to_string(path).map_err(|error| KernelError::Io {
             message: format!("{}: {error}", path.display()),
         })?;
@@ -88,7 +95,9 @@ async fn run() -> Result<(), KernelError> {
     registry.register(Arc::new(WriteFileTool::new(Arc::new(
         LocalTrashStore::new(permissions.root().to_path_buf()),
     ))))?;
-    registry.register(Arc::new(TodoTool::new(todos.clone())))?;
+    if let Some(todos) = &todos {
+        registry.register(Arc::new(TodoTool::new(todos.clone())))?;
+    }
     let registry = Arc::new(registry);
 
     let context = ContextBuilder::new(vec![
@@ -112,6 +121,11 @@ async fn run() -> Result<(), KernelError> {
     if let Some(calls) = args.max_model_calls {
         limits.max_model_calls = calls;
     }
+    let options = KernelOptions {
+        recall: !args.no_recall,
+        memo: !args.no_memo,
+        bounded_tools: !args.unbounded_tools,
+    };
     let driver = TurnDriver::new(
         model,
         registry,
@@ -125,13 +139,18 @@ async fn run() -> Result<(), KernelError> {
             max_output_tokens: config.max_output_tokens,
             context_window: config.context_window,
             limits,
-            todos: Some(todos.clone()),
+            todos: todos.clone(),
+            options,
         },
     );
 
-    let driver = match build_summarizer(&config)? {
-        Some(summarizer) => driver.with_summarizer(summarizer),
-        None => driver,
+    let driver = if args.no_memo {
+        driver
+    } else {
+        match build_summarizer(&config)? {
+            Some(summarizer) => driver.with_summarizer(summarizer),
+            None => driver,
+        }
     };
     let driver = match &args.acceptance {
         Some(path) => driver.with_acceptance(acceptance::load(path)?, 2),
@@ -139,12 +158,12 @@ async fn run() -> Result<(), KernelError> {
     };
 
     if args.session {
-        return run_session(&driver, &config, &events, &todos).await;
+        return run_session(&driver, &config, &events, todos.as_ref()).await;
     }
 
     let outcome = driver.run(&args.input, CancelToken::new()).await;
     print_outcome(&config, &events, &outcome);
-    print_todos(&todos);
+    print_todos(todos.as_ref());
     done_or_error(outcome)
 }
 
@@ -153,7 +172,7 @@ async fn run_session(
     driver: &TurnDriver<HostModel>,
     config: &RuntimeConfig,
     events: &Arc<EventLog>,
-    todos: &Arc<Mutex<TodoList>>,
+    todos: Option<&Arc<Mutex<TodoList>>>,
 ) -> Result<(), KernelError> {
     use std::io::{BufRead, IsTerminal, Write};
 
@@ -189,7 +208,10 @@ async fn run_session(
     Ok(())
 }
 
-fn print_todos(todos: &Arc<Mutex<TodoList>>) {
+fn print_todos(todos: Option<&Arc<Mutex<TodoList>>>) {
+    let Some(todos) = todos else {
+        return;
+    };
     let list = todos
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -448,6 +470,10 @@ struct Args {
     session: bool,
     max_model_calls: Option<u32>,
     todo_file: Option<PathBuf>,
+    no_todo: bool,
+    no_recall: bool,
+    no_memo: bool,
+    unbounded_tools: bool,
 }
 
 fn parse_args() -> Result<Args, KernelError> {
@@ -457,6 +483,10 @@ fn parse_args() -> Result<Args, KernelError> {
     let mut session = false;
     let mut max_model_calls = None;
     let mut todo_file = None;
+    let mut no_todo = false;
+    let mut no_recall = false;
+    let mut no_memo = false;
+    let mut unbounded_tools = false;
     let mut workspace = std::env::current_dir().map_err(|error| KernelError::Io {
         message: error.to_string(),
     })?;
@@ -510,6 +540,18 @@ fn parse_args() -> Result<Args, KernelError> {
                         invalid_config("missing value for `--todo-file`")
                     })?));
             }
+            "--no-todo" => {
+                no_todo = true;
+            }
+            "--no-recall" => {
+                no_recall = true;
+            }
+            "--no-memo" => {
+                no_memo = true;
+            }
+            "--unbounded-tools" => {
+                unbounded_tools = true;
+            }
             other => {
                 return Err(invalid_config(format!("unknown argument `{other}`")));
             }
@@ -524,6 +566,10 @@ fn parse_args() -> Result<Args, KernelError> {
         session,
         max_model_calls,
         todo_file,
+        no_todo,
+        no_recall,
+        no_memo,
+        unbounded_tools,
     })
 }
 

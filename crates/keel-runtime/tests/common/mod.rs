@@ -145,6 +145,7 @@ pub fn build_driver_with_port<M: ModelProvider>(
             context_window,
             limits,
             todos: None,
+            options: keel_runtime::KernelOptions::default(),
         },
     )
 }

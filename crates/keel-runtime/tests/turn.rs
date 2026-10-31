@@ -403,6 +403,7 @@ async fn non_commit_decision_ends_in_error() {
             context_window: config.context_window,
             limits: common::test_limits(),
             todos: None,
+            options: keel_runtime::KernelOptions::default(),
         },
     );
     let outcome = driver.run("hi", CancelToken::new()).await;

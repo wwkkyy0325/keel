@@ -86,6 +86,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 turn_timeout: Duration::from_secs(5),
             },
             todos: None,
+            options: keel_runtime::KernelOptions::default(),
         },
     );
 

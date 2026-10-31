@@ -117,6 +117,7 @@ async fn run_window(window: u32, tools: bool) -> Metrics {
             context_window: config.context_window,
             limits: common::test_limits(),
             todos: None,
+            options: keel_runtime::KernelOptions::default(),
         },
     );
 
