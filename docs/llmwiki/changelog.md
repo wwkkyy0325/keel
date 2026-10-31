@@ -696,6 +696,24 @@
   wrote 14/15 with similar input. Probes or a state-less workload are needed.
 - Missing chapters in no-memo and no-todo are single-run model variance.
 
+### Fusion run: negative result at 16k
+
+- The 57-turn fusion (50 chapters, 7 probes, tools, 50 locked tasks, memo,
+  recall, acceptance; DeepSeek remote) failed to compose at 16k: 49 Done / 8
+  `ContextOverflow`, 28/50 chapters, 17 missing chapter numbers, 28/50 tasks,
+  current stuck at #10 then #42, 48 memo revisions with 16 failures, 50 recall
+  events, and no acceptance failure despite 16 chapter turns returning Done
+  without the requested file.
+- Root causes: the host loop advanced after `Error` and after silent skips;
+  acceptance checked only the latest chapter/state; the locked task list
+  allowed out-of-order completion; 16k was too small for three bible reads plus
+  a chapter write; recall over-fired on long chapter briefs (0.90–0.94 with
+  143/180 hits); the CLI binary predated the summary floor.
+- The kernel's failure paths worked (typed overflow, 17 elisions, recall
+  answered the chapter-8 probe correctly), but the seams did not. Fixes are
+  listed in `tasks/fusion-run.md`; no kernel code was changed by this run.
+- Report: `evals/reports/2026-11-03-fusion-run.md`.
+
 ### Memory boundary and evaluation plan
 
 - ADR 0012 fixes the boundary: the kernel owns working, episodic, semantic and

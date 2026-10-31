@@ -35,7 +35,7 @@ claim of failure.
 | 24-turn companion `full` / `no-recall` | memo, recall, provider | 24/24 both; recall A/B answered Marlin vs denied it |
 | Local 26B 24-turn 8k / 16k | provider, memo, recall | 24/24; 8k explicit recall correct, 16k pasta correct |
 | Local 26B chapter | tools, todo, persona, provider | 1 chapter, 1,184 CJK, state updated, task closed |
-| 57-turn fusion run | tools, todo, memo, recall, elision, acceptance, probes | In progress |
+| 57-turn fusion run | tools, todo, memo, recall, elision, acceptance, probes | **Failed fusion at 16k**: 49/57 Done, 28/50 chapters, 8 overflow, acceptance missed 16 silent skips; fixes pending |
 
 ## Memory abilities
 
@@ -49,8 +49,11 @@ claim of failure.
 
 ## Known gaps
 
-- No single run yet combines a pressure-tested memo/recall with tools,
-  acceptance and repeated arms; the 57-turn fusion run is the first attempt.
+- The 57-turn fusion run is a negative result: the host loop advanced after
+  errors and silent skips, acceptance checked only the latest chapter, the
+  locked task plan was not sequential, and 16k was too small for three bible
+  reads plus a chapter write. It did not combine the mechanisms successfully;
+  fixes are listed in `tasks/fusion-run.md`.
 - One run per ablation arm; model variance is not separated.
 - The 15-chapter protocol's state file carries the story, so memo and recall are
   not load-bearing there.
