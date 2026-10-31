@@ -519,3 +519,19 @@
   coding only 37/40 with three overflows and 35 wrap-ups.
 - Recorded the run in `docs/llmwiki/window-matrix.md`; the ADR 0006 floors of
   16k coding and 8k no-tool are now measured, not provisional.
+
+### M3 real-token calibration
+
+- The 20-turn DeepSeek companion run at an 8k window finished 20/20 with no
+  overflow, using 22.9k input tokens; the remembered preference was used
+  several turns later.
+- Fixed the token estimate for CJK: one token per character instead of four
+  characters per token, which had underestimated Chinese by about 4x.
+- The driver now reserves the measured gap between reported input tokens and
+  the kernel estimate, covering tool schemas and provider template overhead
+  (about 390 tokens for the DeepSeek wire).
+- Chinese segmentation uses character bigrams plus follow-up markers, and the
+  newest segment stays verbatim even after it seals; records cover older
+  history only.
+- The synthetic window matrix is now documented as a machinery regression, not
+  as evidence about real token counts.

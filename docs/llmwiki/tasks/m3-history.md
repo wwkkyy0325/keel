@@ -63,11 +63,16 @@ one at a time. Summarization is blocked on
       workspace/global facts live in-process until persistence lands in M5.
 - [x] 11. Window matrix: 8k, 16k, 32k, 64k, 128k and 1M with scripted growth,
       companion and coding, mock model — verify: recorded in
-      `docs/llmwiki/window-matrix.md`. Companion 40/40 at every window; coding
-      40/40 at 16k and above; 8k coding only 37/40 with three overflows. The
-      floors in ADR 0006 are now measured values.
-- [ ] 12. Companion profile and 20-turn real run — verify: profile-only diff
-      from M2, no tools, no kernel branch; transcript and metrics recorded
+      `docs/llmwiki/window-matrix.md`. It proves the machinery, not real token
+      counts: the mock reports usage from the same estimator, so it cannot
+      calibrate it. Real calibration came from step 12.
+- [x] 12. Companion profile and 20-turn real run — verify: the DeepSeek
+      companion profile differs from M2 only in data; 20/20 turns reached
+      `Done`, 22.9k input tokens, no overflow, and the remembered fact was used
+      across later turns. Report:
+      `evals/reports/2026-11-03-companion-20-turn.md`. The run also found and
+      fixed the CJK token estimate, provider overhead calibration, Chinese
+      segmentation and the newest-segment detail window.
 
 ## Answer artifact (ADR 0007)
 

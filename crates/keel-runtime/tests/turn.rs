@@ -6,9 +6,10 @@ use std::time::Duration;
 use async_trait::async_trait;
 use keel_core::{
     AcceptanceItem, ArgValue, CancelToken, CommitCtx, CommitDecision, ContextRecipe, ErrorCode,
-    Event, MemoryPolicy, Message, MessageRole, ModelError, ModelProvider, ModelRequest, ModelRole,
-    ModelRoute, ModelStream, PermissionLevel, Policy, ReasoningLevel, SecretKind, Tool, ToolArgs,
-    ToolCallId, ToolCtx, ToolOutcome, ToolSchema, TurnId, TurnState, VerificationMode, VerifySpec,
+    Event, MemoryPolicy, Message, MessageRole, ModelChunk, ModelError, ModelProvider, ModelRequest,
+    ModelRole, ModelRoute, ModelStream, PermissionLevel, Policy, ReasoningLevel, SecretKind,
+    TokenUsage, Tool, ToolArgs, ToolCallId, ToolCtx, ToolOutcome, ToolSchema, TurnId, TurnState,
+    VerificationMode, VerifySpec,
 };
 use keel_runtime::{
     DeferAllInteractionPort, EventLog, InteractionBroker, MockModel, MockStep, PermissionEngine,
@@ -932,4 +933,58 @@ async fn a_large_tool_result_is_summarized_and_spilled() {
         ToolOutcome::Success { content } => assert_eq!(content.chars().count(), 200_000),
         other => panic!("read_file could not read the spill: {other:?}"),
     }
+}
+
+struct OverheadModel;
+
+#[async_trait]
+impl ModelProvider for OverheadModel {
+    async fn stream(
+        &self,
+        request: ModelRequest,
+        _cancel: &CancelToken,
+    ) -> Result<ModelStream, ModelError> {
+        let estimated = request.messages.iter().fold(0u32, |total, message| {
+            total.saturating_add(message.estimated_tokens())
+        });
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        let _ = tx.send(Ok(ModelChunk::TextDelta("done".to_owned()))).await;
+        let _ = tx
+            .send(Ok(ModelChunk::Finished {
+                usage: TokenUsage {
+                    input_tokens: estimated.saturating_add(500),
+                    output_tokens: 5,
+                },
+            }))
+            .await;
+        Ok(ModelStream::new(rx))
+    }
+}
+
+#[tokio::test]
+async fn reported_usage_calibrates_the_next_budget() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&[], 0, PermissionLevel::WorkspaceAuto);
+    let driver = common::build_driver(
+        OverheadModel,
+        config,
+        events.clone(),
+        dir.path(),
+        common::test_limits(),
+    );
+
+    assert!(driver.run("one", CancelToken::new()).await.is_done());
+    let second = driver.run("two", CancelToken::new()).await;
+    assert!(second.is_done());
+
+    let budgets: Vec<u32> = events
+        .for_turn(second.turn_id)
+        .iter()
+        .filter_map(|record| match record.event {
+            Event::ContextBuilt { budget, .. } => Some(budget),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(budgets.last(), Some(&(4096 - 500)));
 }

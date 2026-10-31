@@ -1,0 +1,29 @@
+[profile]
+name = "companion-deepseek"
+
+[model]
+provider = "openai-compatible"
+model = "deepseek-flash"
+base_url = "https://api.deepseek.com"
+api_key_env = "DEEPSEEK_API_KEY"
+supports_reasoning = true
+thinking_budget = 0
+max_output_tokens = 1024
+context_window = 8192
+
+[context]
+stages = ["system", "memory", "history", "latest"]
+budget_tokens = 7168
+
+[tools]
+visible = []
+budget = 0
+
+[verification]
+mode = "none"
+
+[permission]
+level = "workspace_auto"
+
+[persona]
+system = "prompts/companion.md"

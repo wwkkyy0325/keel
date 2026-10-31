@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use keel_core::{
-    ArgValue, CancelToken, KernelError, ModelError, ModelProvider, ModelRequest, ModelStream,
-    Policy, ToolArgs,
+    ArgValue, CancelToken, Event, KernelError, ModelError, ModelProvider, ModelRequest,
+    ModelStream, Policy, ToolArgs,
 };
 use keel_model_openai::{OpenAiConfig, OpenAiProvider};
 use keel_runtime::{
@@ -159,6 +159,35 @@ fn print_outcome(config: &RuntimeConfig, events: &EventLog, outcome: &TurnOutcom
     println!("profile: {}", config.profile_name);
     println!("turn: {}", outcome.turn_id.get());
     println!("state: {}", outcome.state);
+    if let Some((estimate, budget)) =
+        events
+            .for_turn(outcome.turn_id)
+            .iter()
+            .rev()
+            .find_map(|record| match &record.event {
+                Event::ContextBuilt { tokens, budget, .. } => Some((*tokens, *budget)),
+                _ => None,
+            })
+    {
+        println!("context: estimate={estimate} budget={budget}");
+    }
+    if let Some((detail, digest, records)) =
+        events
+            .for_turn(outcome.turn_id)
+            .iter()
+            .rev()
+            .find_map(|record| match &record.event {
+                Event::HistoryAssembled {
+                    detail_turns,
+                    digest_turns,
+                    record_segments,
+                    ..
+                } => Some((*detail_turns, *digest_turns, *record_segments)),
+                _ => None,
+            })
+    {
+        println!("history: detail={detail} digest={digest} records={records}");
+    }
     println!("answer: {}", outcome.answer.body);
     if outcome.answer.missing {
         println!("notice: the turn ended without an answer; the transcript is kept separately");

@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use crate::context::is_cjk;
+
 use crate::message::{Message, MessageRole};
 
 /// Turns in one segment before the kernel seals it.
@@ -334,6 +336,13 @@ impl Session {
             return Some("size".to_owned());
         }
 
+        if FOLLOWUP_MARKERS
+            .iter()
+            .any(|marker| contains_marker(input, marker))
+        {
+            return None;
+        }
+
         let input_terms = terms(input);
         let overlap = if input_terms.is_empty() {
             1.0
@@ -500,10 +509,17 @@ impl Session {
 
     /// Flattens recorded entries in chronological order.
     pub fn history(&self) -> Vec<Arc<Message>> {
+        // The newest non-empty segment stays verbatim even after it seals,
+        // so the model always sees the latest exchange as it was written.
+        let newest = self
+            .segments
+            .iter()
+            .rposition(|segment| !segment.entries.is_empty());
         self.segments
             .iter()
-            .filter(|segment| segment.record.is_none())
-            .flat_map(|segment| segment.entries.iter())
+            .enumerate()
+            .filter(|(index, segment)| Some(*index) == newest || segment.record.is_none())
+            .flat_map(|(_, segment)| segment.entries.iter())
             .filter(|entry| {
                 matches!(
                     entry.message.role,
@@ -514,11 +530,17 @@ impl Session {
             .collect()
     }
 
-    /// Records of sealed segments, oldest first.
+    /// Records of sealed segments that are no longer the newest content.
     pub fn records(&self) -> Vec<SegmentRecord> {
+        let newest = self
+            .segments
+            .iter()
+            .rposition(|segment| !segment.entries.is_empty());
         self.segments
             .iter()
-            .filter_map(|segment| segment.record.clone())
+            .enumerate()
+            .filter(|(index, _)| Some(*index) != newest)
+            .filter_map(|(_, segment)| segment.record.clone())
             .collect()
     }
 }
@@ -598,6 +620,21 @@ const DURABLE_CUES: &[&str] = &[
     "永远",
     "以后",
     "始终",
+];
+
+/// Phrases that refer back to the conversation, so the segment continues.
+const FOLLOWUP_MARKERS: &[&str] = &[
+    "刚才",
+    "刚刚",
+    "之前",
+    "上面",
+    "前面",
+    "继续",
+    "earlier",
+    "before",
+    "continue",
+    "go on",
+    "what did we",
 ];
 
 /// Markers that tie a sentence to this task, so it is never durable.
@@ -880,11 +917,28 @@ fn topic_of(input: &str) -> String {
 
 /// Lowercased words of at least three characters, minus common stopwords.
 fn terms(text: &str) -> BTreeSet<String> {
-    text.split(|character: char| !character.is_alphanumeric())
-        .filter(|token| token.chars().count() >= 3)
-        .map(|token| token.to_lowercase())
-        .filter(|token| !STOPWORDS.contains(&token.as_str()))
-        .collect()
+    let mut terms = BTreeSet::new();
+    for token in text.split(|character: char| !character.is_alphanumeric()) {
+        if token.is_empty() {
+            continue;
+        }
+        if token.chars().any(is_cjk) {
+            // CJK has no spaces, so compare character bigrams.
+            let characters: Vec<char> = token.chars().collect();
+            if characters.len() == 1 {
+                terms.insert(token.to_lowercase());
+            }
+            for pair in characters.windows(2) {
+                terms.insert(pair.iter().collect());
+            }
+        } else if token.chars().count() >= 3 {
+            let lower = token.to_lowercase();
+            if !STOPWORDS.contains(&lower.as_str()) {
+                terms.insert(lower);
+            }
+        }
+    }
+    terms
 }
 
 /// Whether the input names a recorded artifact, by full path or file name.
@@ -943,7 +997,7 @@ mod tests {
         assert_eq!(session.segments().len(), 2);
         assert_eq!(session.segments()[0].state, SegmentState::Sealed);
         assert_eq!(session.segments()[1].topic, "second topic");
-        // The sealed segment is now a record, not raw entries.
+        // The newest segment is verbatim; the older sealed one is a record.
         assert_eq!(session.history().len(), 2);
         assert_eq!(session.records().len(), 1);
         assert_eq!(session.records()[0].goal, "first topic");
@@ -1118,11 +1172,16 @@ mod record_tests {
         session.record_turn(turn("fix the parser bug", "fixed it", &artifacts));
         assert!(session.seal_current());
 
-        let record = &session.records()[0];
+        let record = session.segments()[0]
+            .record
+            .as_ref()
+            .expect("sealed record");
         assert_eq!(record.goal, "fix the parser bug");
         assert_eq!(record.result, "fixed it");
         assert_eq!(record.changes, artifacts);
-        assert!(session.history().is_empty());
+        // The newest segment still shows verbatim; its record is not used yet.
+        assert_eq!(session.history().len(), 2);
+        assert!(session.records().is_empty());
     }
 
     #[test]
@@ -1329,5 +1388,43 @@ mod fact_tests {
             .facts()
             .iter()
             .any(|fact| fact.statement.contains("never use tabs")));
+    }
+}
+
+#[cfg(test)]
+mod chinese_segmentation_tests {
+    use super::*;
+
+    fn record(session: &mut Session, input: &str) {
+        session.record_turn(TurnRecord {
+            input,
+            text: "好",
+            tools: &[],
+            artifacts: &[],
+            pending: &[],
+            verified: false,
+        });
+    }
+
+    #[test]
+    fn a_chinese_follow_up_keeps_the_segment() {
+        let mut session = Session::new();
+        record(&mut session, "请介绍一下你自己");
+
+        let change = session.begin_turn("我们刚才说了什么？");
+
+        assert!(change.sealed.is_none());
+        assert_eq!(session.segments().len(), 1);
+    }
+
+    #[test]
+    fn a_chinese_topic_change_seals_the_segment() {
+        let mut session = Session::new();
+        record(&mut session, "请介绍一下你自己");
+
+        let change = session.begin_turn("明天天气怎么样");
+
+        assert_eq!(change.reason.as_deref(), Some("topic"));
+        assert_eq!(session.segments().len(), 2);
     }
 }

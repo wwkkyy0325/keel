@@ -120,7 +120,12 @@ pub struct TurnDriver<M> {
     workspace_root: PathBuf,
     acceptance: Option<AcceptancePlan>,
     session: Mutex<Session>,
-    governor: ContextGovernor,
+    context_window: u32,
+    output_reserve: u32,
+    working_set: u32,
+    /// Measured difference between reported input tokens and the kernel
+    /// estimate: tool schemas and provider template overhead.
+    overhead: AtomicU64,
     next_turn: AtomicU64,
 }
 
@@ -139,11 +144,7 @@ impl<M: ModelProvider> TurnDriver<M> {
             config.limits.tool_timeout,
         )
         .with_interactions(config.interactions.clone());
-        let governor = ContextGovernor::new(
-            config.context_window,
-            policy.context_recipe().budget_tokens,
-            config.max_output_tokens,
-        );
+        let working_set = policy.context_recipe().budget_tokens;
         Self {
             model,
             tools,
@@ -158,7 +159,10 @@ impl<M: ModelProvider> TurnDriver<M> {
             workspace_root: config.permissions.root().to_path_buf(),
             acceptance: None,
             session: Mutex::new(Session::new()),
-            governor,
+            context_window: config.context_window,
+            output_reserve: config.max_output_tokens,
+            working_set,
+            overhead: AtomicU64::new(0),
             next_turn: AtomicU64::new(1),
         }
     }
@@ -332,7 +336,19 @@ impl<M: ModelProvider> TurnDriver<M> {
             return Err(KernelError::Cancelled { stage: "observe" });
         }
 
-        let recipe = self.policy.context_recipe();
+        // Tool schemas and provider framing are invisible to the estimate;
+        // after the first call their measured cost is reserved up front.
+        let overhead = self
+            .overhead
+            .load(Ordering::Relaxed)
+            .min(u64::from(u32::MAX)) as u32;
+        let mut recipe = self.policy.context_recipe();
+        recipe.budget_tokens = recipe.budget_tokens.saturating_sub(overhead);
+        let governor = ContextGovernor::new(
+            self.context_window,
+            self.working_set.saturating_sub(overhead),
+            self.output_reserve,
+        );
         let (history, records, facts, session_growth) = {
             let mut session = self
                 .session
@@ -386,7 +402,7 @@ impl<M: ModelProvider> TurnDriver<M> {
         // The first turn has no measured growth; a large first input is not
         // evidence that the session grows that fast per call.
         let growth = session_growth;
-        let pressure = self.governor.pressure(used, growth);
+        let pressure = governor.pressure(used, growth);
         self.events.append(Event::ContextPressure {
             turn_id,
             used,
@@ -464,7 +480,7 @@ impl<M: ModelProvider> TurnDriver<M> {
                 None => growth.max(1),
             };
             previous_used = Some(estimated_tokens);
-            let pressure = self.governor.pressure(estimated_tokens, call_growth);
+            let pressure = governor.pressure(estimated_tokens, call_growth);
             self.events.append(Event::ContextPressure {
                 turn_id,
                 used: estimated_tokens,
@@ -601,6 +617,9 @@ impl<M: ModelProvider> TurnDriver<M> {
                 }
             };
 
+            let observed_overhead = usage.input_tokens.saturating_sub(estimated_tokens);
+            self.overhead
+                .fetch_max(u64::from(observed_overhead), Ordering::Relaxed);
             stats.usage.input_tokens = stats.usage.input_tokens.saturating_add(usage.input_tokens);
             stats.usage.output_tokens = stats
                 .usage

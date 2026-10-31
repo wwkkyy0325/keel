@@ -291,18 +291,33 @@ async fn a_topic_change_seals_the_segment() {
         .any(|record| matches!(record.event, Event::SegmentOpened { segment_id: 1, .. }));
     assert!(opened);
 
+    // The just-sealed segment is still the newest content, so it stays
+    // verbatim in the next request.
+    {
+        let requests = harness.requests.lock().unwrap();
+        assert!(requests[1].iter().any(|message| {
+            message.role == MessageRole::User && message.content == "fix the parser bug"
+        }));
+    }
+
+    let third = harness
+        .driver
+        .run("what is the weather today", CancelToken::new())
+        .await;
+    assert!(third.is_done());
+
     let requests = harness.requests.lock().unwrap();
-    let record = requests[1]
+    let record = requests[2]
         .iter()
         .find(|message| {
             message.role == MessageRole::System && message.content.starts_with("[earlier segments]")
         })
-        .expect("record block in the next request");
+        .expect("record block in the third request");
     assert!(record.content.contains("fix the parser bug"));
     assert!(record.content.contains("ack"));
-    assert!(!requests[1].iter().any(
-        |message| message.role == MessageRole::User && message.content == "fix the parser bug"
-    ));
+    assert!(requests[2].iter().any(|message| {
+        message.role == MessageRole::User && message.content == "write a haiku about the sea"
+    }));
 }
 
 #[tokio::test]

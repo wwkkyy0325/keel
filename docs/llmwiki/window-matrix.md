@@ -1,7 +1,10 @@
-# Window matrix — 2026-11-03
+# Synthetic window matrix — 2026-11-03
 
-Synthetic run of `crates/keel-runtime/tests/window_matrix.rs` to place the
-supported context floors with evidence instead of guesses.
+Run of `crates/keel-runtime/tests/window_matrix.rs`. It verifies the kernel
+machinery deterministically: budget arithmetic, digests, records, wrap-up and
+overflow branches. It does **not** prove real token counts or model behaviour;
+the provider-specific evidence lives in
+`evals/reports/2026-11-03-companion-20-turn.md`.
 
 ## Setup
 
@@ -44,12 +47,21 @@ supported context floors with evidence instead of guesses.
 - Segments seal every 12 turns by the size cap in every run, which is why each
   window shows record entries.
 
+## What this proves and does not prove
+
+- Proves: the stages, governor and compression branches execute, and the
+  budget arithmetic is internally consistent at each window.
+- Does not prove: real tokenizer counts, provider template overhead, or whether
+  a model answers well after compression. The mock reports usage computed by
+  the same estimator, so it cannot calibrate that estimator.
+
 ## Decision
 
-- Coding floor stays at 16k; no-tool floor stays at 8k. The provisional values
-  in ADR 0006 are now measured values for this workload.
-- The matrix is deterministic and cheap; rerun it when the token estimate or
-  the context stages change.
+- Keep the matrix as a cheap regression for the machinery.
+- Keep the 16k coding and 8k no-tool floors as configured values. The 8k
+  no-tool floor now has real-model evidence from the 20-turn companion run;
+  the coding floor has real single-turn evidence but not a real 20-turn run.
+- Recalibrate the estimate against provider usage whenever the model changes.
 
 ## Limits
 

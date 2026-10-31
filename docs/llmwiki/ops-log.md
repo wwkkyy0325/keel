@@ -552,3 +552,18 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 - Wrote `docs/llmwiki/window-matrix.md` and updated ADR 0006 and the profile
   spec to cite the measured floors.
 - Verification: 192 tests; fmt and clippy clean.
+
+### M3 real-token calibration
+
+- Ran 20 real turns on `deepseek-flash` with the new
+  `variants/companion/profile.deepseek.toml` (window 8192, budget 7168).
+  20/20 `Done`, 22,923 input + 2,966 output tokens, no overflow or wrap-up.
+- Found the estimate at 93 vs 485 reported on turn 1. Split into two causes:
+  CJK tokenization (fixed in `estimate_tokens`) and unaccounted tool-schema and
+  template overhead (now measured and reserved through an atomic calibration in
+  the driver).
+- Chinese term extraction uses bigrams and follow-up markers; `history()` keeps
+  the newest non-empty segment verbatim and `records()` covers older segments.
+- Added estimator tests, Chinese segmentation tests and a calibration test
+  asserting the next turn's budget drops by the observed overhead.
+- Verification: 198 tests; fmt and clippy clean.
