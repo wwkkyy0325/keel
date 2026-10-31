@@ -696,6 +696,22 @@
   wrote 14/15 with similar input. Probes or a state-less workload are needed.
 - Missing chapters in no-memo and no-todo are single-run model variance.
 
+### Fusion fixes: task order, recall gate, acceptance detail, host guard
+
+- Locked host plans are now sequential: only the current item may change
+  status; a later `completed`/`in_progress` is rejected with `OutOfOrder`.
+  Tests cover out-of-order completion and in-progress.
+- Recall skips long task briefs (more than 24 query terms) unless the input has
+  a question mark or a recall marker. The 50-chapter prompts no longer pull two
+  old segments every turn; short probes still recall.
+- Acceptance failure messages now include the verifier detail, so a reprompt
+  tells the model what failed, not just the item id.
+- The CLI has `--turn-input` (write the current input for an external checker)
+  and `--stop-on-error` (a long-run host does not advance after an error).
+  Added a 24k novel profile for long tool-heavy workloads.
+- Verification: 242 tests; fmt and clippy clean. A 15-turn slice is running
+  with the per-turn checker; results pending.
+
 ### Fusion run: negative result at 16k
 
 - The 57-turn fusion (50 chapters, 7 probes, tools, 50 locked tasks, memo,

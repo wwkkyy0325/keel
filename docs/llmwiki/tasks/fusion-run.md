@@ -32,15 +32,20 @@ host is shared, so the run uses the remote DeepSeek endpoint.
       16 summary failures.
 - [x] Write the report and update the validation matrix and changelog.
       Report: `evals/reports/2026-11-03-fusion-run.md`.
-- [ ] Fix the host loop: verify the requested chapter before advancing; retry
-      on Error or a missing file; stop after a bounded number of attempts.
-- [ ] Enforce sequential task updates on locked host lists; reject
-      `completed`/`in_progress` on a non-current item. Test.
-- [ ] Make acceptance check the requested chapter, all chapters `1..Last`, and
-      gaps, not only the latest chapter.
-- [ ] Add a recall gate for long task briefs; keep short-question recall.
-- [ ] Rebuild the CLI (summary floor), rerun a 15–20 turn slice with a 24k
-      working set or state-only reads, then decide about the full 50.
+- [x] Fix the host loop: `--stop-on-error` stops instead of advancing after an
+      error; `--turn-input` writes the current input for the external checker.
+      A same-input retry loop is still a follow-up.
+- [x] Enforce sequential task updates on locked host lists; reject
+      `completed`/`in_progress` on a non-current item. Verify: `OutOfOrder`
+      tests, 10 todo tests.
+- [x] Make acceptance check the requested chapter, all chapters `1..Last`, and
+      gaps via `fusion-tools/check_turn.py`, which reads the turn input.
+- [x] Add a recall gate for long task briefs; keep short-question recall.
+      Verify: `a_long_task_brief_does_not_recall`.
+- [x] Rebuild the CLI with the summary floor and the fixes. Verify: 242 tests,
+      fmt and clippy clean.
+- [ ] Run a 15-turn slice with the 24k profile and per-turn acceptance. The
+      slice is `fusion-run/slice`; results pending.
 
 ## Verify criteria
 
