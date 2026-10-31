@@ -51,4 +51,17 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 
 ### Commits
 
-- `feat: implement M1 kernel with permissions and interactions` (current)
+- `feat: implement M1 kernel with permissions and interactions`
+- `feat: add OpenAI-compatible wire mapping`
+
+### M2 — OpenAI-compatible wire mapping
+
+- Added `crates/keel-model-openai` with request JSON building, typed message
+  and tool-schema mapping, tool-call accumulation, typed tool arguments and the
+  reserved `keel_interact` control tool.
+- Tool-call ids are normalized to `call-{n}` across assistant calls and tool
+  results, so history stays consistent regardless of the provider id.
+- Model-initiated interactions are limited to clarify, choice and plan
+  approval; permission approval and escalation remain kernel-initiated.
+- Verification: `cargo test -p keel-model-openai` (7 tests), workspace clippy,
+  `cargo deny check`.

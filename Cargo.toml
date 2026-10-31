@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "crates/keel-core",
+  "crates/keel-model-openai",
   "crates/keel-runtime",
   "hosts/keel-cli",
 ]
@@ -15,8 +16,10 @@ license = "Apache-2.0"
 [workspace.dependencies]
 async-trait = "0.1"
 keel-core = { version = "0.1.0", path = "crates/keel-core" }
+keel-model-openai = { version = "0.1.0", path = "crates/keel-model-openai" }
 keel-runtime = { version = "0.1.0", path = "crates/keel-runtime" }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = [
   "rt",
