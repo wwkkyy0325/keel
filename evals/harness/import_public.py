@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Import HumanEval+ rows into the local Keel eval layout.
+"""Import HumanEval+ or MBPP+ rows into the local Keel eval layout.
 
 The dataset is never vendored. Pass a locally downloaded JSONL/JSON file, or
 use `--download` when the Hugging Face datasets server is reachable.
@@ -14,12 +14,14 @@ import urllib.request
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_OUTPUT = REPO_ROOT / "evals" / "cases" / "public" / "humanevalplus"
-DATASET = "evalplus/humanevalplus"
-ROW_URL = (
-    "https://datasets-server.huggingface.co/rows"
-    f"?dataset={DATASET.replace('/', '%2F')}&config=default&split=test"
-)
+DATASETS = {
+    "humaneval": "evalplus/humanevalplus",
+    "mbpp": "evalplus/mbppplus",
+}
+DEFAULT_OUTPUTS = {
+    "humaneval": REPO_ROOT / "evals" / "cases" / "public" / "humanevalplus",
+    "mbpp": REPO_ROOT / "evals" / "cases" / "public" / "mbppplus",
+}
 
 VERIFY = """#!/usr/bin/env bash
 set -euo pipefail
@@ -48,13 +50,18 @@ def load_rows(path: Path) -> list[dict]:
     raise ValueError("expected a JSON array, JSONL, or a datasets-server response")
 
 
-def download_rows(limit: int) -> list[dict]:
+def download_rows(dataset: str, limit: int) -> list[dict]:
     rows: list[dict] = []
     offset = 0
     page = 100
+    row_url = (
+        "https://datasets-server.huggingface.co/rows"
+        f"?dataset={DATASETS[dataset].replace('/', '%2F')}"
+        "&config=default&split=test"
+    )
     while len(rows) < limit:
         length = min(page, limit - len(rows))
-        url = f"{ROW_URL}&offset={offset}&length={length}"
+        url = f"{row_url}&offset={offset}&length={length}"
         with urllib.request.urlopen(url, timeout=30) as response:
             payload = json.load(response)
         batch = [item.get("row", item) for item in payload.get("rows", [])]
@@ -70,15 +77,15 @@ def download_rows(limit: int) -> list[dict]:
 def entry_point(row: dict) -> str:
     if row.get("entry_point"):
         return row["entry_point"]
-    prompt = row["prompt"]
-    for line in prompt.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("def "):
-            return stripped[4:].split("(", 1)[0].strip()
+    for text in (row.get("prompt", ""), row.get("canonical_solution", "")):
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("def "):
+                return stripped[4:].split("(", 1)[0].strip()
     raise ValueError(f"cannot determine entry point for {row.get('task_id')}")
 
 
-def write_case(row: dict, output: Path) -> Path:
+def write_case(row: dict, output: Path, dataset: str) -> Path:
     task_id = str(row["task_id"]).replace("/", "-")
     case = output / task_id
     (case / "setup").mkdir(parents=True, exist_ok=True)
@@ -86,36 +93,61 @@ def write_case(row: dict, output: Path) -> Path:
     (case / "hidden").mkdir(parents=True, exist_ok=True)
     entry = entry_point(row)
 
-    prompt = row["prompt"]
-    (case / "setup" / "solution.py").write_text(
-        prompt + ("" if prompt.endswith("\n") else "\n") + "    pass\n",
-        encoding="utf-8",
-    )
-    (case / "reference" / "solution.py").write_text(
-        prompt + row["canonical_solution"],
-        encoding="utf-8",
-    )
-    (case / "hidden" / "humaneval_test.py").write_text(row["test"], encoding="utf-8")
+    prompt = row.get("prompt", "")
+    canonical = row.get("canonical_solution", row.get("code", ""))
+    if "def " in prompt:
+        setup = prompt + ("" if prompt.endswith("\n") else "\n") + "    pass\n"
+        reference = prompt + canonical if not canonical.lstrip().startswith("def ") else canonical
+    else:
+        setup = f"# {prompt}\n# Implement `{entry}` in this file.\n"
+        reference = canonical
+        if reference and not reference.endswith("\n"):
+            reference += "\n"
+    (case / "setup" / "solution.py").write_text(setup, encoding="utf-8")
+    (case / "reference" / "solution.py").write_text(reference, encoding="utf-8")
+
+    test_code = row.get("test", "")
+    imports = row.get("test_imports") or []
+    if "def check(" in test_code:
+        (case / "hidden" / "humaneval_test.py").write_text(test_code, encoding="utf-8")
+        runner = [
+            "import unittest",
+            "",
+            "import solution",
+            "from humaneval_test import check",
+            "",
+            "",
+            "class HumanEvalCase(unittest.TestCase):",
+            "    def test_case(self):",
+            f"        check(solution.{entry})",
+            "",
+            "",
+            'if __name__ == "__main__":',
+            "    unittest.main()",
+            "",
+        ]
+    else:
+        lines = list(imports)
+        lines.append(f"from solution import {entry}")
+        lines.append(test_code.strip() or f"assert callable({entry})")
+        (case / "hidden" / "mbpp_test.py").write_text(
+            "\n".join(lines) + "\n", encoding="utf-8"
+        )
+        runner = [
+            "import unittest",
+            "",
+            "",
+            "class MbppCase(unittest.TestCase):",
+            "    def test_case(self):",
+            "        import mbpp_test  # noqa: F401",
+            "",
+            "",
+            'if __name__ == "__main__":',
+            "    unittest.main()",
+            "",
+        ]
     (case / "hidden" / "test_runner.py").write_text(
-        "\n".join(
-            [
-                "import unittest",
-                "",
-                "import solution",
-                "from humaneval_test import check",
-                "",
-                "",
-                "class HumanEvalCase(unittest.TestCase):",
-                "    def test_case(self):",
-                f"        check(solution.{entry})",
-                "",
-                "",
-                'if __name__ == "__main__":',
-                "    unittest.main()",
-                "",
-            ]
-        ),
-        encoding="utf-8",
+        "\n".join(runner), encoding="utf-8"
     )
     (case / "verify.sh").write_text(VERIFY, encoding="utf-8")
     (case / "task.md").write_text(
@@ -130,7 +162,7 @@ def write_case(row: dict, output: Path) -> Path:
                 "[case]",
                 f'id = "{task_id}"',
                 'kind = "public"',
-                'source = "evalplus/humanevalplus"',
+                f'source = "{DATASETS[dataset]}"',
                 f'source_id = "{row["task_id"]}"',
                 "timeout_seconds = 300",
                 'profile = "variants/coding/profile.eval.toml"',
@@ -146,16 +178,18 @@ def write_case(row: dict, output: Path) -> Path:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset", choices=sorted(DATASETS), default="humaneval")
     parser.add_argument("--input", type=Path, help="local JSON/JSONL dataset file")
     parser.add_argument("--download", action="store_true")
     parser.add_argument("--limit", type=int, default=20)
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--output", type=Path)
     args = parser.parse_args()
+    output = args.output or DEFAULT_OUTPUTS[args.dataset]
 
     if args.input:
         rows = load_rows(args.input)
     elif args.download:
-        rows = download_rows(args.limit)
+        rows = download_rows(args.dataset, args.limit)
     else:
         print("pass --input FILE or --download", file=sys.stderr)
         return 2
@@ -165,8 +199,10 @@ def main() -> int:
         return 1
 
     for row in rows[: args.limit]:
-        case = write_case(row, args.output)
-        print(f"imported {case.relative_to(REPO_ROOT) if case.is_relative_to(REPO_ROOT) else case}")
+        case = write_case(row, output, args.dataset)
+        print(
+            f"imported {case.relative_to(REPO_ROOT) if case.is_relative_to(REPO_ROOT) else case}"
+        )
     return 0
 
 

@@ -300,10 +300,10 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 
 ### Public dataset importer
 
-- Added `evals/harness/import_humaneval.py` for local JSONL/JSON or the
-  Hugging Face rows API; output is gitignored.
+- Added `evals/harness/import_public.py` for local JSONL/JSON or the Hugging
+  Face rows API, covering HumanEval+ and MBPP+; output is gitignored.
 - Generated cases include a function skeleton, reference solution, hidden
   runner, `verify.sh` and `meta.toml`.
-- Validated with a local fixture: setup fails, reference passes.
+- Validated both styles with local fixtures: setup fails, reference passes.
 - `--download` is implemented but the datasets server was unreachable here.
-- Commit: `feat: add HumanEval+ importer`.
+- Commit: `feat: support HumanEval+ and MBPP+ imports`.

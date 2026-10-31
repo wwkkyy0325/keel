@@ -270,11 +270,12 @@
 
 ### Public dataset importer
 
-- Added `evals/harness/import_humaneval.py` for local JSONL/JSON or the
-  Hugging Face rows API. It creates `setup/`, `reference/`, hidden test runner,
-  `verify.sh` and `meta.toml` under a gitignored `evals/cases/public/`.
-- Validated the importer with `evals/harness/fixtures/humaneval_sample.jsonl`:
-  the setup fails and the reference passes.
+- Added `evals/harness/import_public.py` for local JSONL/JSON or the Hugging
+  Face rows API, covering HumanEval+ and MBPP+. It creates `setup/`,
+  `reference/`, hidden test runner, `verify.sh` and `meta.toml` under a
+  gitignored `evals/cases/public/`.
+- Validated both datasets with local fixtures: setup fails and reference
+  passes for HumanEval-style `check(candidate)` and MBPP-style assertions.
 - The datasets server was unreachable from this environment, so the download
   path remains untested here; the local-file path works.
-- Verification: importer fixture; no Rust changes.
+- Verification: both importer fixtures; no Rust changes.

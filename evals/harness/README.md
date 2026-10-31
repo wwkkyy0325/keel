@@ -35,19 +35,23 @@ solve, so use it only to exercise the harness.
 Downloaded public datasets belong in a gitignored cache, not in `setup/`.
 Record every dataset in `docs/spec/05-provenance.md` before using it.
 
-HumanEval+ importer:
+Public dataset importer:
 
 ```bash
-# Local JSONL/JSON download
-python evals/harness/import_humaneval.py \
-  --input /path/to/HumanEvalPlus.jsonl \
-  --limit 20
+# HumanEval+ from a local JSONL/JSON download
+python evals/harness/import_public.py --dataset humaneval \
+  --input /path/to/HumanEvalPlus.jsonl --limit 20
+
+# MBPP+ from a local JSONL/JSON download
+python evals/harness/import_public.py --dataset mbpp \
+  --input /path/to/MbppPlus.jsonl --limit 20
 
 # Or via the Hugging Face datasets server, when reachable
-python evals/harness/import_humaneval.py --download --limit 20
+python evals/harness/import_public.py --dataset humaneval --download --limit 20
 ```
 
-Generated cases go to `evals/cases/public/humanevalplus/`, which is gitignored.
-The importer was validated with
-`evals/harness/fixtures/humaneval_sample.jsonl`: the setup fails and the
+Generated cases go to `evals/cases/public/`, which is gitignored. The importer
+was validated with both fixtures:
+`evals/harness/fixtures/humaneval_sample.jsonl` and
+`evals/harness/fixtures/mbpp_sample.jsonl`. In both, the setup fails and the
 reference passes.

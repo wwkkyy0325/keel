@@ -1,0 +1,1 @@
+{"task_id":"Mbpp/999","prompt":"Write a function to add two integers.","entry_point":"add","canonical_solution":"def add(a, b):\n    return a + b\n","test_imports":[],"test":"assert add(1, 2) == 3\nassert add(-1, 1) == 0\n"}
