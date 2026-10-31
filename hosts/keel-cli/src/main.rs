@@ -384,7 +384,8 @@ fn print_outcome(config: &RuntimeConfig, events: &EventLog, outcome: &TurnOutcom
     }
     println!("events: {}", events.len());
     println!(
-        "usage: input={} output={} total={}",
+        "usage: calls={} input={} output={} total={}",
+        outcome.model_calls,
         outcome.usage.input_tokens,
         outcome.usage.output_tokens,
         outcome

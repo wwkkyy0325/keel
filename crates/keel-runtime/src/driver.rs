@@ -79,6 +79,7 @@ or commands you changed. Do not claim a check ran unless you saw its output.";
 
 #[derive(Default)]
 struct TurnStats {
+    model_calls: u32,
     tool_calls: u32,
     interactions: u32,
     deferred: Vec<InteractionId>,
@@ -111,6 +112,9 @@ pub struct TurnOutcome {
     /// Secret-like input seen at turn start. The turn still runs; the host
     /// surfaces the notice with this turn's result.
     pub secret_warning: Option<SecretKind>,
+    /// Model calls spent in this turn, including the final answer call and any
+    /// summary call.
+    pub model_calls: u32,
     /// Token usage summed over model calls in this turn.
     pub usage: keel_core::TokenUsage,
     /// Wall-clock duration of the turn.
@@ -340,6 +344,7 @@ impl<M: ModelProvider> TurnDriver<M> {
             error,
             deferred_interactions: stats.deferred,
             secret_warning,
+            model_calls: stats.model_calls,
             usage: stats.usage,
             duration_ms: started.elapsed().as_millis() as u64,
             reasoning_level: stats.reasoning,
@@ -560,6 +565,7 @@ impl<M: ModelProvider> TurnDriver<M> {
                                     .usage
                                     .output_tokens
                                     .saturating_add(summary.usage.output_tokens);
+                                stats.model_calls = stats.model_calls.saturating_add(1);
                                 self.events.append(Event::SummaryUpdated {
                                     turn_id,
                                     revision,
@@ -779,6 +785,7 @@ impl<M: ModelProvider> TurnDriver<M> {
                 });
             }
             model_calls += 1;
+            stats.model_calls = stats.model_calls.saturating_add(1);
 
             let route = self.policy.model_route(ModelRole::Main);
             let request = ModelRequest {

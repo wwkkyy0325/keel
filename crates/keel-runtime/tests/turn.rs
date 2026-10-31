@@ -122,6 +122,7 @@ async fn text_only_turn_reaches_done() {
 
     assert_eq!(outcome.state, TurnState::Done);
     assert_eq!(outcome.text, "hello");
+    assert_eq!(outcome.model_calls, 1);
 }
 
 #[tokio::test]
