@@ -401,6 +401,7 @@ impl ContextStage for HistoryStage {
 
         if let Some(events) = ctx.events {
             if !recall_lines.is_empty() {
+                let top = ctx.recalled.first();
                 events.emit(keel_core::Event::HistoryRecalled {
                     turn_id: ctx.turn_id,
                     candidates: ctx.recalled.len() as u32,
@@ -411,6 +412,10 @@ impl ContextStage for HistoryStage {
                         .map(|recalled| recalled.segment_id)
                         .collect(),
                     tokens: recall_tokens,
+                    score_bp: top.map(|recalled| recalled.score_bp).unwrap_or(0),
+                    matched: top.map(|recalled| recalled.matched).unwrap_or(0),
+                    query_terms: top.map(|recalled| recalled.query_terms).unwrap_or(0),
+                    known_terms: top.map(|recalled| recalled.known_terms).unwrap_or(0),
                 });
             }
             events.emit(keel_core::Event::HistoryAssembled {

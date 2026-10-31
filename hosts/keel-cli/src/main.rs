@@ -323,19 +323,37 @@ fn print_outcome(config: &RuntimeConfig, events: &EventLog, outcome: &TurnOutcom
     {
         println!("elided: messages={messages} tokens {before}->{after}");
     }
-    if let Some((segments, tokens)) =
-        events
-            .for_turn(outcome.turn_id)
-            .iter()
-            .rev()
-            .find_map(|record| match &record.event {
-                Event::HistoryRecalled {
-                    segments, tokens, ..
-                } => Some((segments.clone(), *tokens)),
-                _ => None,
-            })
+    if let Some((segments, tokens, score_bp, matched, query_terms, known_terms)) = events
+        .for_turn(outcome.turn_id)
+        .iter()
+        .rev()
+        .find_map(|record| match &record.event {
+            Event::HistoryRecalled {
+                segments,
+                tokens,
+                score_bp,
+                matched,
+                query_terms,
+                known_terms,
+                ..
+            } => Some((
+                segments.clone(),
+                *tokens,
+                *score_bp,
+                *matched,
+                *query_terms,
+                *known_terms,
+            )),
+            _ => None,
+        })
     {
-        println!("recall: segments={segments:?} tokens={tokens}");
+        println!(
+            "recall: score={:.2} hits={}/{} known={} segments={segments:?} tokens={tokens}",
+            score_bp as f32 / 10_000.0,
+            matched,
+            query_terms,
+            known_terms
+        );
     }
     if let Some((revision, covers, chars, budget, fallback)) = events
         .for_turn(outcome.turn_id)

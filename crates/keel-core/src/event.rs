@@ -75,6 +75,14 @@ pub enum Event {
         candidates: u32,
         segments: Vec<u32>,
         tokens: u32,
+        /// Top IDF-weighted score in basis points.
+        score_bp: u32,
+        /// Query terms found in the top segment.
+        matched: u32,
+        /// Query terms after stopword filtering.
+        query_terms: u32,
+        /// Query terms that occur somewhere in the session.
+        known_terms: u32,
     },
     ContextElided {
         turn_id: TurnId,

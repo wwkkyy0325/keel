@@ -12,6 +12,8 @@ pub const SEGMENT_TURN_CAP: u32 = 12;
 pub const TOPIC_OVERLAP_FLOOR: f32 = 0.2;
 /// Input-to-segment overlap needed to recall an absorbed segment.
 pub const RECALL_MIN_SCORE: f32 = 0.34;
+/// Lower bar when the input explicitly asks for earlier history.
+pub const RECALL_INTENT_SCORE: f32 = 0.20;
 /// Segments recalled per turn.
 pub const RECALL_LIMIT: usize = 2;
 /// Characters kept from each message in a recall excerpt.
@@ -21,6 +23,105 @@ pub const RECALL_EXCERPT_CHARS: usize = 300;
 const STOPWORDS: &[&str] = &[
     "the", "and", "for", "with", "this", "that", "from", "into", "your", "you", "are", "was",
     "has", "have", "still", "also", "please", "then", "them", "they",
+];
+
+/// Question and meta words removed from a recall query only. Segment terms
+/// keep them so segmentation stays unchanged; IDF makes them cheap anyway.
+const QUERY_STOPWORDS: &[&str] = &[
+    "what",
+    "which",
+    "where",
+    "when",
+    "who",
+    "whom",
+    "whose",
+    "why",
+    "how",
+    "is",
+    "are",
+    "do",
+    "does",
+    "did",
+    "can",
+    "could",
+    "would",
+    "should",
+    "will",
+    "shall",
+    "may",
+    "might",
+    "me",
+    "my",
+    "mine",
+    "our",
+    "ours",
+    "us",
+    "it",
+    "its",
+    "these",
+    "those",
+    "there",
+    "here",
+    "about",
+    "again",
+    "earlier",
+    "previous",
+    "previously",
+    "mentioned",
+    "remember",
+    "recall",
+    "said",
+    "told",
+    "say",
+    "know",
+    "thing",
+    "things",
+    "something",
+    "anything",
+    "last",
+    "time",
+    "before",
+    "after",
+    "now",
+    "just",
+    "very",
+    "really",
+    "actually",
+    "thanks",
+];
+
+/// Common Chinese meta bigrams removed from a recall query. A bigram that is
+/// rare inside the session is kept; this list only covers words that would
+/// otherwise match many topics.
+const CJK_QUERY_STOP_BIGRAMS: &[&str] = &[
+    "之前", "刚才", "上次", "前面", "那个", "这个", "什么", "怎么", "记得", "还记", "提到", "提过",
+    "说过", "一下", "我们", "你们", "你还", "他们", "她们", "它们", "可以", "是不", "不是", "但是",
+    "然后", "现在", "当时", "这里", "那里", "哪些", "哪个", "怎样", "如何", "为什", "请问", "告诉",
+    "知道", "觉得", "时候", "一个", "没有", "就是", "还是", "已经", "如果", "因为", "所以", "而且",
+    "的话", "说的",
+];
+
+/// Input markers that mean "look at earlier history". They lower the recall
+/// bar; they do not create a match on their own.
+const RECALL_MARKERS: &[&str] = &[
+    "remember",
+    "recalled",
+    "recall",
+    "earlier",
+    "mentioned",
+    "previous",
+    "previously",
+    "before",
+    "again",
+    "记得",
+    "之前",
+    "刚才",
+    "上次",
+    "前面",
+    "提过",
+    "说过",
+    "回忆",
+    "想起来",
 ];
 
 /// Lifecycle of one topic segment.
@@ -151,6 +252,15 @@ pub struct RecalledSegment {
     pub record: SegmentRecord,
     /// Best matching user and assistant exchange, clipped and redacted.
     pub excerpt: Option<String>,
+    /// IDF-weighted overlap with the query, after unknown terms are ignored,
+    /// in basis points (0..=10_000). It is an integer so the event stays `Eq`.
+    pub score_bp: u32,
+    /// Query terms found in this segment.
+    pub matched: u32,
+    /// Query terms after stopword filtering.
+    pub query_terms: u32,
+    /// Query terms that occur somewhere in the session.
+    pub known_terms: u32,
 }
 
 /// A topic span of a session.
@@ -732,7 +842,44 @@ impl Session {
     /// from the best matching turn so a detail that never reached the memo can
     /// still come back into view.
     pub fn recall(&self, input: &str) -> Vec<RecalledSegment> {
-        let input_terms = terms(input);
+        let input_terms = query_terms(input);
+        if input_terms.is_empty() {
+            return Vec::new();
+        }
+        let document_count = self
+            .segments
+            .iter()
+            .filter(|segment| !segment.terms.is_empty())
+            .count()
+            .max(1) as f32;
+        let mut weights: BTreeMap<String, f32> = BTreeMap::new();
+        let mut known_weight = 0.0f32;
+        let mut known_terms = 0u32;
+        for term in &input_terms {
+            let df = self
+                .segments
+                .iter()
+                .filter(|segment| segment.terms.contains(term))
+                .count() as f32;
+            let weight = ((document_count + 1.0) / (df + 1.0)).ln() + 1.0;
+            if df > 0.0 {
+                known_weight += weight;
+                known_terms = known_terms.saturating_add(1);
+            }
+            weights.insert(term.clone(), weight);
+        }
+        if known_weight <= 0.0 {
+            return Vec::new();
+        }
+        let threshold = if RECALL_MARKERS
+            .iter()
+            .any(|marker| contains_marker(input, marker))
+        {
+            RECALL_INTENT_SCORE
+        } else {
+            RECALL_MIN_SCORE
+        };
+        let query_term_count = input_terms.len() as u32;
         let newest = self
             .segments
             .iter()
@@ -753,23 +900,25 @@ impl Session {
             if !record.pending.is_empty() {
                 continue;
             }
-            let hits = input_terms
+            let matched_terms: Vec<&String> = input_terms
                 .iter()
                 .filter(|term| segment.terms.contains(*term))
-                .count();
-            let mut score = if input_terms.is_empty() {
-                0.0
-            } else {
-                hits as f32 / input_terms.len() as f32
-            };
+                .collect();
+            let matched = matched_terms.len() as u32;
+            let matched_weight: f32 = matched_terms.iter().map(|term| weights[*term]).sum();
+            let mut score = matched_weight / known_weight;
             let artifact_hit = record
                 .changes
                 .iter()
                 .any(|path| input.contains(path.as_str()));
             if artifact_hit {
-                score += 0.5;
+                score = score.max(0.9);
             }
-            if score < RECALL_MIN_SCORE || (hits == 0 && !artifact_hit) {
+            // A hit on a term present in every segment says nothing; require
+            // one term that is actually selective, unless an artifact names it.
+            let selective = matched_terms.iter().any(|term| weights[*term] > 1.0);
+            if score < threshold || (matched == 0 && !artifact_hit) || (!artifact_hit && !selective)
+            {
                 continue;
             }
             scored.push((
@@ -778,7 +927,11 @@ impl Session {
                 RecalledSegment {
                     segment_id: segment.id,
                     record: record.clone(),
-                    excerpt: recall_excerpt(segment, &input_terms),
+                    excerpt: recall_excerpt(segment, &weights),
+                    score_bp: (score * 10_000.0).round().clamp(0.0, 10_000.0) as u32,
+                    matched,
+                    query_terms: query_term_count,
+                    known_terms,
                 },
             ));
         }
@@ -797,27 +950,41 @@ impl Session {
     }
 }
 
+/// Terms used for recall queries. Segment terms keep the full signature;
+/// only the query drops question and meta words.
+fn query_terms(text: &str) -> BTreeSet<String> {
+    let mut terms = terms(text);
+    terms.retain(|term| {
+        if term.chars().count() == 2 && term.chars().all(is_cjk) {
+            !CJK_QUERY_STOP_BIGRAMS.contains(&term.as_str())
+        } else {
+            !QUERY_STOPWORDS.contains(&term.as_str())
+        }
+    });
+    terms
+}
+
 /// Best matching user turn and its answer, clipped for recall.
-fn recall_excerpt(segment: &Segment, input_terms: &BTreeSet<String>) -> Option<String> {
-    let mut best: Option<(usize, usize)> = None;
+fn recall_excerpt(segment: &Segment, weights: &BTreeMap<String, f32>) -> Option<String> {
+    let mut best: Option<(f32, usize)> = None;
     for (index, entry) in segment.entries.iter().enumerate() {
         if entry.message.role != MessageRole::User {
             continue;
         }
         let entry_terms = terms(&entry.message.content);
-        let hits = entry_terms
+        let score: f32 = entry_terms
             .iter()
-            .filter(|term| input_terms.contains(*term))
-            .count();
-        if hits == 0 {
+            .filter_map(|term| weights.get(term))
+            .sum();
+        if score <= 0.0 {
             continue;
         }
         let better = match best {
-            Some((best_hits, _)) => hits > best_hits,
+            Some((best_score, _)) => score > best_score,
             None => true,
         };
         if better {
-            best = Some((hits, index));
+            best = Some((score, index));
         }
     }
     let (_, index) = best?;
@@ -1883,6 +2050,62 @@ mod recall_tests {
     fn unrelated_input_recalls_nothing() {
         let session = absorbed_session();
         assert!(session.recall("what is the weather").is_empty());
+    }
+
+    #[test]
+    fn a_paraphrased_question_ignores_unknown_terms() {
+        let mut session = Session::new();
+        record(
+            &mut session,
+            "the pasta i made was aglio e olio with garlic and olive oil",
+        );
+        session.begin_turn("alpha beta");
+        record(&mut session, "alpha beta");
+        session.begin_turn("gamma delta");
+        session.set_summary("summary", &[0], 256);
+
+        let recalled = session.recall("what was the pasta recipe i mentioned earlier");
+
+        assert_eq!(recalled.len(), 1);
+        assert_eq!(recalled[0].segment_id, 0);
+        assert_eq!(recalled[0].query_terms, 2);
+        assert_eq!(recalled[0].known_terms, 1);
+        assert_eq!(recalled[0].matched, 1);
+        assert!(recalled[0].score_bp >= 3_400);
+        assert!(recalled[0]
+            .excerpt
+            .as_deref()
+            .unwrap_or_default()
+            .contains("aglio"));
+    }
+
+    #[test]
+    fn a_chinese_paraphrase_recalls_the_topic() {
+        let mut session = Session::new();
+        record(&mut session, "意面的做法是蒜香橄榄油，只需要大蒜和橄榄油");
+        session.begin_turn("今天下雨");
+        record(&mut session, "今天下雨了");
+        session.begin_turn("另一个话题");
+        session.set_summary("summary", &[0], 256);
+
+        let recalled = session.recall("之前说的意面配方还记得吗");
+
+        assert_eq!(recalled.len(), 1);
+        assert_eq!(recalled[0].segment_id, 0);
+        assert!(recalled[0].matched >= 1);
+        assert!(recalled[0].score_bp >= 3_400);
+    }
+
+    #[test]
+    fn a_term_in_every_segment_is_not_enough() {
+        let mut session = Session::new();
+        record(&mut session, "alpha beta");
+        session.begin_turn("alpha gamma");
+        record(&mut session, "alpha gamma");
+        session.begin_turn("delta");
+        session.set_summary("summary", &[0], 256);
+
+        assert!(session.recall("alpha").is_empty());
     }
 
     #[test]
