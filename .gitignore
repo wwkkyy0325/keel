@@ -29,3 +29,9 @@ Thumbs.db
 
 # Evaluation artifacts (keep reports, ignore raw captures)
 evals/reports/raw/
+evals/reports/runs/*.json
+!evals/reports/runs/summary-*.json
+
+# Python bytecode
+__pycache__/
+*.pyc

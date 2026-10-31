@@ -1,0 +1,8 @@
+[[items]]
+id = "task-004-cli-args-acceptance"
+description = "Validate CLI arguments"
+required = true
+kind = "command"
+program = "python"
+args = ["-c", "from cli import parse_args; assert parse_args(['p', '--name', 'keel']) == {'name': 'keel'}; assert parse_args(['p', '--dry-run', 'yes']) == {'dry_run': 'yes'}"]
+expected_exit = 0

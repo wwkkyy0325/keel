@@ -1,0 +1,8 @@
+[[items]]
+id = "task-008-greeting-acceptance"
+description = "Fix greeting across two modules"
+required = true
+kind = "command"
+program = "python"
+args = ["-c", "from app.main import greeting; assert greeting('Ada', 'Lovelace') == 'Hello, Ada Lovelace!'; assert greeting('', '') == 'Hello!'"]
+expected_exit = 0

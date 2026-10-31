@@ -1,0 +1,8 @@
+[[items]]
+id = "task-010-report-acceptance"
+description = "Robust record totals"
+required = true
+kind = "command"
+program = "python"
+args = ["-c", "import json, tempfile, os, pathlib; from report import total; fd, p = tempfile.mkstemp(); os.close(fd); pathlib.Path(p).write_text(json.dumps({'amount': 2}) + '\\n' + 'bad' + '\\n', encoding='utf-8'); assert total(p) == 2; os.unlink(p)"]
+expected_exit = 0

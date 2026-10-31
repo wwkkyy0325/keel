@@ -276,3 +276,14 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 - Real task-001: kernel acceptance passed; hidden tests 4/4.
 - Verification: 131 tests; clippy, fmt and `cargo deny check`.
 - Commit: `feat: wire acceptance verification and split keel-policy`.
+
+### Hardening harness and cases
+
+- Added readiness/risk docs and a hardening task doc.
+- Added the eval harness (`run_case.py`, `run_suite.py`), provenance entries for
+  planned public datasets, and ten self-authored cases.
+- Added `profile.eval.toml` without shell; kernel acceptance still executes.
+- Fixed the `Done`-after-failed-verification budget path.
+- Suite: 10/10 passed, 152,807 tokens, 103 s.
+- Verification: 132 tests; clippy, fmt and `cargo deny check`.
+- Commit: `feat: add hardening harness and eval cases`.

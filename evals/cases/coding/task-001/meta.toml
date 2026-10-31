@@ -2,7 +2,7 @@
 id = "task-001"
 kind = "coding"
 timeout_seconds = 300
-profile = "variants/coding/profile.deepseek.toml"
+profile = "variants/coding/profile.eval.toml"
 model = "deepseek-flash"
 acceptance = "acceptance.toml"
 seeds = [1]

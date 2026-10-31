@@ -507,6 +507,48 @@ async fn acceptance_failure_reprompts_then_ends_in_error() {
 }
 
 #[tokio::test]
+async fn acceptance_without_verification_cannot_end_done() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&["echo"], 8, PermissionLevel::WorkspaceAuto);
+    let mut limits = common::test_limits();
+    limits.max_tool_calls = 0;
+    let mut args = ToolArgs::new();
+    args.insert("text", ArgValue::String("hi".to_owned()));
+    let driver = common::build_driver(
+        MockModel::new(vec![MockStep::ToolCall {
+            name: "echo".to_owned(),
+            args,
+        }]),
+        config,
+        events,
+        dir.path(),
+        limits,
+    )
+    .with_acceptance(
+        vec![AcceptanceItem {
+            id: "sum".to_owned(),
+            description: "2 + 2".to_owned(),
+            required: true,
+            verify: VerifySpec::Compute {
+                expression: "2 + 2".to_owned(),
+                expected: "4".to_owned(),
+            },
+        }],
+        0,
+    );
+
+    let outcome = driver.run("try", CancelToken::new()).await;
+
+    assert_eq!(outcome.state, TurnState::Error);
+    assert_eq!(
+        outcome.error.as_ref().map(|error| error.code()),
+        Some(ErrorCode::VerificationFailed)
+    );
+    assert!(outcome.verification.is_none());
+}
+
+#[tokio::test]
 async fn repeated_tool_failure_escalates_reasoning() {
     let dir = tempfile::tempdir().unwrap();
     let events = Arc::new(EventLog::new());

@@ -1,0 +1,34 @@
+[profile]
+name = "coding-eval"
+
+[model]
+provider = "openai-compatible"
+model = "deepseek-flash"
+base_url = "https://api.deepseek.com"
+api_key_env = "DEEPSEEK_API_KEY"
+supports_reasoning = true
+thinking_budget = 0
+max_output_tokens = 4096
+
+[context]
+stages = ["system", "latest"]
+budget_tokens = 16000
+
+[tools]
+visible = ["read_file", "write_file", "list_dir", "code_search"]
+budget = 12
+plan_mode = false
+
+[verification]
+mode = "none"
+
+[permission]
+level = "workspace_auto"
+
+[interaction]
+timeout_ms = 300000
+on_timeout = "defer_and_continue"
+max_per_turn = 4
+
+[persona]
+system = "prompts/coding.md"

@@ -1,0 +1,8 @@
+[[items]]
+id = "task-005-retry-acceptance"
+description = "Retry only the intended exceptions"
+required = true
+kind = "command"
+program = "python"
+args = ["-c", "from retry import retry; assert retry(lambda: 7, 3) == 7"]
+expected_exit = 0

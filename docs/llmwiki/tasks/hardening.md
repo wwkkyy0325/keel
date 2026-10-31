@@ -1,0 +1,41 @@
+# Hardening before M3
+
+Goal: replace "the tests pass" with evidence from repeated real runs, and make
+failures observable before memory and compaction change the system.
+
+## Steps
+
+- [x] 1. Readiness assessment and risk register — verify: docs review
+- [x] 2. Eval harness: run one case, parse usage/latency and external verify,
+      write a JSON report — verify: run `task-001`
+- [x] 3. Self-authored agentic cases: multi-file, permission, verification
+      failure, context pressure and tool errors — verify: suite report
+      (10/10 passed on 2026-11-02)
+- [ ] 4. Public permissive cases (HumanEval+/MBPP+) as code-correctness smoke
+      tests, downloaded locally and never vendored — verify: importer and
+      provenance
+- [ ] 5. Fault injection: provider 429/500/stream cut, tool repeat, verification
+      failure, context overflow — verify: fault suite
+- [ ] 6. Dogfood three to five real tasks and record friction — verify: notes in
+      this file
+
+## Findings from the first suite
+
+- A turn could reach `Done` after a failed verification when the budget ended
+  first. Fixed: a configured acceptance plan requires a passing report, and a
+  verification that never ran ends in `verification_failed`.
+- Non-terminal shell denial caused repeated tool loops. Added
+  `profile.eval.toml` without the shell tool; the kernel verifier still runs
+  the command.
+- `task-008` was ambiguous about the expected greeting format; clarified the
+  prompt instead of blaming the model.
+- The `task-010` acceptance command did not flush its temp file; fixed.
+- One model stream hung until the 180 s turn deadline. Provider-level timeout
+  and retry remain a hardening item.
+
+## Constraints
+
+- Cases live in `evals/cases/`; downloaded datasets live in a gitignored cache.
+- Every external dataset is recorded in `docs/spec/05-provenance.md`.
+- Never copy benchmark test code into the kernel or a case's setup.
+- The harness reports what happened; it does not score the model's narrative.

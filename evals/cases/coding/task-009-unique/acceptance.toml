@@ -1,0 +1,8 @@
+[[items]]
+id = "task-009-unique-acceptance"
+description = "Stable de-duplication"
+required = true
+kind = "command"
+program = "python"
+args = ["-c", "from unique import unique; assert unique(['b', 'a', 'b']) == ['b', 'a']"]
+expected_exit = 0

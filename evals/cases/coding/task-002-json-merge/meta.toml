@@ -1,0 +1,8 @@
+[case]
+id = "task-002-json-merge"
+kind = "coding"
+timeout_seconds = 300
+profile = "variants/coding/profile.eval.toml"
+model = "deepseek-flash"
+acceptance = "acceptance.toml"
+seeds = [1]

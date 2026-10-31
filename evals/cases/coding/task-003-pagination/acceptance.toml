@@ -1,0 +1,8 @@
+[[items]]
+id = "task-003-pagination-acceptance"
+description = "Fix one-based pagination"
+required = true
+kind = "command"
+program = "python"
+args = ["-c", "from pagination import page; assert page([1, 2, 3], 1, 2) == [1, 2]; assert page([1, 2, 3], 2, 2) == [3]"]
+expected_exit = 0

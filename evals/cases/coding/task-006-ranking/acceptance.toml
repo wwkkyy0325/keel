@@ -1,0 +1,8 @@
+[[items]]
+id = "task-006-ranking-acceptance"
+description = "Deterministic leaderboard ordering"
+required = true
+kind = "command"
+program = "python"
+args = ["-c", "from ranking import rank; assert rank([{'name': 'zoe', 'score': 10}, {'name': 'amy', 'score': 10}]) == [{'name': 'amy', 'score': 10}, {'name': 'zoe', 'score': 10}]"]
+expected_exit = 0

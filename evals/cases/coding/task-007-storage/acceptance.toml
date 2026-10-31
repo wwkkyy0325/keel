@@ -1,0 +1,8 @@
+[[items]]
+id = "task-007-storage-acceptance"
+description = "Safe JSON storage"
+required = true
+kind = "command"
+program = "python"
+args = ["-c", "import tempfile, os; from store import save, load; d=tempfile.mkdtemp(); p=os.path.join(d, 'n', 'x.json'); save(p, {'b': 2, 'a': 1}); assert load(p) == {'a': 1, 'b': 2}"]
+expected_exit = 0

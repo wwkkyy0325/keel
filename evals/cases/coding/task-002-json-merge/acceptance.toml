@@ -1,0 +1,8 @@
+[[items]]
+id = "task-002-json-merge-acceptance"
+description = "Merge nested configuration without mutating the base"
+required = true
+kind = "command"
+program = "python"
+args = ["-c", "from config import merge; base={'a': {'x': 1, 'y': 2}}; assert merge(base, {'a': {'y': 3}}) == {'a': {'x': 1, 'y': 3}}; assert base == {'a': {'x': 1, 'y': 2}}"]
+expected_exit = 0

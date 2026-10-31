@@ -605,12 +605,7 @@ impl<M: ModelProvider> TurnDriver<M> {
             if let Some(plan) = &self.acceptance {
                 let verifier = AcceptanceVerifier::new(&self.workspace_root);
                 let report = verifier.verify(&plan.items).await;
-                let failures: Vec<String> = report
-                    .required_failed
-                    .iter()
-                    .chain(report.required_unverified.iter())
-                    .cloned()
-                    .collect();
+                let failures = verification_failures(&report);
                 self.events.append(Event::VerificationFinished {
                     turn_id,
                     passed: report.passed(),
@@ -649,6 +644,17 @@ impl<M: ModelProvider> TurnDriver<M> {
                 }
             }
             break 'turn;
+        }
+
+        if fsm.state() == TurnState::Converge && self.acceptance.is_some() {
+            let failures = match &stats.verification {
+                Some(report) if report.passed() => Vec::new(),
+                Some(report) => verification_failures(report),
+                None => vec!["verification did not run".to_owned()],
+            };
+            if !failures.is_empty() {
+                return Err(KernelError::VerificationFailed { failures });
+            }
         }
 
         if fsm.state() == TurnState::Converge {
@@ -693,4 +699,13 @@ impl<M: ModelProvider> TurnDriver<M> {
             .as_millis()
             .min(u128::from(u64::MAX)) as u64
     }
+}
+
+fn verification_failures(report: &VerificationReport) -> Vec<String> {
+    report
+        .required_failed
+        .iter()
+        .chain(report.required_unverified.iter())
+        .cloned()
+        .collect()
 }

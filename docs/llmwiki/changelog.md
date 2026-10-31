@@ -241,3 +241,18 @@
   which re-exports the policy API.
 - Real task-001: kernel acceptance passed; external hidden tests 4/4.
 - Verification: 131 tests; clippy, fmt and `cargo deny check`.
+
+### Hardening harness and self-authored cases
+
+- Added `evals/harness/run_case.py` and `run_suite.py`; each run records state,
+  exit codes, usage, duration, reasoning, verification and output tails.
+- Added a readiness assessment and risk register, plus a hardening task doc.
+- Added nine self-authored cases (ten total with task-001): JSON merge,
+  pagination, CLI validation, retry, ranking, storage, multi-file greeting,
+  stable de-duplication and JSON Lines totals.
+- Added `profile.eval.toml` without the shell tool; the kernel verifier still
+  runs acceptance commands.
+- Fixed a budget-exhaustion path that could report `Done` after a failed or
+  missing verification; it now ends in `verification_failed`.
+- Suite result: 10/10 passed, 152,807 tokens, 103 s.
+- Verification: 132 tests; clippy, fmt and `cargo deny check`.
