@@ -15,7 +15,7 @@ not by the model's own claim.
       allowlist, timeout and permission tests
 - [x] 4. One coding eval case with `setup/`, `hidden/` and `verify.sh` — verify:
       the case rejects an unsolved workspace and accepts the reference fix
-- [ ] 5. Real model end-to-end run — verify: user runs the DeepSeek profile
+- [x] 5. Real model end-to-end run — verify: user runs the DeepSeek profile
       with a local `.env` and records the transcript
 
 ## Decisions
@@ -69,5 +69,13 @@ not by the model's own claim.
   workspace and accepts the reference; this was checked with `verify.sh`.
 - The CLI accepts `--workspace PATH`, so an eval runs in a temporary workspace
   while `.env` and the profile still load from the repository.
-- `cargo test --workspace` passes: 122 tests.
-- Step 5, the real model run, needs a local `.env` and is not yet executed.
+- `cargo test --workspace` passes: 124 tests.
+- Step 5 passed with `deepseek-flash` on task-001: the model fixed `calc.py`
+  and the external hidden tests passed (4/4). Shell attempts were denied
+  because stdin was not a terminal; the model reported the fix as unverified
+  by execution instead of claiming a test run.
+- `deepseek-flash` needs `reasoning_effort = "none"` for this tool loop; the
+  thinking-mode default requires `reasoning_content` to be echoed back, which
+  the adapter does not do yet.
+- M2's end-to-end criterion is met. Driver-side acceptance verification and
+  the `keel-policy` split remain.

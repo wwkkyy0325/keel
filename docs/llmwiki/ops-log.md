@@ -211,3 +211,16 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 - Raised defaults to 12 model calls, 30 s tool timeout and 180 s turn timeout.
 - Verification: 123 tests; clippy, fmt and `cargo deny check`.
 - Commit: `fix: raise turn limits for real model runs`.
+
+### First real coding run
+
+- Added `reasoning_effort` to the profile/provider path; DeepSeek uses `none`
+  because its thinking mode rejects tool loops without echoed
+  `reasoning_content`.
+- Ran `deepseek-flash` on `task-001` in a temporary workspace. The model fixed
+  `calc.py`; `verify.sh` passed 4/4 hidden tests.
+- Shell calls were denied because stdin was not a terminal. The model stated
+  the fix was unverified by execution rather than fabricating a test run.
+- Report: `evals/reports/2026-11-02-task-001-deepseek.md`.
+- Verification: 124 tests; clippy, fmt and `cargo deny check`.
+- Commit: `feat: pass reasoning effort to the provider`.

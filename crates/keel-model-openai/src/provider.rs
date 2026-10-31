@@ -16,6 +16,8 @@ pub struct OpenAiConfig {
     pub base_url: String,
     pub api_key: String,
     pub model: String,
+    /// Optional provider hint such as `none` to disable thinking mode.
+    pub reasoning_effort: Option<String>,
 }
 
 pub struct OpenAiProvider {
@@ -23,6 +25,7 @@ pub struct OpenAiProvider {
     endpoint: String,
     api_key: String,
     fallback_model: String,
+    reasoning_effort: Option<String>,
 }
 
 impl OpenAiProvider {
@@ -44,6 +47,7 @@ impl OpenAiProvider {
             endpoint,
             api_key: config.api_key,
             fallback_model: config.model,
+            reasoning_effort: config.reasoning_effort,
         })
     }
 }
@@ -55,7 +59,11 @@ impl ModelProvider for OpenAiProvider {
         request: ModelRequest,
         cancel: &CancelToken,
     ) -> Result<ModelStream, ModelError> {
-        let body = build_request(&request, &self.fallback_model);
+        let body = build_request(
+            &request,
+            &self.fallback_model,
+            self.reasoning_effort.as_deref(),
+        );
         let response = tokio::select! {
             _ = cancel.cancelled() => {
                 return Err(ModelError::new(ErrorCode::Cancelled, "model request cancelled", false));

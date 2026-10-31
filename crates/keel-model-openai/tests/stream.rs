@@ -63,6 +63,7 @@ fn provider(url: String) -> OpenAiProvider {
         base_url: url,
         api_key: "test-key".to_owned(),
         model: "fallback-model".to_owned(),
+        reasoning_effort: None,
     })
     .unwrap()
 }

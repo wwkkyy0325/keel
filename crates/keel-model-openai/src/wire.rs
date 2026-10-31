@@ -12,7 +12,11 @@ use serde_json::{json, Map, Value};
 pub const CONTROL_TOOL_NAME: &str = "keel_interact";
 
 /// Builds the JSON body for an OpenAI-compatible chat completion request.
-pub fn build_request(request: &ModelRequest, fallback_model: &str) -> Value {
+pub fn build_request(
+    request: &ModelRequest,
+    fallback_model: &str,
+    reasoning_effort: Option<&str>,
+) -> Value {
     let model = if request.route.model.is_empty() {
         fallback_model
     } else {
@@ -26,14 +30,18 @@ pub fn build_request(request: &ModelRequest, fallback_model: &str) -> Value {
     let mut tools: Vec<Value> = request.tools.iter().map(tool_json).collect();
     tools.push(control_tool_json());
 
-    json!({
+    let mut body = json!({
         "model": model,
         "messages": messages,
         "tools": tools,
         "stream": true,
         "stream_options": { "include_usage": true },
         "max_tokens": request.max_output_tokens,
-    })
+    });
+    if let Some(effort) = reasoning_effort {
+        body["reasoning_effort"] = Value::String(effort.to_owned());
+    }
+    body
 }
 
 /// Parses the JSON string carried in a tool-call `arguments` field.

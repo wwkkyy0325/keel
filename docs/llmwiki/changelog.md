@@ -180,3 +180,15 @@
 - Raised the default turn budget to 12 model calls, 30 s per tool and 180 s per
   turn so a real provider can finish a coding round without a local timeout.
 - Verification: 123 tests, clippy, fmt and `cargo deny check`.
+
+### Reasoning effort and first real coding run
+
+- Added an optional profile/provider `reasoning_effort` hint. The DeepSeek
+  profile sets `none` because `deepseek-flash` thinking mode requires
+  `reasoning_content` to be echoed back in tool loops.
+- Ran `deepseek-flash` on `task-001`: the model fixed `calc.py`, and the
+  external hidden tests passed 4/4.
+- Shell attempts were denied in the non-terminal run; the model reported the
+  fix as unverified instead of claiming a test run.
+- Report: `evals/reports/2026-11-02-task-001-deepseek.md`.
+- Verification: 124 tests; clippy, fmt and `cargo deny check`.

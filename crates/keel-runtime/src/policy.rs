@@ -21,6 +21,8 @@ pub struct RuntimeConfig {
     pub model_route: ModelRoute,
     pub model_base_url: Option<String>,
     pub api_key_env: Option<String>,
+    /// Optional provider hint such as `none` to disable thinking mode.
+    pub reasoning_effort: Option<String>,
     pub max_output_tokens: u32,
     pub interaction: InteractionPolicy,
 }

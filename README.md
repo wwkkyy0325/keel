@@ -7,10 +7,10 @@ runtime — turn state machine, tool protocol, context assembly, permissions,
 memory, model wire — small and stable, while variants (coding, companionship,
 automation) arrive as policy profiles and plugins.
 
-**Status:** M1 implemented; M2 in progress — OpenAI-compatible streaming
-provider, acceptance verifier (compute, file hash, command and test), six
-coding tools and profile-driven provider selection. The first real coding eval
-is next.
+**Status:** M1 implemented; M2 end-to-end criterion met — OpenAI-compatible
+streaming provider, acceptance verifier (compute, file hash, command and test),
+six coding tools, profile-driven provider selection, and one coding task passed
+with `deepseek-flash`. Driver-side acceptance verification is next.
 
 ## Why "Keel"
 

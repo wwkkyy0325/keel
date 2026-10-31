@@ -49,8 +49,17 @@ fn request() -> ModelRequest {
 }
 
 #[test]
+fn reasoning_effort_is_omitted_unless_configured() {
+    let body = build_request(&request(), "fallback", None);
+    assert!(body.get("reasoning_effort").is_none());
+
+    let body = build_request(&request(), "fallback", Some("none"));
+    assert_eq!(body["reasoning_effort"], "none");
+}
+
+#[test]
 fn request_preserves_structured_tool_calls_and_control_tool() {
-    let body = build_request(&request(), "fallback");
+    let body = build_request(&request(), "fallback", None);
     assert_eq!(body["model"], "test-model");
     assert_eq!(body["stream"], true);
     assert_eq!(body["max_tokens"], 128);
