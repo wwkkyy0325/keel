@@ -51,6 +51,13 @@ one at a time. Summarization is blocked on
 - [ ] 12. Companion profile and 20-turn real run — verify: profile-only diff
       from M2, no tools, no kernel branch; transcript and metrics recorded
 
+## Answer artifact (ADR 0007)
+
+- [x] Turn answer as a separate artifact: body from the latest text-only
+      round, kernel-observed changes, deferred items, verification, wrap-up
+      notes, `missing` when empty — verify: narration is excluded, a written
+      file appears in `changes`, and a text-less turn is marked missing
+
 ## Verification commands
 
 ```bash

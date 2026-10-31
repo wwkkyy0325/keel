@@ -395,3 +395,17 @@
   model reported at the pressure point.
 - Verification: the wrap-up test asserts the report is captured; 154 tests,
   fmt and clippy clean.
+
+### M3 answer artifact (ADR 0007)
+
+- Added `Answer` to `keel-core`: revision, body, changes, pending, verification,
+  notes and a missing flag. It is separate from the transcript.
+- The body is the latest assistant round without tool calls; narration is
+  excluded. Changes come from kernel-observed `write_file` successes and are
+  deduplicated by path. Deferred interactions become pending items; the
+  verifier report is attached; the wrap-up report is kept as notes.
+- An empty body falls back to notes and otherwise sets `missing`.
+- `TurnOutcome.answer` carries the artifact; the CLI prints `answer:` and a
+  `changes:` line.
+- Verification: 161 tests; narration exclusion, change recording and the
+  missing-answer case are covered.

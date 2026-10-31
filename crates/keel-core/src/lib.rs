@@ -4,6 +4,7 @@
 //! crosses kernel boundaries: identifiers, messages, the tool protocol, model
 //! wire types, policy questions, events and errors.
 
+pub mod answer;
 pub mod cancel;
 pub mod context;
 pub mod error;
@@ -20,6 +21,7 @@ pub mod state;
 pub mod tool;
 pub mod verification;
 
+pub use answer::{Answer, Change, PendingItem};
 pub use cancel::CancelToken;
 pub use context::{estimate_tokens, BuildCtx, ContextStage, Fragment};
 pub use error::{ErrorCode, KernelError, ToolError};

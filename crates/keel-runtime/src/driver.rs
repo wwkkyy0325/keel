@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use keel_core::{
-    detect_secret, estimate_tokens, AcceptanceItem, BuildCtx, CancelToken, CommitCtx,
-    CommitDecision, ErrorCode, Event, EventSink, InteractionId, InteractionRequest,
+    detect_secret, estimate_tokens, AcceptanceItem, Answer, ArgValue, BuildCtx, CancelToken,
+    CommitCtx, CommitDecision, ErrorCode, Event, EventSink, InteractionId, InteractionRequest,
     InteractionResponse, KernelError, Message, ModelChunk, ModelError, ModelProvider, ModelRequest,
     ModelRole, OnTimeout, Policy, ReasoningLevel, SecretKind, Session, ToolArgs, ToolOutcome,
     TurnEvent, TurnState, VerificationMode, VerificationReport,
@@ -58,6 +58,7 @@ struct TurnStats {
     verification: Option<VerificationReport>,
     awaiting_wrap_up: bool,
     wrap_up_report: Option<String>,
+    answer: Answer,
 }
 
 struct AcceptancePlan {
@@ -87,6 +88,9 @@ pub struct TurnOutcome {
     /// Model text produced after the context wrap-up instruction, kept for
     /// the segment record. It is not a substitute for the final answer.
     pub wrap_up_report: Option<String>,
+    /// User-visible result of the turn, separate from the transcript in
+    /// `text`.
+    pub answer: Answer,
 }
 
 impl TurnOutcome {
@@ -235,6 +239,22 @@ impl<M: ModelProvider> TurnDriver<M> {
                 .record_turn(input, &text);
         }
 
+        if let Some(report) = &stats.wrap_up_report {
+            stats.answer.notes = Some(report.clone());
+        }
+        for interaction in &stats.deferred {
+            stats
+                .answer
+                .record_pending(format!("interaction {} was deferred", interaction.get()));
+        }
+        stats.answer.verification = stats.verification.clone();
+        if stats.answer.body.trim().is_empty() {
+            if let Some(report) = &stats.wrap_up_report {
+                stats.answer.set_body(report);
+            }
+        }
+        stats.answer.missing = stats.answer.body.trim().is_empty();
+
         TurnOutcome {
             turn_id,
             state,
@@ -247,6 +267,7 @@ impl<M: ModelProvider> TurnDriver<M> {
             reasoning_level: stats.reasoning,
             verification: stats.verification,
             wrap_up_report: stats.wrap_up_report,
+            answer: stats.answer,
         }
     }
 
@@ -691,6 +712,13 @@ impl<M: ModelProvider> TurnDriver<M> {
                 let mut failures = 0u32;
                 let mut repeated = false;
                 for (call, result) in calls_for_audit.iter().zip(results.iter()) {
+                    if call.name == "write_file"
+                        && matches!(&result.outcome, ToolOutcome::Success { .. })
+                    {
+                        if let Some(ArgValue::String(path)) = call.args.get("path") {
+                            stats.answer.record_change(path.clone());
+                        }
+                    }
                     let reasoning_failure = match &result.outcome {
                         ToolOutcome::Failure { error } => {
                             matches!(error.code, ErrorCode::InvalidArguments)
@@ -733,6 +761,7 @@ impl<M: ModelProvider> TurnDriver<M> {
                 continue 'turn;
             }
 
+            stats.answer.set_body(&round_text);
             self.step(fsm, turn_id, TurnEvent::DoneSignal)?;
             if let Some(plan) = &self.acceptance {
                 let verifier = AcceptanceVerifier::new(&self.workspace_root);

@@ -158,7 +158,19 @@ fn print_outcome(config: &RuntimeConfig, events: &EventLog, outcome: &TurnOutcom
     println!("profile: {}", config.profile_name);
     println!("turn: {}", outcome.turn_id.get());
     println!("state: {}", outcome.state);
-    println!("assistant: {}", outcome.text);
+    println!("answer: {}", outcome.answer.body);
+    if outcome.answer.missing {
+        println!("notice: the turn ended without an answer; the transcript is kept separately");
+    }
+    if !outcome.answer.changes.is_empty() {
+        let paths: Vec<&str> = outcome
+            .answer
+            .changes
+            .iter()
+            .map(|change| change.path.as_str())
+            .collect();
+        println!("changes: {}", paths.join(", "));
+    }
     println!("events: {}", events.len());
     println!(
         "usage: input={} output={} total={}",

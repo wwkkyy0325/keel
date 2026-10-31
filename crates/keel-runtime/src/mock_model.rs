@@ -18,6 +18,12 @@ pub enum MockStep {
     Thinking(String),
     /// Emit one tool call and finish.
     ToolCall { name: String, args: ToolArgs },
+    /// Emit text and a tool call in the same response, then finish.
+    TextAndToolCall {
+        text: String,
+        name: String,
+        args: ToolArgs,
+    },
     /// Emit one interaction request and finish.
     Interaction(InteractionRequest),
     /// Fail the stream request.
@@ -111,6 +117,22 @@ impl ModelProvider for MockModel {
             MockStep::ToolCall { name, args } => {
                 let usage = usage_for(&request, "");
                 let (tx, rx) = mpsc::channel(4);
+                send(
+                    &tx,
+                    ModelChunk::ToolCall(keel_core::ToolCallRequest {
+                        id: keel_core::ToolCallId::next(),
+                        name,
+                        args,
+                    }),
+                )
+                .await?;
+                send(&tx, ModelChunk::Finished { usage }).await?;
+                Ok(ModelStream::new(rx))
+            }
+            MockStep::TextAndToolCall { text, name, args } => {
+                let usage = usage_for(&request, &text);
+                let (tx, rx) = mpsc::channel(4);
+                send(&tx, ModelChunk::TextDelta(text)).await?;
                 send(
                     &tx,
                     ModelChunk::ToolCall(keel_core::ToolCallRequest {

@@ -206,6 +206,7 @@ async fn thinking_only_exhausts_the_model_budget() {
     let outcome = driver.run("hi", CancelToken::new()).await;
 
     assert_eq!(outcome.state, TurnState::Done);
+    assert!(outcome.answer.missing, "a turn with no text has no answer");
     let model_calls = events
         .for_turn(outcome.turn_id)
         .into_iter()
@@ -803,4 +804,56 @@ async fn tools_are_not_dispatched_on_the_final_call() {
         .filter(|record| matches!(record.event, Event::ToolStarted { .. }))
         .count();
     assert_eq!(dispatched, 1, "only the first call may dispatch a tool");
+}
+
+#[tokio::test]
+async fn narration_is_not_the_answer() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&["echo"], 4, PermissionLevel::WorkspaceAuto);
+
+    let mut args = ToolArgs::new();
+    args.insert("text", ArgValue::String("hi".to_owned()));
+    let model = MockModel::new(vec![
+        MockStep::TextAndToolCall {
+            text: "let me check".to_owned(),
+            name: "echo".to_owned(),
+            args,
+        },
+        MockStep::Text("the result".to_owned()),
+    ]);
+    let driver = common::build_driver(model, config, events, dir.path(), common::test_limits());
+
+    let outcome = driver.run("hi", CancelToken::new()).await;
+    assert!(outcome.is_done());
+    assert_eq!(outcome.answer.body, "the result");
+    assert_eq!(outcome.answer.revision, 1);
+    assert!(outcome.text.contains("let me check"));
+}
+
+#[tokio::test]
+async fn written_files_are_recorded_in_the_answer() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&["write_file"], 4, PermissionLevel::WorkspaceAuto);
+
+    let mut args = ToolArgs::new();
+    args.insert("path", ArgValue::String("note.txt".to_owned()));
+    args.insert("content", ArgValue::String("hello".to_owned()));
+    let model = MockModel::new(vec![
+        MockStep::TextAndToolCall {
+            text: "writing the note".to_owned(),
+            name: "write_file".to_owned(),
+            args,
+        },
+        MockStep::Text("wrote note.txt".to_owned()),
+    ]);
+    let driver = common::build_driver(model, config, events, dir.path(), common::test_limits());
+
+    let outcome = driver.run("write a note", CancelToken::new()).await;
+    assert!(outcome.is_done());
+    assert_eq!(outcome.answer.body, "wrote note.txt");
+    assert_eq!(outcome.answer.changes.len(), 1);
+    assert_eq!(outcome.answer.changes[0].path, "note.txt");
+    assert!(dir.path().join("note.txt").exists());
 }

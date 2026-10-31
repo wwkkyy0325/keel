@@ -27,7 +27,8 @@ immutable `RuntimeConfig`; plugins add optional capabilities.
 Status: M3 in progress. ADR 0006 is accepted. Sessions, budget-driven history
 assembly and the context governor are implemented: recent turns stay verbatim,
 older turns become one digest block, and pressure is measured in calls of
-headroom. 154 tests pass; the self-authored suite is 10/10 and the public
+headroom, and the turn has a separate `Answer` artifact (ADR 0007). 161 tests
+pass; the self-authored suite is 10/10 and the public
 baseline is HumanEval+ 20/20 and MBPP+ 19/20. Next M3 steps: tool summaries,
 segmentation, segment records and facts.
 

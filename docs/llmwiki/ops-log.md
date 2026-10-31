@@ -437,3 +437,17 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
   final answer. `TurnOutcome.text` keeps its existing accumulation semantics.
 - The red-pressure test now asserts the captured report.
 - Verification: 154 tests; fmt and clippy clean.
+
+### M3 answer artifact (ADR 0007)
+
+- Added `keel_core::Answer` with revision, body, changes, pending, verification,
+  notes and missing.
+- The driver sets the body on every text-only round (replacement, not
+  concatenation), records successful `write_file` paths from the tool-call
+  audit, collects deferred interactions as pending items, attaches the
+  verification report and the wrap-up notes, and marks a turn with no body as
+  missing.
+- `TurnOutcome.answer` is the host-facing result; `text` stays the transcript.
+  The CLI prints `answer:` and `changes:`.
+- Added `MockStep::TextAndToolCall` for a narration-plus-tool round.
+- Verification: 161 tests; `cargo fmt --check`; clippy with `-D warnings`.
