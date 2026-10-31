@@ -33,3 +33,13 @@ Copy `setup/` into an empty workspace, start the CLI with the profile named in
 `meta.toml`, and give it `task.md`. Then run `verify.sh` against that
 workspace. A real run requires a local `.env` with the provider key; keys do
 not belong in the chat or the repository.
+
+```bash
+workspace=$(mktemp -d)
+cp evals/cases/coding/task-001/setup/* "$workspace/"
+cargo run -p keel-cli -- \
+  --workspace "$workspace" \
+  --profile variants/coding/profile.openai.toml \
+  --input "$(cat evals/cases/coding/task-001/task.md)"
+bash evals/cases/coding/task-001/verify.sh "$workspace"
+```

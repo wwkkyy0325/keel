@@ -50,12 +50,9 @@ async fn main() -> ExitCode {
 
 async fn run() -> Result<(), KernelError> {
     dotenvy::dotenv().ok();
-    let (profile_path, input) = parse_args()?;
+    let (profile_path, input, workspace) = parse_args()?;
     let config = load_profile(&profile_path)?;
 
-    let workspace = std::env::current_dir().map_err(|error| KernelError::Io {
-        message: error.to_string(),
-    })?;
     let permissions = Arc::new(PermissionEngine::new(workspace, config.permission_level)?);
 
     let mut registry = ToolRegistry::new();
@@ -154,9 +151,12 @@ fn build_model(config: &RuntimeConfig, input: &str) -> Result<HostModel, KernelE
     }
 }
 
-fn parse_args() -> Result<(PathBuf, String), KernelError> {
+fn parse_args() -> Result<(PathBuf, String, PathBuf), KernelError> {
     let mut profile = PathBuf::from("variants/coding/profile.toml");
     let mut input = String::from("hello from keel");
+    let mut workspace = std::env::current_dir().map_err(|error| KernelError::Io {
+        message: error.to_string(),
+    })?;
     let mut args = std::env::args().skip(1);
 
     while let Some(argument) = args.next() {
@@ -172,13 +172,19 @@ fn parse_args() -> Result<(PathBuf, String), KernelError> {
                     .next()
                     .ok_or_else(|| invalid_config("missing value for `--input`"))?;
             }
+            "--workspace" => {
+                workspace = PathBuf::from(
+                    args.next()
+                        .ok_or_else(|| invalid_config("missing value for `--workspace`"))?,
+                );
+            }
             other => {
                 return Err(invalid_config(format!("unknown argument `{other}`")));
             }
         }
     }
 
-    Ok((profile, input))
+    Ok((profile, input, workspace))
 }
 
 fn script_for(config: &RuntimeConfig, input: &str) -> Vec<MockStep> {

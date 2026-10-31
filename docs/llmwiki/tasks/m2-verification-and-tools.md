@@ -64,5 +64,7 @@ not by the model's own claim.
 - Step 4 adds `evals/cases/coding/task-001`: an empty-list mean fix with
   hidden unittest coverage and a reference fix. The case rejects the initial
   workspace and accepts the reference; this was checked with `verify.sh`.
+- The CLI accepts `--workspace PATH`, so an eval runs in a temporary workspace
+  while `.env` and the profile still load from the repository.
 - `cargo test --workspace` passes: 122 tests.
 - Step 5, the real model run, needs a local `.env` and is not yet executed.

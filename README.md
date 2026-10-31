@@ -76,6 +76,17 @@ cargo run -p keel-cli -- --profile variants/coding/profile.openai.toml --input "
 The CLI loads `.env` automatically. Credentials stay in `.env` or the OS
 keyring, never in the chat or a profile.
 
+The workspace defaults to the current directory. Use `--workspace PATH` to run
+against a separate eval workspace while still loading `.env` and the profile
+from this repository:
+
+```bash
+cargo run -p keel-cli -- \
+  --workspace /tmp/keel-task-001 \
+  --profile variants/coding/profile.openai.toml \
+  --input "fix the mean function"
+```
+
 M1 uses two permission levels: `workspace_auto` is the logical sandbox and
 `full_auto` removes the workspace boundary while keeping the hard deny list.
 Deletion is recoverable through the trash; interactions (questions, plan

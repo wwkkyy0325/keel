@@ -141,3 +141,11 @@
 - Added `evals/README.md` and `.gitattributes` to keep shell and Python files
   at LF.
 - The real model run is still pending a local `.env`.
+
+### CLI workspace override
+
+- Added `--workspace PATH` so an eval can run against a temporary workspace
+  while `.env` and the profile still load from the repository.
+- Updated README and the eval instructions with the runnable command.
+- Verification: 122 tests, clippy, fmt, `cargo deny check` and a CLI mock turn
+  with `--workspace`.

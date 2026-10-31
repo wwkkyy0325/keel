@@ -168,3 +168,12 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 - Added `evals/README.md` and `.gitattributes` with LF for `*.sh` and `*.py`.
 - Real model execution remains step 5 and needs a local `.env`.
 - Commit: `test: add first coding eval case`.
+
+### M2 — CLI workspace override
+
+- Added `--workspace PATH` so eval runs use a temporary workspace while
+  `.env` and the profile load from the repository.
+- Updated README and eval instructions.
+- Verification: 122 tests, clippy, fmt, `cargo deny check`; mock turn with
+  `--workspace` reaches `Done`.
+- Commit: `feat: add workspace override to the CLI`.
