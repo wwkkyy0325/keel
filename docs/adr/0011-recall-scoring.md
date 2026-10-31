@@ -48,6 +48,14 @@ score = sum(w(t) for matched terms) / sum(w(t) for known query terms)
   segment that matches one of two known content terms scores 0.5, not 1.0.
 - An artifact path match sets a floor of 0.9.
 
+### Long task briefs do not recall
+
+A query with more than 24 content terms is a task brief, not a memory
+question. It recalls only when it contains `?`/`？` or a recall marker. Without
+this gate, a fifty-chapter prompt pulls two old segments on every turn because
+its place names and character names overlap the whole story. Short questions
+and explicit recall requests are unaffected.
+
 ### Intent and evidence
 
 - If the input contains a recall marker (`remember`, `earlier`, `mentioned`,

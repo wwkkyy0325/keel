@@ -16,6 +16,9 @@ pub const RECALL_MIN_SCORE: f32 = 0.34;
 pub const RECALL_INTENT_SCORE: f32 = 0.20;
 /// Segments recalled per turn.
 pub const RECALL_LIMIT: usize = 2;
+/// A query this large is a task brief, not a memory question. It only recalls
+/// when it also asks for history.
+const RECALL_MAX_QUERY_TERMS: usize = 24;
 /// Characters kept from each message in a recall excerpt.
 pub const RECALL_EXCERPT_CHARS: usize = 300;
 
@@ -844,6 +847,14 @@ impl Session {
     pub fn recall(&self, input: &str) -> Vec<RecalledSegment> {
         let input_terms = query_terms(input);
         if input_terms.is_empty() {
+            return Vec::new();
+        }
+        let asks_history = input.contains('?')
+            || input.contains('？')
+            || RECALL_MARKERS
+                .iter()
+                .any(|marker| contains_marker(input, marker));
+        if !asks_history && input_terms.len() > RECALL_MAX_QUERY_TERMS {
             return Vec::new();
         }
         let document_count = self
@@ -2094,6 +2105,20 @@ mod recall_tests {
         assert_eq!(recalled[0].segment_id, 0);
         assert!(recalled[0].matched >= 1);
         assert!(recalled[0].score_bp >= 3_400);
+    }
+
+    #[test]
+    fn a_long_task_brief_does_not_recall() {
+        let mut session = Session::new();
+        record(&mut session, "the pasta i made was aglio e olio");
+        session.begin_turn("alpha beta");
+        record(&mut session, "alpha beta");
+        session.begin_turn("gamma delta");
+        session.set_summary("summary", &[0], 256);
+
+        let brief = "继续写第2章。先读状态，写章节，更新状态，不要提问，不要跳章。".repeat(8);
+
+        assert!(session.recall(&brief).is_empty());
     }
 
     #[test]

@@ -6,10 +6,10 @@ use std::time::Duration;
 use async_trait::async_trait;
 use keel_core::{
     AcceptanceItem, ArgValue, CancelToken, CommitCtx, CommitDecision, ContextRecipe, ErrorCode,
-    Event, MemoryPolicy, Message, MessageRole, ModelChunk, ModelError, ModelProvider, ModelRequest,
-    ModelRole, ModelRoute, ModelStream, PermissionLevel, Policy, ReasoningLevel, SecretKind,
-    TokenUsage, Tool, ToolArgs, ToolCallId, ToolCtx, ToolOutcome, ToolSchema, TurnId, TurnState,
-    VerificationMode, VerifySpec,
+    Event, KernelError, MemoryPolicy, Message, MessageRole, ModelChunk, ModelError, ModelProvider,
+    ModelRequest, ModelRole, ModelRoute, ModelStream, PermissionLevel, Policy, ReasoningLevel,
+    SecretKind, TokenUsage, Tool, ToolArgs, ToolCallId, ToolCtx, ToolOutcome, ToolSchema, TurnId,
+    TurnState, VerificationMode, VerifySpec,
 };
 use keel_runtime::{
     DeferAllInteractionPort, EventLog, InteractionBroker, MockModel, MockStep, PermissionEngine,
@@ -496,6 +496,14 @@ async fn acceptance_failure_reprompts_then_ends_in_error() {
         .verification
         .as_ref()
         .is_some_and(|report| !report.passed()));
+    if let Some(KernelError::VerificationFailed { failures }) = &outcome.error {
+        assert!(
+            failures.iter().any(|failure| failure.contains("wrong")),
+            "{failures:?}"
+        );
+    } else {
+        panic!("expected VerificationFailed, got {:?}", outcome.error);
+    }
     assert!(events
         .for_turn(outcome.turn_id)
         .into_iter()

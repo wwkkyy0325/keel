@@ -36,8 +36,10 @@ editing surface.
 - The host seeds items with `add_host`; they are immutable in text and cannot
   be removed.
 - A host-seeded list may be locked. A locked list rejects `add` and `remove`
-  from the model; status updates are still allowed. This is how a fixed plan,
-  such as fifty chapter tasks, survives contact with the model.
+  from the model; only the current item may change status. Completing or
+  starting a later item is rejected with `OutOfOrder`, so a fixed plan cannot
+  be completed out of order. This is how a fifty-chapter plan survives a
+  failed chapter instead of silently skipping it.
 - An unlocked list lets the model add and remove its own items.
 
 ### Tool

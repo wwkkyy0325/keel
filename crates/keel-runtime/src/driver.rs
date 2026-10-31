@@ -1363,7 +1363,21 @@ fn verification_failures(report: &VerificationReport) -> Vec<String> {
         .required_failed
         .iter()
         .chain(report.required_unverified.iter())
-        .cloned()
+        .map(|item_id| {
+            let detail = report
+                .evidence
+                .iter()
+                .find(|evidence| evidence.item_id == *item_id)
+                .map(|evidence| evidence.detail.trim())
+                .filter(|detail| !detail.is_empty());
+            match detail {
+                Some(detail) => {
+                    let short: String = detail.chars().take(300).collect();
+                    format!("{item_id}: {short}")
+                }
+                None => item_id.clone(),
+            }
+        })
         .collect()
 }
 

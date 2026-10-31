@@ -129,6 +129,8 @@ pub enum TodoError {
     Closed,
     NotComplete,
     InvalidState,
+    /// A locked host plan only advances the current item.
+    OutOfOrder,
 }
 
 impl fmt::Display for TodoError {
@@ -149,6 +151,7 @@ impl fmt::Display for TodoError {
             Self::Closed => write!(f, "todo list is closed"),
             Self::NotComplete => write!(f, "not every item is completed"),
             Self::InvalidState => write!(f, "invalid todo state transition"),
+            Self::OutOfOrder => write!(f, "a locked host plan only advances the current item"),
         }
     }
 }
@@ -207,6 +210,12 @@ impl TodoList {
             .iter()
             .position(|item| item.id == id)
             .ok_or(TodoError::NotFound)?;
+        if self.locked {
+            let current = self.current().map(|item| item.id);
+            if current != Some(id) {
+                return Err(TodoError::OutOfOrder);
+            }
+        }
         if status == TodoStatus::InProgress
             && self
                 .items
@@ -407,6 +416,39 @@ mod tests {
         assert_eq!(todos.remove(id), Err(TodoError::Locked));
         todos.update_status(id, TodoStatus::Completed).unwrap();
         assert_eq!(todos.completed(), 1);
+    }
+
+    #[test]
+    fn a_locked_plan_rejects_a_later_completion() {
+        let mut todos = TodoList::new();
+        let first = todos.add_host("chapter 1").unwrap();
+        let second = todos.add_host("chapter 2").unwrap();
+        todos.lock();
+
+        assert_eq!(
+            todos.update_status(second, TodoStatus::Completed),
+            Err(TodoError::OutOfOrder)
+        );
+        assert_eq!(todos.current().map(|item| item.id), Some(first));
+        todos.update_status(first, TodoStatus::Completed).unwrap();
+        assert_eq!(todos.current().map(|item| item.id), Some(second));
+        todos.update_status(second, TodoStatus::Completed).unwrap();
+        assert_eq!(todos.state, TodoState::Completed);
+    }
+
+    #[test]
+    fn a_locked_plan_rejects_a_later_in_progress() {
+        let mut todos = TodoList::new();
+        let first = todos.add_host("chapter 1").unwrap();
+        let second = todos.add_host("chapter 2").unwrap();
+        todos.lock();
+
+        assert_eq!(
+            todos.update_status(second, TodoStatus::InProgress),
+            Err(TodoError::OutOfOrder)
+        );
+        todos.update_status(first, TodoStatus::InProgress).unwrap();
+        assert_eq!(todos.current().map(|item| item.id), Some(first));
     }
 
     #[test]
