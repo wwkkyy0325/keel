@@ -696,6 +696,25 @@
   wrote 14/15 with similar input. Probes or a state-less workload are needed.
 - Missing chapters in no-memo and no-todo are single-run model variance.
 
+### IDF recall scoring and Chinese queries
+
+- Recall now filters query-only question and meta words (English and Chinese
+  bigrams), weights terms by IDF over the session, and ignores query terms that
+  never occur in the session when normalizing. Segment terms are unchanged, so
+  topic segmentation does not move.
+- A recall marker (`remember`, `earlier`, `之前`, `记得`, ...) lowers the
+  threshold from 0.34 to 0.20; a matched term present in every segment is not
+  enough unless an artifact path is named. Artifact hits floor the score at
+  0.9.
+- `RecalledSegment` and `HistoryRecalled` now carry `score_bp`, `matched`,
+  `query_terms` and `known_terms`; the CLI prints
+  `recall: score=0.73 hits=3/4 known=4 segments=[0] tokens=257`.
+- Validation on DeepSeek at the 8k companion profile: 24/24 `Done`; the Marlin
+  probe scored 0.73 with 3/4 matches and answered `config/marlin.toml`; the
+  pasta probe scored 1.00 with 1/2 known and answered `aglio e olio`. The 26B
+  local rerun was deferred because the GPU was in use by another user.
+- Verification: 237 tests; fmt and clippy clean. ADR 0011.
+
 ### Local model probe and control-tool fix
 
 - Ran the 24-turn companion probe against a local llama.cpp endpoint

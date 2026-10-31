@@ -120,6 +120,21 @@ With `--jinja` and reasoning on, the model emitted `<|channel>thought` and
 llama.cpp's parser rejected it. `-rea off --reasoning-format deepseek` produced
 clean content. This is a llama.cpp/model-template issue, not a Keel bug.
 
+## Update after the recall change
+
+The 8k pasta miss was not only a memo-capacity result. It was a scoring
+dilution: the query included `what`, `mentioned` and `earlier`, so one content
+match scored `1/5`. ADR 0011 now filters query meta words, ignores terms that
+never occur in the session, and weights the rest by IDF. On the same 8k
+companion profile with DeepSeek, the pasta probe recalls segment 5 at
+`score=1.00 hits=1/2 known=1` and answers `aglio e olio`; the Marlin probe
+scores `0.73`.
+
+The 26B local arms in this report predate that change. A local rerun at 8k is
+pending because the GPU was in use by another user; the scoring itself is
+model-independent, and the deterministic unit tests cover English and Chinese
+queries.
+
 ## Limits
 
 - Two local models, one quantisation each, one scripted English workload and

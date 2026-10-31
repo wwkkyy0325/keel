@@ -79,6 +79,15 @@ needed.
 
 Workload: `prompts-v2.txt`, `runs/v2-full.log`, `runs/v2-no-recall.log`.
 
+## Update after ADR 0011
+
+The turn 24 miss was a scoring dilution: the query included `what`,
+`mentioned` and `earlier`, leaving one content match out of five. Recall now
+filters query meta words, ignores terms absent from the session and weights by
+IDF. On the same 8k companion profile with DeepSeek, the pasta probe recalls at
+`score=1.00 hits=1/2 known=1` and answers `aglio e olio`. The numbers above
+describe the old scoring.
+
 ## Limits
 
 - One run per arm; memo rewrites differ between runs at the same inputs.
