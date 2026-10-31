@@ -236,6 +236,7 @@ async fn red_pressure_injects_one_wrap_up() {
 
     let second = harness.driver.run("continue", CancelToken::new()).await;
     assert!(second.is_done());
+    assert_eq!(second.wrap_up_report.as_deref(), Some("ack"));
 
     let requests = harness.requests.lock().unwrap();
     let request = &requests[1];

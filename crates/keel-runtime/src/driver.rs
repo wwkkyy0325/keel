@@ -56,6 +56,8 @@ struct TurnStats {
     previous_failed_call: Option<(String, ToolArgs)>,
     verification_reprompts: u32,
     verification: Option<VerificationReport>,
+    awaiting_wrap_up: bool,
+    wrap_up_report: Option<String>,
 }
 
 struct AcceptancePlan {
@@ -82,6 +84,9 @@ pub struct TurnOutcome {
     pub reasoning_level: ReasoningLevel,
     /// Last acceptance report, when the host supplied a checklist.
     pub verification: Option<VerificationReport>,
+    /// Model text produced after the context wrap-up instruction, kept for
+    /// the segment record. It is not a substitute for the final answer.
+    pub wrap_up_report: Option<String>,
 }
 
 impl TurnOutcome {
@@ -241,6 +246,7 @@ impl<M: ModelProvider> TurnDriver<M> {
             duration_ms: started.elapsed().as_millis() as u64,
             reasoning_level: stats.reasoning,
             verification: stats.verification,
+            wrap_up_report: stats.wrap_up_report,
         }
     }
 
@@ -384,6 +390,7 @@ impl<M: ModelProvider> TurnDriver<M> {
                 estimated_tokens.saturating_add(estimate_tokens(WRAP_UP)) <= recipe.budget_tokens;
             if pressure.level == PressureLevel::Red && !wrapped_up && wrap_up_fits {
                 wrapped_up = true;
+                stats.awaiting_wrap_up = true;
                 messages.push(Arc::new(Message::system(WRAP_UP)));
                 self.events.append(Event::WrapUpInjected {
                     turn_id,
@@ -517,6 +524,14 @@ impl<M: ModelProvider> TurnDriver<M> {
                 tool_calls: calls.len(),
                 usage,
             });
+
+            // The first text after the wrap-up instruction is the report. It
+            // stays ordinary assistant text, and is also kept separately so
+            // the session can use it when the segment is sealed.
+            if stats.awaiting_wrap_up && !round_text.trim().is_empty() {
+                stats.wrap_up_report = Some(round_text.clone());
+                stats.awaiting_wrap_up = false;
+            }
 
             // Tools were disabled for the final call. If the model asked for
             // one anyway, ignore it and keep any text it produced.

@@ -428,3 +428,12 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
   has zero tools and the instruction, and a tool request on the final call is
   never dispatched.
 - Verification: 154 tests; `cargo fmt --check`; clippy with `-D warnings`.
+
+### M3 wrap-up report capture
+
+- Added `TurnStats.awaiting_wrap_up` and `wrap_up_report`. The first non-empty
+  assistant text after the wrap-up instruction is stored on the turn.
+- Exposed it as `TurnOutcome.wrap_up_report`; it is a record seed, not the
+  final answer. `TurnOutcome.text` keeps its existing accumulation semantics.
+- The red-pressure test now asserts the captured report.
+- Verification: 154 tests; fmt and clippy clean.

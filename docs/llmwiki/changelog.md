@@ -384,3 +384,14 @@
 - Added `FinalCallForced` and two tests: the final request has no tools and the
   instruction, and a tool request on the final call is never dispatched.
 - Verification: 154 tests; fmt and clippy clean.
+
+### M3 wrap-up report capture
+
+- The first assistant text after the context wrap-up instruction is now kept
+  separately as `TurnOutcome.wrap_up_report`, instead of being only anonymous
+  text in the transcript.
+- It is not substituted for the final answer. It exists so the session can seed
+  a segment record when the segment is sealed, and so a host can audit what the
+  model reported at the pressure point.
+- Verification: the wrap-up test asserts the report is captured; 154 tests,
+  fmt and clippy clean.
