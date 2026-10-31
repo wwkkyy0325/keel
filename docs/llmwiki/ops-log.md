@@ -1,0 +1,54 @@
+# Operations log
+
+Chronological record of implementation steps, verification commands and
+commits. Design decisions live in `docs/adr/`; this file is the working trail.
+
+## 2026-11-02
+
+### M1 kernel
+
+- Created the workspace with `crates/keel-core`, `crates/keel-runtime` and
+  `hosts/keel-cli`.
+- Implemented the turn FSM, event log, mock model, tool dispatch, context
+  assembly, policy module, minimal permission module and the CLI.
+- Added `echo`, `read_file` and `write_file`.
+- Added cancellation, timeouts and the 20+ test suite.
+
+### Permission and interaction refactor
+
+- Reduced permissions to `workspace_auto` and `full_auto` (ADR 0002).
+- Moved permission enforcement into the dispatcher through
+  `Tool::permission_requests`.
+- Added the hard deny baseline, path-prefix grants, `full_auto` escalation
+  with TTL and `revoke_all`.
+- Added soft-delete `TrashStore`; `write_file` backs up overwritten files.
+- Added typed interactions, `InteractionPort`, `InteractionBroker`,
+  `WaitInteraction`, permission confirmation, escalation and `TurnReport`
+  (ADR 0003).
+- Internalized plan mode as tool visibility.
+- Added the acceptance checklist contract (ADR 0004).
+- Added structured tool-call messages and provider cancellation.
+- Re-check the context budget before every model call.
+- `before_commit` accepts only `Commit`; other decisions return `Unsupported`.
+
+### Verification
+
+- `cargo fmt --check`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test --workspace` — 86 tests
+- `cargo deny check` — advisories, bans, licenses and sources ok
+- `cargo run --release -p keel-runtime --example turn_overhead` — p50 2 us,
+  p99 9 us over 1000 turns
+- `keel-cli` coding and companion profiles both reach `Done`
+
+### Environment
+
+- Installed `cargo-deny v0.20.2` with `cargo install cargo-deny --locked`.
+- Pinned the path workspace dependencies to `version = "0.1.0"` so the
+  `wildcards = "deny"` policy accepts them.
+- `deny.toml` reports `license-not-encountered` warnings for allowances that
+  are not currently used; no check fails.
+
+### Commits
+
+- `feat: implement M1 kernel with permissions and interactions` (current)

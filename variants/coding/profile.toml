@@ -1,0 +1,25 @@
+[profile]
+name = "coding"
+
+[model]
+provider = "mock"
+model = "mock-coding"
+thinking_budget = 1024
+max_output_tokens = 1024
+
+[context]
+stages = ["system", "latest"]
+budget_tokens = 16000
+
+[tools]
+visible = ["echo", "read_file", "write_file"]
+budget = 12
+
+[verification]
+mode = "none"
+
+[permission]
+level = "workspace_auto"
+
+[persona]
+system = "prompts/coding.md"

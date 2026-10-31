@@ -1,0 +1,387 @@
+use std::collections::{BTreeSet, VecDeque};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use keel_core::{
+    CancelToken, ErrorCode, Event, GrantScope, InteractionKind, InteractionOption,
+    InteractionRequest, InteractionResponse, PermissionDecision, PermissionGate, RiskLevel, Tool,
+    ToolArgs, ToolCallId, ToolCallRequest, ToolCtx, ToolError, ToolResult, TurnId,
+};
+use tokio::task::JoinSet;
+
+use crate::event_log::EventLog;
+use crate::interaction::InteractionBroker;
+use crate::permission::PermissionEngine;
+use crate::registry::ToolRegistry;
+
+struct PreparedCall {
+    index: usize,
+    tool: Arc<dyn Tool>,
+    call_id: ToolCallId,
+    name: String,
+    args: ToolArgs,
+    risk: RiskLevel,
+}
+
+/// Dispatches tool calls: read-only calls run concurrently, mutating and
+/// dangerous calls run one at a time. Every call is audited.
+pub struct ToolDispatcher {
+    registry: Arc<ToolRegistry>,
+    events: Arc<EventLog>,
+    permission: Arc<PermissionEngine>,
+    interactions: Option<Arc<InteractionBroker>>,
+    timeout: Duration,
+}
+
+impl ToolDispatcher {
+    pub fn new(
+        registry: Arc<ToolRegistry>,
+        events: Arc<EventLog>,
+        permission: Arc<PermissionEngine>,
+        timeout: Duration,
+    ) -> Self {
+        Self {
+            registry,
+            events,
+            permission,
+            interactions: None,
+            timeout,
+        }
+    }
+
+    pub fn with_interactions(mut self, interactions: Arc<InteractionBroker>) -> Self {
+        self.interactions = Some(interactions);
+        self
+    }
+
+    pub async fn dispatch(
+        &self,
+        turn_id: TurnId,
+        calls: Vec<ToolCallRequest>,
+        visible: &BTreeSet<String>,
+        cancel: &CancelToken,
+    ) -> Vec<ToolResult> {
+        let call_ids: Vec<ToolCallId> = calls.iter().map(|call| call.id).collect();
+        let call_names: Vec<String> = calls.iter().map(|call| call.name.clone()).collect();
+        let mut results: Vec<Option<ToolResult>> = vec![None; calls.len()];
+        let mut reads = Vec::new();
+        let mut writes = Vec::new();
+
+        for (index, call) in calls.into_iter().enumerate() {
+            let tool = self.registry.get(&call.name);
+            let risk = tool
+                .as_ref()
+                .map_or(RiskLevel::Dangerous, |tool| tool.schema().risk);
+
+            if !visible.contains(&call.name) {
+                results[index] = Some(self.reject(
+                    turn_id,
+                    call.id,
+                    call.name.clone(),
+                    risk,
+                    ToolError::permission_denied(format!(
+                        "tool `{}` is not visible for this turn",
+                        call.name
+                    )),
+                ));
+                continue;
+            }
+
+            let Some(tool) = tool else {
+                results[index] = Some(self.reject(
+                    turn_id,
+                    call.id,
+                    call.name.clone(),
+                    risk,
+                    ToolError::not_found(format!("tool `{}` is not registered", call.name)),
+                ));
+                continue;
+            };
+
+            let schema = tool.schema();
+            if let Err(error) = schema.validate(&call.args) {
+                results[index] =
+                    Some(self.reject(turn_id, call.id, call.name.clone(), schema.risk, error));
+                continue;
+            }
+
+            if let Err(error) = self
+                .check_permissions(turn_id, call.id, &call.name, &tool, &call.args, cancel)
+                .await
+            {
+                results[index] =
+                    Some(self.reject(turn_id, call.id, call.name.clone(), schema.risk, error));
+                continue;
+            }
+
+            let prepared = PreparedCall {
+                index,
+                tool,
+                call_id: call.id,
+                name: call.name,
+                args: call.args,
+                risk: schema.risk,
+            };
+            if schema.risk == RiskLevel::ReadOnly {
+                reads.push(prepared);
+            } else {
+                writes.push(prepared);
+            }
+        }
+
+        let read_indices: VecDeque<usize> = reads.iter().map(|prepared| prepared.index).collect();
+        let mut join = JoinSet::new();
+        for prepared in reads {
+            let ctx = self.tool_ctx(turn_id, prepared.call_id, cancel.clone());
+            let events = self.events.clone();
+            let timeout = self.timeout;
+            let cancel = cancel.clone();
+            join.spawn(async move {
+                let start = Instant::now();
+                events.append(Event::ToolStarted {
+                    turn_id,
+                    call_id: prepared.call_id,
+                    tool: prepared.name.clone(),
+                    risk: prepared.risk,
+                });
+                let result = run_tool(
+                    prepared.tool,
+                    prepared.name.clone(),
+                    prepared.args,
+                    ctx,
+                    timeout,
+                    &cancel,
+                )
+                .await;
+                events.append(Event::ToolFinished {
+                    turn_id,
+                    call_id: prepared.call_id,
+                    tool: prepared.name,
+                    ok: result.is_success(),
+                    error: result.error().map(|error| error.code),
+                    duration_ms: elapsed_ms(start.elapsed()),
+                });
+                (prepared.index, result)
+            });
+        }
+
+        let mut pending = read_indices;
+
+        while let Some(joined) = join.join_next().await {
+            match joined {
+                Ok((index, result)) => {
+                    pending.retain(|candidate| *candidate != index);
+                    results[index] = Some(result);
+                }
+                Err(error) => {
+                    let index = pending.pop_front().unwrap_or(0);
+                    let call_id = call_ids.get(index).copied().unwrap_or(ToolCallId::new(0));
+                    let name = call_names
+                        .get(index)
+                        .cloned()
+                        .unwrap_or_else(|| "unknown".to_owned());
+                    results[index] = Some(ToolResult::failure(
+                        call_id,
+                        name,
+                        ToolError::new(
+                            ErrorCode::Internal,
+                            format!("tool task failed: {error}"),
+                            false,
+                        ),
+                    ));
+                }
+            }
+        }
+
+        for prepared in writes {
+            let start = Instant::now();
+            self.events.append(Event::ToolStarted {
+                turn_id,
+                call_id: prepared.call_id,
+                tool: prepared.name.clone(),
+                risk: prepared.risk,
+            });
+            let ctx = self.tool_ctx(turn_id, prepared.call_id, cancel.clone());
+            let result = if cancel.is_cancelled() {
+                ToolResult::failure(
+                    prepared.call_id,
+                    prepared.name.clone(),
+                    ToolError::cancelled(),
+                )
+            } else {
+                run_tool(
+                    prepared.tool,
+                    prepared.name.clone(),
+                    prepared.args,
+                    ctx,
+                    self.timeout,
+                    cancel,
+                )
+                .await
+            };
+            self.events.append(Event::ToolFinished {
+                turn_id,
+                call_id: prepared.call_id,
+                tool: prepared.name,
+                ok: result.is_success(),
+                error: result.error().map(|error| error.code),
+                duration_ms: elapsed_ms(start.elapsed()),
+            });
+            results[prepared.index] = Some(result);
+        }
+
+        results
+            .into_iter()
+            .map(|slot| {
+                slot.unwrap_or_else(|| {
+                    ToolResult::failure(
+                        ToolCallId::new(0),
+                        "unknown",
+                        ToolError::new(ErrorCode::Internal, "tool call produced no result", false),
+                    )
+                })
+            })
+            .collect()
+    }
+
+    async fn check_permissions(
+        &self,
+        turn_id: TurnId,
+        call_id: ToolCallId,
+        tool_name: &str,
+        tool: &Arc<dyn Tool>,
+        args: &ToolArgs,
+        cancel: &CancelToken,
+    ) -> Result<(), ToolError> {
+        for mut request in tool.permission_requests(args)? {
+            // The registered name wins; a tool must not rename itself in an
+            // audit record.
+            request.tool = tool_name.to_owned();
+            match self.permission.check(&request) {
+                PermissionDecision::Allow => {}
+                PermissionDecision::Deny { code, message } => {
+                    return Err(ToolError::new(code, message, false));
+                }
+                PermissionDecision::Confirm { reason } => {
+                    let Some(interactions) = &self.interactions else {
+                        return Err(ToolError::permission_denied(format!(
+                            "confirmation required: {reason}"
+                        )));
+                    };
+
+                    let scope = request
+                        .path
+                        .as_ref()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_else(|| "no path".to_owned());
+                    let prompt = format!(
+                        "Allow `{tool_name}` to {} `{scope}`? {reason}",
+                        request.access.as_str()
+                    );
+                    let interaction = InteractionRequest::new(
+                        turn_id,
+                        InteractionKind::PermissionApproval,
+                        prompt,
+                    )
+                    .with_options(vec![
+                        InteractionOption::new("deny", "Deny"),
+                        InteractionOption::new("allow_once", "Allow once"),
+                        InteractionOption::new("allow_scope", "Allow this path for the session"),
+                        InteractionOption::new("full_auto", "Allow and switch to full auto"),
+                    ]);
+                    let mut interaction = interaction;
+                    interaction.correlation = Some(call_id);
+
+                    match interactions.request(interaction, cancel).await {
+                        InteractionResponse::Approved {
+                            scope: GrantScope::Once,
+                        } => {}
+                        InteractionResponse::Approved {
+                            scope: GrantScope::PathPrefix { prefix, ttl },
+                        } => self
+                            .permission
+                            .grant_path_prefix(&prefix, request.access, ttl),
+                        InteractionResponse::Approved {
+                            scope: GrantScope::FullAutoSession { ttl },
+                        } => self.permission.escalate_full_auto(ttl),
+                        InteractionResponse::Cancelled => {
+                            return Err(ToolError::cancelled());
+                        }
+                        InteractionResponse::Rejected { reason } => {
+                            return Err(ToolError::permission_denied(reason));
+                        }
+                        InteractionResponse::Deferred
+                        | InteractionResponse::TimedOut
+                        | InteractionResponse::Selected { .. }
+                        | InteractionResponse::Freeform { .. } => {
+                            return Err(ToolError::permission_denied(
+                                "permission confirmation was not granted",
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn tool_ctx(&self, turn_id: TurnId, call_id: ToolCallId, cancel: CancelToken) -> ToolCtx {
+        ToolCtx {
+            turn_id,
+            call_id,
+            workspace_root: self.permission.root().to_path_buf(),
+            cancel,
+        }
+    }
+
+    fn reject(
+        &self,
+        turn_id: TurnId,
+        call_id: ToolCallId,
+        name: String,
+        risk: RiskLevel,
+        error: ToolError,
+    ) -> ToolResult {
+        self.events.append(Event::ToolStarted {
+            turn_id,
+            call_id,
+            tool: name.clone(),
+            risk,
+        });
+        self.events.append(Event::ToolFinished {
+            turn_id,
+            call_id,
+            tool: name.clone(),
+            ok: false,
+            error: Some(error.code),
+            duration_ms: 0,
+        });
+        ToolResult::failure(call_id, name, error)
+    }
+}
+
+async fn run_tool(
+    tool: Arc<dyn Tool>,
+    tool_name: String,
+    args: ToolArgs,
+    ctx: ToolCtx,
+    timeout: Duration,
+    cancel: &CancelToken,
+) -> ToolResult {
+    let call_id = ctx.call_id;
+    tokio::select! {
+        _ = cancel.cancelled() => {
+            ToolResult::failure(call_id, tool_name, ToolError::cancelled())
+        }
+        result = tokio::time::timeout(timeout, tool.call(args, &ctx)) => {
+            match result {
+                Ok(result) => result,
+                Err(_) => ToolResult::failure(call_id, tool_name, ToolError::timeout(timeout)),
+            }
+        }
+    }
+}
+
+fn elapsed_ms(duration: Duration) -> u64 {
+    duration.as_millis().min(u128::from(u64::MAX)) as u64
+}

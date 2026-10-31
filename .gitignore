@@ -13,6 +13,7 @@ secrets/
 *.pfx
 
 # Runtime data
+.keel/
 data/
 *.db
 *.db-shm

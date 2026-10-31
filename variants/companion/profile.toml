@@ -1,0 +1,25 @@
+[profile]
+name = "companion"
+
+[model]
+provider = "mock"
+model = "mock-companion"
+thinking_budget = 0
+max_output_tokens = 1024
+
+[context]
+stages = ["system", "latest"]
+budget_tokens = 12000
+
+[tools]
+visible = []
+budget = 0
+
+[verification]
+mode = "none"
+
+[permission]
+level = "workspace_auto"
+
+[persona]
+system = "prompts/companion.md"

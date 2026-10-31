@@ -23,12 +23,16 @@ States:
 
 Terminal: `Done`, `Error`, `Cancelled`.
 
-Auxiliary states: `Stalled`, `Escalating`, `WaitSubAgents`, `TerminalCommit`.
+Auxiliary states: `Stalled`, `Escalating`, `WaitSubAgents`, `WaitInteraction`,
+`TerminalCommit`.
 
 Events include: `Ready`, `ToolCalls`, `DoneSignal`, `ThinkingOnly`,
 `SubAgentsPending`, `UnverifiedHard`, `VerifyCapReached`, `StreamFailure`,
 `Overflow`, `VerifiedStalled`, `BudgetConverge`, `BudgetCommit`,
-`TurnsExhausted`, `WallClockLow`, `Cancel`.
+`TurnsExhausted`, `WallClockLow`, `InteractionPending`, `InteractionResolved`,
+`InteractionDeferred`, `InteractionEndTurn`, `Cancel`, and `Fail`. `Fail` is a
+kernel-internal event accepted from any non-terminal state; it guarantees that
+an unexpected error still reaches a terminal state.
 
 Every transition has a test. New states require an ADR.
 
@@ -36,11 +40,16 @@ Every transition has a test. New states require an ADR.
 
 ```rust
 pub trait ModelProvider {
-    async fn stream(&self, request: ModelRequest) -> Result<ModelStream, ModelError>;
+    async fn stream(
+        &self,
+        request: ModelRequest,
+        cancel: &CancelToken,
+    ) -> Result<ModelStream, ModelError>;
 }
 
 pub trait Tool {
     fn schema(&self) -> ToolSchema;
+    fn permission_requests(&self, args: &ToolArgs) -> Result<Vec<PermissionRequest>, ToolError>;
     async fn call(&self, args: ToolArgs, ctx: &ToolCtx) -> ToolResult;
 }
 
@@ -61,7 +70,7 @@ pub trait Policy {
     fn thinking_budget(&self) -> u32;
     fn verification_mode(&self) -> VerificationMode;
     fn memory_policy(&self) -> MemoryPolicy;
-    fn model_route(&self, role: Role) -> ModelRoute;
+    fn model_route(&self, role: ModelRole) -> ModelRoute;
     fn before_commit(&self, ctx: &CommitCtx) -> CommitDecision;
 }
 ```
@@ -69,21 +78,41 @@ pub trait Policy {
 The kernel asks `Policy` at defined points and receives data. Policy
 implementations do not receive mutable kernel state.
 
+Interactions are a control-plane port, not a tool:
+
+```rust
+pub trait InteractionPort {
+    async fn request(request: InteractionRequest, cancel: &CancelToken) -> InteractionResponse;
+}
+```
+
+The kernel assigns interaction ids and turn ids. Model providers map a native
+control primitive or structured output to `ModelChunk::Interaction`; the
+domain tool list is unchanged.
+
 ## Tool protocol
 
 - Every tool has a stable name, JSON schema, risk level and description.
 - Arguments and results are typed at the kernel boundary.
+- Assistant tool-call messages carry structured calls; tool-result messages
+  carry the originating call id.
 - Read-only tool calls may run concurrently; mutating calls are serialized.
 - A tool failure returns a typed error envelope; it never aborts the turn by
   itself.
 - Every call is audited with name, duration, status and error code.
 - Tool visibility is a policy decision, not a registry decision.
+- A tool declares its permission requests; the dispatcher asks the permission
+  gate before `call` runs. A tool never grants itself access.
+- In `plan_mode`, only read-only tools are visible; a hidden write tool is
+  rejected even if the model calls it.
 
 ## Context assembly
 
 - Stages are ordered by priority; equal priorities stable-sort by registration.
 - A stage returns at most one fragment.
-- The kernel enforces the token budget after assembly.
+- The kernel enforces the token budget after assembly and re-checks the full
+  message list before every model call. Overflow is a typed terminal error
+  until the compaction ladder lands.
 - Compaction is a ladder: trim -> rolling summary -> LLM compact -> task
   boundary.
 - The profile selects which stages are active and the budget.
@@ -91,14 +120,29 @@ implementations do not receive mutable kernel state.
 
 ## Permissions
 
-- Four levels: read-only, manual, semi-auto, full-auto.
-- Path scan covers absolute paths, traversal, denylist and admin patterns.
-- The session workspace root is a trusted free zone; everything outside still
-  gates.
-- Confirmations are typed requests with a reason and a scope.
+- Two levels: `workspace_auto` and `full_auto`.
+- `workspace_auto` is the logical sandbox: actions inside the workspace run
+  automatically; outside actions require confirmation.
+- `full_auto` removes the workspace boundary but never the hard deny list.
+- The deny list covers system/privileged paths, credential stores, secret
+  files, other users' homes, privilege escalation, destructive storage
+  commands, security bypass, Keel audit/`.git` internals and
+  send/payment/secret upload. It is hardcoded plus host additions; profiles
+  and plugins cannot remove entries.
+- `read_only` is tool visibility, not a level. `manual` review is a
+  host-level confirmation wrapper, not a kernel level.
+- Plan mode is a tool visibility filter: it hides write/execute tools and does
+  not lower permissions.
+- Confirmations and escalation are typed interactions. The user may allow one
+  call, allow a path prefix, or escalate the session to `full_auto`. Path
+  grants and escalation carry a TTL and can be revoked; only the user or host
+  approves, and grants never bypass the deny list.
+- Deletion is soft: the target moves to a `TrashStore`. Overwrite backs up the
+  previous version first. A failed trash operation aborts; there is no hard
+  delete fallback. The agent never empties or restores the trash.
+- Path scan covers absolute paths, traversal, deny patterns and later symlink
+  and admin hardening.
 - Audit is always on; it is not sampled and not optional.
-- Plan mode is orthogonal: it filters write tools, it does not lower
-  permissions.
 
 ## Model wire
 
@@ -109,6 +153,11 @@ implementations do not receive mutable kernel state.
 - Role routing: main, compact, subagent, verifier, commit.
 - Retries are bounded; circuit breaking is per provider.
 - Token usage is recorded per call.
+- Interactions arrive as `ModelChunk::Interaction`; they are never domain tool
+  calls.
+- A model response mixing tool calls and an interaction is rejected.
+- The provider receives the cancellation token; dropping the stream is not the
+  only cancellation signal.
 
 ## Plugin lifecycle
 
@@ -135,6 +184,9 @@ implementations do not receive mutable kernel state.
 - Concurrent read-only tools vs serialized writes.
 - Context budget enforcement and each compaction step.
 - Permission: traversal, denylist, admin, workspace boundary, audit.
+- Dispatcher permission enforcement before the tool runs.
+- Interaction request/resolve/defer/timeout/cancel/budget, and no self-approval.
+- Soft delete: overwrite backup, trash failure abort, deny-list protection.
 - Plugin register/unregister and denied capability escalation.
 - Model 500, stream cut, overflow and cancellation.
 - Kernel overhead benchmark within budget.

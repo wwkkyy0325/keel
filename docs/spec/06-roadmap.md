@@ -20,13 +20,16 @@ input come from?"
 Only three workspace members: `keel-core`, `keel-runtime`, `hosts/keel-cli`.
 Policy, permissions and the mock model are modules inside `keel-runtime`.
 
-- [ ] `keel-core`: IDs, messages, tool schema/result, error envelope, events.
-- [ ] `keel-runtime`: FSM, turn driver, tool dispatch, context assembly,
+- [x] `keel-core`: IDs, messages, tool schema/result, error envelope, events.
+- [x] `keel-runtime`: FSM, turn driver, tool dispatch, context assembly,
       policy module, permission module, mock model.
-- [ ] `hosts/keel-cli`: load a profile, run one turn.
-- [ ] Three tools: `echo`, `read_file`, `write_file`.
-- [ ] Event log, cancellation, timeout.
-- [ ] 20+ unit/integration tests.
+- [x] `hosts/keel-cli`: load a profile, run one turn.
+- [x] Three tools: `echo`, `read_file`, `write_file`.
+- [x] Event log, cancellation, timeout.
+- [x] Two permission levels, dispatcher enforcement and the hard deny baseline
+      (ADR 0002).
+- [x] Soft-delete backup and typed interaction primitives (ADR 0003).
+- [x] 20+ unit/integration tests.
 
 Done when: `cargo test -p keel-runtime` passes and `keel-cli` runs one turn;
 no network or real model.

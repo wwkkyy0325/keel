@@ -11,6 +11,15 @@ Deterministic tests, no model:
 - context budget, stage order, each compaction step;
 - permission: traversal, denylist, admin, workspace boundary, audit;
 - plugin register/unregister and denied capability escalation;
+- dispatcher permission enforcement before the tool runs;
+- interactions: request/resolve/defer/timeout/cancel, budget and no
+  self-approval;
+- permission grants: path scope, TTL expiry, revoke and deny-list precedence;
+- soft delete: overwrite backup, trash failure abort, deny-list protection;
+- plan mode hides write/execute tools without lowering permissions;
+- context overflow after tool output ends the turn;
+- assistant tool-call messages and tool-result call ids survive history;
+- provider cancellation observes the shared token;
 - fault injection: model 500, stream cut, tool timeout, disk full, overflow.
 
 Gate: all pass in CI. Kernel overhead budgets:
@@ -47,7 +56,9 @@ Metrics:
 - solved tasks per hour;
 - tool-call format error rate;
 - turns, tokens, wall clock;
-- test files unchanged (hash check).
+- test files unchanged (hash check);
+- acceptance checklist evidence: every required item has verifier evidence,
+  and fabricated claims are flagged as unverified.
 
 Start with 20 tasks. Do not scale until every failure has an explanation.
 

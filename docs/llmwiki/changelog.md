@@ -1,0 +1,50 @@
+# Changelog
+
+## 2026-11-02
+
+- Started M1: workspace with `keel-core`, `keel-runtime` and `hosts/keel-cli`.
+- Added the core contracts, turn FSM, mock model, tool dispatch, context
+  assembly, minimal permissions, event log and the CLI mock turn.
+- Profiles for the coding and companion variants are data; the companion path
+  exercises the no-tools policy without kernel changes.
+- Recorded M1 ambiguities in `docs/spec/open-questions.md`.
+
+### Verification
+
+- `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`
+  and `cargo test --workspace` pass (58 tests).
+- Turn overhead with the mock model: p50 2 us, p99 7 us over 1000 turns.
+- `keel-cli` runs one turn for both the coding and companion profiles.
+- `cargo deny check` remains pending until `cargo-deny` is installed.
+
+## 2026-11-02 — Permission and interaction refactor
+
+- Reduced permission levels to `WorkspaceAuto` and `FullAuto`; removed
+  `read_only` and `manual`; internalized the sandbox and plan mode.
+- Moved permission enforcement into the dispatcher via
+  `Tool::permission_requests`; added the hard deny baseline.
+- Added soft-delete `TrashStore` and overwrite backup; no hard-delete fallback.
+- Added typed interactions (`ModelChunk::Interaction`), the `InteractionPort`,
+  `InteractionBroker`, `WaitInteraction`, permission confirmation, escalation
+  and `TurnReport` deferred items.
+- Added plan-mode tool visibility and the two-level profile schema.
+- Recorded ADR 0002, ADR 0003 and ADR 0004.
+- Verification: 77 tests; clippy clean; mock overhead p50 2 us, p99 6 us.
+
+### Follow-up
+
+- Added path-prefix permission grants, session escalation TTL and `revoke_all`.
+- Re-check the full message budget before every model call; overflow becomes a
+  typed error until compaction lands.
+- `before_commit` now rejects `Reprompt` and `Ask` explicitly instead of
+  ignoring them.
+- Verification: 84 tests; clippy clean; mock overhead p50 3 us, p99 7 us.
+
+### M2 prerequisites
+
+- Added structured assistant tool-call messages and tool-result call ids, and
+  included tool-call payloads in the context budget estimate.
+- `ModelProvider::stream` now receives the cancellation token.
+- Verification: 86 tests; clippy clean; mock overhead p50 2 us, p99 9 us.
+- Installed `cargo-deny v0.20.2`; `cargo deny check` passes. Pinned path
+  workspace dependencies to `0.1.0` to satisfy the wildcard ban.

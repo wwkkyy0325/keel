@@ -7,7 +7,8 @@ runtime — turn state machine, tool protocol, context assembly, permissions,
 memory, model wire — small and stable, while variants (coding, companionship,
 automation) arrive as policy profiles and plugins.
 
-**Status:** specification phase. No implementation yet.
+**Status:** M1 implemented — core types, mock turn loop, three tools and the
+CLI. M2 (real provider and coding profile) is next.
 
 ## Why "Keel"
 
@@ -51,6 +52,22 @@ sources recorded in `docs/spec/05-provenance.md`.
 3. `docs/spec/01-kernel.md` — kernel contract.
 4. `docs/spec/02-profile.md` — policy/profile schema.
 5. `docs/spec/06-roadmap.md` — milestone order.
+
+## Run
+
+```bash
+cargo run -p keel-cli -- --profile variants/coding/profile.toml --input "hello"
+cargo run -p keel-cli -- --profile variants/companion/profile.toml --input "hello"
+```
+
+The M1 mock model makes no network calls. The coding profile exercises one
+`echo` tool call; the companion profile exercises the no-tools policy.
+
+M1 uses two permission levels: `workspace_auto` is the logical sandbox and
+`full_auto` removes the workspace boundary while keeping the hard deny list.
+Deletion is recoverable through the trash; interactions (questions, plan
+approval, permission confirmation and escalation) are kernel primitives, not
+domain tools. See ADR 0002 and ADR 0003.
 
 ## Verification
 
