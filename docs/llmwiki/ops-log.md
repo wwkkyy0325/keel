@@ -109,3 +109,13 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 - Verification: CLI test covers a provider-style key, ordinary text and a
   SHA-256 hash; workspace tests, clippy and `cargo deny check`.
 - Commit: `fix: warn on secret-like input instead of blocking`.
+
+### Secret input notice
+
+- Removed the pre-turn CLI banner. The driver emits `Event::SecretWarning` and
+  returns `TurnOutcome.secret_warning`; the CLI prints one notice with the
+  turn result.
+- The event log still redacts the input and final text.
+- Verification: runtime test checks the event and outcome and confirms the
+  turn still completes; CLI smoke test shows the notice after the turn output.
+- Commit: `refactor: attach secret notice to the turn`.

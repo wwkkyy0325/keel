@@ -3,10 +3,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use keel_core::{
-    BuildCtx, CancelToken, CommitCtx, CommitDecision, ErrorCode, Event, InteractionId,
-    InteractionRequest, InteractionResponse, KernelError, Message, ModelChunk, ModelError,
-    ModelProvider, ModelRequest, ModelRole, OnTimeout, Policy, ToolOutcome, TurnEvent, TurnState,
-    VerificationMode,
+    detect_secret, BuildCtx, CancelToken, CommitCtx, CommitDecision, ErrorCode, Event,
+    InteractionId, InteractionRequest, InteractionResponse, KernelError, Message, ModelChunk,
+    ModelError, ModelProvider, ModelRequest, ModelRole, OnTimeout, Policy, SecretKind, ToolOutcome,
+    TurnEvent, TurnState, VerificationMode,
 };
 
 use crate::context::ContextBuilder;
@@ -43,6 +43,9 @@ pub struct TurnOutcome {
     pub text: String,
     pub error: Option<KernelError>,
     pub deferred_interactions: Vec<InteractionId>,
+    /// Secret-like input seen at turn start. The turn still runs; the host
+    /// surfaces the notice with this turn's result.
+    pub secret_warning: Option<SecretKind>,
 }
 
 impl TurnOutcome {
@@ -109,6 +112,13 @@ impl<M: ModelProvider> TurnDriver<M> {
             turn_id,
             input: input.to_owned(),
         });
+        let secret_warning = detect_secret(input);
+        if let Some(kind) = secret_warning {
+            self.events.append(Event::SecretWarning {
+                turn_id,
+                kind: kind.as_str().to_owned(),
+            });
+        }
 
         let deadline = tokio::time::Instant::now() + self.limits.turn_timeout;
         let mut stats = TurnStats::default();
@@ -160,6 +170,7 @@ impl<M: ModelProvider> TurnDriver<M> {
             text,
             error,
             deferred_interactions: stats.deferred,
+            secret_warning,
         }
     }
 

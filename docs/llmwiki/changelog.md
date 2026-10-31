@@ -81,3 +81,12 @@
   the supported credential path.
 - Verification: CLI test covers a provider-style key, ordinary text and a
   SHA-256 hash; workspace tests, clippy and `cargo deny check` pass.
+
+### Secret input notice
+
+- Moved the warning out of a pre-turn banner. The driver emits a
+  `SecretWarning` event on the turn and returns the detected kind in
+  `TurnOutcome`; the CLI prints one notice with that turn's result.
+- The event log still redacts the input and final text.
+- Verification: runtime test checks the event and outcome and confirms the
+  turn still completes; CLI smoke test shows the notice after the turn output.

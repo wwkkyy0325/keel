@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use keel_core::{
     ArgValue, CancelToken, CommitCtx, CommitDecision, ContextRecipe, ErrorCode, Event,
-    MemoryPolicy, ModelError, ModelRole, ModelRoute, PermissionLevel, Policy, ToolArgs, ToolSchema,
-    TurnId, TurnState, VerificationMode,
+    MemoryPolicy, ModelError, ModelRole, ModelRoute, PermissionLevel, Policy, SecretKind, ToolArgs,
+    ToolSchema, TurnId, TurnState, VerificationMode,
 };
 use keel_runtime::{
     DeferAllInteractionPort, EventLog, InteractionBroker, MockModel, MockStep, PermissionEngine,
@@ -406,4 +406,36 @@ async fn non_commit_decision_ends_in_error() {
         outcome.error.as_ref().map(|error| error.code()),
         Some(ErrorCode::Unsupported)
     );
+}
+
+#[tokio::test]
+async fn secret_like_input_is_reported_on_the_turn_and_not_blocked() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&[], 0, PermissionLevel::WorkspaceAuto);
+    let driver = common::build_driver(
+        MockModel::new(vec![MockStep::Text("done".to_owned())]),
+        config,
+        events.clone(),
+        dir.path(),
+        common::test_limits(),
+    );
+
+    let outcome = driver
+        .run("my key sk-1234567890abcdefghij", CancelToken::new())
+        .await;
+
+    assert!(outcome.is_done());
+    assert_eq!(outcome.secret_warning, Some(SecretKind::OpenAi));
+
+    let records = events.for_turn(outcome.turn_id);
+    assert!(records.iter().any(|record| matches!(
+        &record.event,
+        Event::SecretWarning { kind, .. } if kind.as_str() == "OpenAI API key"
+    )));
+    let input = records.iter().find_map(|record| match &record.event {
+        Event::TurnStarted { input, .. } => Some(input),
+        _ => None,
+    });
+    assert!(input.is_some_and(|input| !input.contains("sk-1234567890abcdefghij")));
 }

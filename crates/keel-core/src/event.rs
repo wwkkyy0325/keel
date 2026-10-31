@@ -16,6 +16,10 @@ pub enum Event {
         turn_id: TurnId,
         input: String,
     },
+    SecretWarning {
+        turn_id: TurnId,
+        kind: String,
+    },
     StateChanged {
         turn_id: TurnId,
         from: TurnState,
@@ -84,6 +88,7 @@ impl Event {
     pub fn turn_id(&self) -> TurnId {
         match self {
             Self::TurnStarted { turn_id, .. }
+            | Self::SecretWarning { turn_id, .. }
             | Self::StateChanged { turn_id, .. }
             | Self::ContextBuilt { turn_id, .. }
             | Self::ModelStarted { turn_id, .. }
@@ -102,6 +107,7 @@ impl Event {
     pub fn name(&self) -> &'static str {
         match self {
             Self::TurnStarted { .. } => "turn_started",
+            Self::SecretWarning { .. } => "secret_warning",
             Self::StateChanged { .. } => "state_changed",
             Self::ContextBuilt { .. } => "context_built",
             Self::ModelStarted { .. } => "model_started",
