@@ -96,6 +96,7 @@ async fn run() -> Result<(), KernelError> {
             interactions,
             system_prompt: config.system_prompt.clone(),
             max_output_tokens: config.max_output_tokens,
+            context_window: config.context_window,
             limits: config.limits(),
         },
     );

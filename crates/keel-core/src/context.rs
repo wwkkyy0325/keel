@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
+use crate::event::EventSink;
 use crate::ids::TurnId;
 use crate::message::{Message, MessageRole};
 
@@ -13,6 +14,10 @@ pub struct BuildCtx<'a> {
     pub system_prompt: &'a str,
     /// Tokens left for this stage after higher-priority stages.
     pub budget_tokens: u32,
+    /// Share of the history budget kept verbatim; chosen by the governor.
+    pub detail_share: f32,
+    /// Optional sink for stage-level observability.
+    pub events: Option<&'a dyn EventSink>,
 }
 
 impl<'a> BuildCtx<'a> {
@@ -24,6 +29,8 @@ impl<'a> BuildCtx<'a> {
             history: self.history,
             system_prompt: self.system_prompt,
             budget_tokens,
+            detail_share: self.detail_share,
+            events: self.events,
         }
     }
 }

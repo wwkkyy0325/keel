@@ -44,6 +44,27 @@ pub enum Event {
         tokens: u32,
         budget: u32,
     },
+    ContextPressure {
+        turn_id: TurnId,
+        used: u32,
+        ceiling: u32,
+        growth: u32,
+        headroom_calls: u32,
+        level: String,
+    },
+    HistoryAssembled {
+        turn_id: TurnId,
+        detail_percent: u32,
+        detail_turns: u32,
+        digest_turns: u32,
+        dropped_turns: u32,
+        tokens: u32,
+    },
+    WrapUpInjected {
+        turn_id: TurnId,
+        used: u32,
+        ceiling: u32,
+    },
     ModelStarted {
         turn_id: TurnId,
         provider: String,
@@ -96,6 +117,11 @@ pub enum Event {
     },
 }
 
+/// Sink for events emitted at a kernel boundary, such as a context stage.
+pub trait EventSink: Send + Sync {
+    fn emit(&self, event: Event);
+}
+
 impl Event {
     pub fn turn_id(&self) -> TurnId {
         match self {
@@ -105,6 +131,9 @@ impl Event {
             | Self::VerificationFinished { turn_id, .. }
             | Self::StateChanged { turn_id, .. }
             | Self::ContextBuilt { turn_id, .. }
+            | Self::ContextPressure { turn_id, .. }
+            | Self::HistoryAssembled { turn_id, .. }
+            | Self::WrapUpInjected { turn_id, .. }
             | Self::ModelStarted { turn_id, .. }
             | Self::ModelFinished { turn_id, .. }
             | Self::ToolStarted { turn_id, .. }
@@ -126,6 +155,9 @@ impl Event {
             Self::VerificationFinished { .. } => "verification_finished",
             Self::StateChanged { .. } => "state_changed",
             Self::ContextBuilt { .. } => "context_built",
+            Self::ContextPressure { .. } => "context_pressure",
+            Self::HistoryAssembled { .. } => "history_assembled",
+            Self::WrapUpInjected { .. } => "wrap_up_injected",
             Self::ModelStarted { .. } => "model_started",
             Self::ModelFinished { .. } => "model_finished",
             Self::ToolStarted { .. } => "tool_started",

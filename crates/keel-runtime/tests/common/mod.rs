@@ -50,6 +50,7 @@ pub fn runtime_config(
         api_key_env: None,
         supports_reasoning: false,
         max_output_tokens: 1024,
+        context_window: 128_000,
         interaction: InteractionPolicy::default(),
     }
 }
@@ -126,6 +127,7 @@ pub fn build_driver_with_port(
     ));
     let system_prompt = config.system_prompt.clone();
     let max_output_tokens = config.max_output_tokens;
+    let context_window = config.context_window;
     let policy: Arc<dyn Policy> = Arc::new(config);
 
     TurnDriver::new(
@@ -139,6 +141,7 @@ pub fn build_driver_with_port(
             interactions,
             system_prompt,
             max_output_tokens,
+            context_window,
             limits,
         },
     )

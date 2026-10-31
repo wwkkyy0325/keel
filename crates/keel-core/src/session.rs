@@ -92,6 +92,21 @@ impl Session {
         &self.segments
     }
 
+    /// Tokens in the most recent turn, used as a growth estimate.
+    pub fn last_turn_tokens(&self) -> u32 {
+        let Some(segment) = self.segments.last() else {
+            return 0;
+        };
+        let start = segment
+            .entries
+            .iter()
+            .rposition(|entry| entry.message.role == MessageRole::User)
+            .unwrap_or(0);
+        segment.entries[start..].iter().fold(0u32, |total, entry| {
+            total.saturating_add(entry.message.estimated_tokens())
+        })
+    }
+
     /// Flattens recorded entries in chronological order.
     pub fn history(&self) -> Vec<Arc<Message>> {
         self.segments

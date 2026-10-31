@@ -24,11 +24,12 @@ immutable `RuntimeConfig`; plugins add optional capabilities.
 | `crates/keel-runtime` | FSM, turn driver, context builder, dispatch, permission module, verifier, tools, mock model |
 | `hosts/keel-cli` | Loads a profile, runs one turn, terminal interactions |
 
-Status: M3 in progress. ADR 0006 is accepted; session, segment and history
-stages are implemented, and the CLI keeps a session across turns. 141 tests
-pass; the self-authored suite is 10/10 and the public baseline is HumanEval+
-20/20 and MBPP+ 19/20. Next M3 steps: the context governor, tool summaries,
-segmentation, compression and facts.
+Status: M3 in progress. ADR 0006 is accepted. Sessions, budget-driven history
+assembly and the context governor are implemented: recent turns stay verbatim,
+older turns become one digest block, and pressure is measured in calls of
+headroom. 152 tests pass; the self-authored suite is 10/10 and the public
+baseline is HumanEval+ 20/20 and MBPP+ 19/20. Next M3 steps: tool summaries,
+segmentation, segment records and facts.
 
 ## Permission and interaction model
 

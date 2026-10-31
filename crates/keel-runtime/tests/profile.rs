@@ -261,3 +261,32 @@ fn absolute_prompt_path_is_resolved() {
     let config = from_profile_str(&raw, Path::new("")).unwrap();
     assert_eq!(config.system_prompt, "system prompt");
 }
+
+#[test]
+fn a_window_below_the_supported_floor_is_rejected() {
+    let raw = MINIMAL.replace(
+        "max_output_tokens = 64",
+        "max_output_tokens = 64\ncontext_window = 4096",
+    );
+    assert!(parse(&raw).is_err());
+}
+
+#[test]
+fn a_budget_that_does_not_fit_the_window_is_rejected() {
+    let raw = MINIMAL
+        .replace(
+            "max_output_tokens = 64",
+            "max_output_tokens = 64\ncontext_window = 16384",
+        )
+        .replace("budget_tokens = 128", "budget_tokens = 16384");
+    assert!(parse(&raw).is_err());
+}
+
+#[test]
+fn a_profile_with_a_valid_window_loads() {
+    let raw = MINIMAL.replace(
+        "max_output_tokens = 64",
+        "max_output_tokens = 64\ncontext_window = 16384",
+    );
+    assert!(parse(&raw).is_ok());
+}

@@ -46,6 +46,8 @@ struct ModelSection {
     thinking_budget: u32,
     #[serde(default = "default_max_output_tokens")]
     max_output_tokens: u32,
+    #[serde(default = "default_context_window")]
+    context_window: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -109,6 +111,10 @@ fn default_max_output_tokens() -> u32 {
     4096
 }
 
+fn default_context_window() -> u32 {
+    128_000
+}
+
 fn default_interaction_timeout_ms() -> u64 {
     300_000
 }
@@ -161,6 +167,37 @@ pub fn from_profile_str(raw: &str, base_dir: &Path) -> Result<RuntimeConfig, Ker
             message: "context budget must be positive".to_owned(),
         });
     }
+    if file.model.context_window == 0 {
+        return Err(KernelError::InvalidProfile {
+            message: "context window must be positive".to_owned(),
+        });
+    }
+    let window_floor = if file.tools.visible.is_empty() {
+        8_192
+    } else {
+        16_384
+    };
+    if file.model.context_window < window_floor {
+        return Err(KernelError::InvalidProfile {
+            message: format!(
+                "context window {} is below the supported floor of {window_floor}",
+                file.model.context_window
+            ),
+        });
+    }
+    if file
+        .context
+        .budget_tokens
+        .saturating_add(file.model.max_output_tokens)
+        > file.model.context_window
+    {
+        return Err(KernelError::InvalidProfile {
+            message: format!(
+                "context budget {} plus output reserve {} exceeds the model window {}",
+                file.context.budget_tokens, file.model.max_output_tokens, file.model.context_window
+            ),
+        });
+    }
     if file.model.provider.is_empty() || file.model.model.is_empty() {
         return Err(KernelError::InvalidProfile {
             message: "model provider and model must not be empty".to_owned(),
@@ -205,6 +242,7 @@ pub fn from_profile_str(raw: &str, base_dir: &Path) -> Result<RuntimeConfig, Ker
             model: file.model.model,
         },
         max_output_tokens: file.model.max_output_tokens,
+        context_window: file.model.context_window,
         model_base_url: file.model.base_url,
         api_key_env: file.model.api_key_env,
         supports_reasoning: file.model.supports_reasoning,

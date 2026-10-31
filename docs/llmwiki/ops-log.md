@@ -395,3 +395,23 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
   -D warnings`; `cargo test --workspace` (141 tests). A 20-turn mock companion
   session reached `Done` on all 20 turns, and per-turn input tokens grew
   (139, 145, 152 on the three-turn smoke), confirming history is assembled.
+
+### M3 budget assembly and context governor
+
+- Added `model.context_window` (default 128000) and validation: the budget plus
+  the output reserve must fit the window, and the window must be at least 8k
+  with no tools or 16k with tools.
+- Added `ContextGovernor` with headroom in calls: `(ceiling - used) / growth`,
+  a 90% guard, and levels green/amber/orange/red mapping to detail shares
+  80/60/40/20%. The ceiling is `min(window - reserve, budget_tokens)`.
+- `HistoryStage` now groups turns, keeps the newest two as a floor, fills the
+  rest of the detail share with whole turns, and compresses everything older
+  into one system digest block (`- user: ... / assistant: ...`, clipped at 240
+  and 400 characters). Turns that do not fit are dropped whole and counted.
+- The driver emits `ContextPressure` at turn start and before every model
+  call, and `HistoryAssembled` with detail/digest/dropped counts. At red it
+  injects one wrap-up system message when the extra message fits the budget.
+- Mid-turn compaction is not implemented yet, so an over-budget turn still
+  ends in `ContextOverflow`; tool-result clearing at amber moves to step 7.
+- Verification: 152 tests; `cargo fmt --check`; clippy with `-D warnings`;
+  20-turn mock companion session still reaches `Done` on all turns.

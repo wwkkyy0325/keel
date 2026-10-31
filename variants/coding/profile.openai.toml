@@ -8,6 +8,7 @@ base_url = "https://api.openai.com/v1"
 api_key_env = "OPENAI_API_KEY"
 thinking_budget = 0
 max_output_tokens = 4096
+context_window = 128000
 
 [context]
 stages = ["system", "history", "latest"]

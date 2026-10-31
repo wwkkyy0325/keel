@@ -13,20 +13,20 @@ one at a time. Summarization is blocked on
       builder test with a multi-message stage and the remaining-budget probe
 - [x] 3. CLI session loop — verify: 20-turn mock session reaches `Done` each
       turn and keeps history across turns
-- [ ] 4. Budget-driven assembly: detail window sized in tokens (two-turn
-      floor, no turn ceiling), digests for older turns, records for sealed
-      segments — verify: fixture sessions at small, medium and large budgets
-      produce the expected composition, a short-turn chat keeps many turns
-      verbatim, a tool-heavy turn is digested sooner, and `HistoryAssembled`
-      reports the composition
-- [ ] 5. Context governor: gauge over `min(model_window, budget_tokens)`,
+- [x] 4. Budget-driven assembly: detail window sized in tokens (two-turn
+      floor, no turn ceiling), digests for older turns — verify: a fixture
+      session keeps the newest two turns verbatim, compresses the older four
+      into one digest block, drops the oldest, and `HistoryAssembled` reports
+      the composition. Sealed segment records arrive in step 9.
+- [x] 5. Context governor: gauge over `min(model_window, budget_tokens)`,
       headroom measured in calls at the observed growth rate, level-dependent
-      detail share, cheap-first actions — verify: a fixture drives each level;
-      amber micro-compaction saves tokens with no model call; orange shrinks
-      the share; red injects the wrap-up exactly once per crossing; critical
-      ends in `ContextOverflow`; `ContextPressure` reports every decision;
-      a profile whose budget plus output reserve exceeds `context_window` is
-      rejected at load time
+      detail share, wrap-up at red — verify: every level is unit-tested; red
+      injects the wrap-up exactly once and only when it fits; `ContextPressure`
+      is emitted at turn start and before every call; a profile whose budget
+      plus output reserve exceeds `context_window`, or whose window is below
+      the floor, is rejected at load time. Tool-result clearing at amber lands
+      with step 7; mid-turn compaction at critical lands with step 9, so an
+      over-budget turn still ends in `ContextOverflow`.
 - [ ] 6. Turn-budget wrap-up: reserve one model call for the final answer and
       forbid new tool calls on it — verify: a turn that reaches the call limit
       ends with an answer instead of `TurnsExhausted`

@@ -255,34 +255,125 @@ impl ContextStage for HistoryStage {
         }
         turns.push(&history[start..]);
 
-        let mut chosen: Vec<&Arc<Message>> = Vec::new();
-        let mut used = 0u32;
+        let share = ctx.detail_share.clamp(0.0, 1.0);
+        let detail_budget = ((budget as f32) * share).ceil() as u32;
+
+        // Newest turns stay verbatim. The first two are a floor: they may use
+        // the whole history allowance, but never more than it.
+        let mut detail: Vec<&[Arc<Message>]> = Vec::new();
+        let mut detail_tokens = 0u32;
         for turn in turns.iter().rev() {
-            let tokens = turn.iter().fold(0u32, |total, message| {
-                total.saturating_add(message.estimated_tokens())
-            });
-            if used.saturating_add(tokens) > budget && !chosen.is_empty() {
+            let tokens = turn_tokens(turn);
+            if detail.is_empty() {
+                if tokens > budget {
+                    return None;
+                }
+            } else if detail.len() < 2 {
+                if detail_tokens.saturating_add(tokens) > budget {
+                    break;
+                }
+            } else if detail_tokens.saturating_add(tokens) > detail_budget {
                 break;
             }
-            used = used.saturating_add(tokens);
-            chosen.extend(turn.iter().rev());
+            detail_tokens = detail_tokens.saturating_add(tokens);
+            detail.push(turn);
         }
-        if chosen.is_empty() {
+        if detail.is_empty() {
             return None;
         }
-        chosen.reverse();
-        Some(
-            chosen
-                .into_iter()
-                .filter(|message| {
-                    matches!(message.role, MessageRole::User | MessageRole::Assistant)
-                        && !message.content.trim().is_empty()
-                })
-                .map(|message| Fragment {
-                    role: message.role,
-                    text: message.content.clone(),
-                })
-                .collect(),
-        )
+
+        // Everything older is compressed into one digest block, newest first
+        // until the digest allowance runs out.
+        let older = turns.len().saturating_sub(detail.len());
+        let digest_budget = budget.saturating_sub(detail_tokens);
+        let mut digests: Vec<String> = Vec::new();
+        let mut digest_tokens = 0u32;
+        let mut dropped = 0u32;
+        for turn in turns[..older].iter().rev() {
+            let text = digest(turn);
+            let tokens = estimate_tokens(&text);
+            if tokens > digest_budget.saturating_sub(digest_tokens) {
+                dropped = older as u32 - digests.len() as u32;
+                break;
+            }
+            digest_tokens = digest_tokens.saturating_add(tokens);
+            digests.push(text);
+        }
+        digests.reverse();
+
+        let mut fragments = Vec::new();
+        if !digests.is_empty() {
+            let mut text = String::from("[earlier turns, compressed]\n");
+            for digest in &digests {
+                text.push_str(digest);
+            }
+            fragments.push(Fragment {
+                role: MessageRole::System,
+                text,
+            });
+        }
+        for turn in detail.iter().rev() {
+            for message in turn.iter() {
+                if matches!(message.role, MessageRole::User | MessageRole::Assistant)
+                    && !message.content.trim().is_empty()
+                {
+                    fragments.push(Fragment {
+                        role: message.role,
+                        text: message.content.clone(),
+                    });
+                }
+            }
+        }
+
+        if let Some(events) = ctx.events {
+            events.emit(keel_core::Event::HistoryAssembled {
+                turn_id: ctx.turn_id,
+                detail_percent: (share * 100.0).round() as u32,
+                detail_turns: detail.len() as u32,
+                digest_turns: digests.len() as u32,
+                dropped_turns: dropped,
+                tokens: detail_tokens.saturating_add(digest_tokens),
+            });
+        }
+
+        Some(fragments)
     }
+}
+
+fn turn_tokens(turn: &[Arc<Message>]) -> u32 {
+    turn.iter().fold(0u32, |total, message| {
+        total.saturating_add(message.estimated_tokens())
+    })
+}
+
+/// One line per older turn, keeping the request and the result.
+fn digest(turn: &[Arc<Message>]) -> String {
+    let mut user = String::new();
+    let mut assistant = String::new();
+    for message in turn {
+        match message.role {
+            MessageRole::User if user.is_empty() => user = clip(&message.content, 240),
+            MessageRole::Assistant if assistant.is_empty() => {
+                assistant = clip(&message.content, 400);
+            }
+            _ => {}
+        }
+    }
+    if user.is_empty() {
+        user = "(no input)".to_owned();
+    }
+    if assistant.is_empty() {
+        assistant = "(no reply)".to_owned();
+    }
+    format!("- user: {user}\n  assistant: {assistant}\n")
+}
+
+fn clip(text: &str, max_chars: usize) -> String {
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= max_chars {
+        return flat;
+    }
+    let mut out: String = flat.chars().take(max_chars).collect();
+    out.push_str("...");
+    out
 }

@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use keel_core::{
-    CancelToken, Message, MessageRole, ModelError, ModelProvider, ModelRequest, ModelStream,
+    CancelToken, Event, Message, MessageRole, ModelError, ModelProvider, ModelRequest, ModelStream,
     PermissionLevel, Policy,
 };
 use keel_runtime::{
@@ -38,6 +38,7 @@ impl ModelProvider for RecordingModel {
 
 struct Harness {
     requests: Arc<Mutex<Vec<Vec<Arc<Message>>>>>,
+    events: Arc<EventLog>,
     driver: TurnDriver<RecordingModel>,
     _dir: tempfile::TempDir,
 }
@@ -79,17 +80,19 @@ fn harness(budget_tokens: u32) -> Harness {
         context,
         policy,
         TurnDriverConfig {
-            events,
+            events: events.clone(),
             permissions,
             interactions,
             system_prompt: config.system_prompt.clone(),
             max_output_tokens: config.max_output_tokens,
+            context_window: config.context_window,
             limits: common::test_limits(),
         },
     );
 
     Harness {
         requests,
+        events,
         driver,
         _dir: dir,
     }
@@ -165,4 +168,87 @@ async fn old_turns_are_dropped_when_history_does_not_fit() {
 
 fn role_name_of(line: &str) -> &str {
     line.split(':').next().unwrap_or_default()
+}
+
+#[tokio::test]
+async fn older_turns_become_one_digest_block() {
+    let harness = harness(420);
+    let long = "detail ".repeat(30);
+    let mut last = None;
+    for turn in 0..8 {
+        let outcome = harness
+            .driver
+            .run(&format!("{long} {turn}"), CancelToken::new())
+            .await;
+        assert!(outcome.is_done(), "turn {turn} did not finish: {outcome:?}");
+        last = Some(outcome);
+    }
+
+    let requests = harness.requests.lock().unwrap();
+    let last_request = contents(requests.last().unwrap());
+    assert!(last_request[0].starts_with("system:You are a test agent."));
+    assert!(
+        last_request[1].starts_with("system:[earlier turns, compressed]"),
+        "{last_request:?}"
+    );
+    assert!(last_request[1].contains(" 4"));
+    assert!(last_request[1].contains(" 1"));
+    assert!(!last_request[1].contains(" 0"));
+    assert_eq!(role_name_of(&last_request[2]), "user");
+    assert!(last_request[2].ends_with(" 5"));
+    assert_eq!(role_name_of(&last_request[4]), "user");
+    assert!(last_request[4].ends_with(" 6"));
+    assert_eq!(role_name_of(&last_request[6]), "user");
+    assert!(last_request[6].ends_with(" 7"));
+
+    let turn_id = last.expect("a turn ran").turn_id;
+    let assembled = harness
+        .events
+        .for_turn(turn_id)
+        .iter()
+        .find_map(|record| match &record.event {
+            Event::HistoryAssembled {
+                detail_percent,
+                detail_turns,
+                digest_turns,
+                dropped_turns,
+                ..
+            } => Some((
+                *detail_percent,
+                *detail_turns,
+                *digest_turns,
+                *dropped_turns,
+            )),
+            _ => None,
+        })
+        .expect("history event");
+    assert_eq!(assembled, (20, 2, 4, 1));
+}
+
+#[tokio::test]
+async fn red_pressure_injects_one_wrap_up() {
+    let harness = harness(200);
+    let first = harness
+        .driver
+        .run(&"x".repeat(400), CancelToken::new())
+        .await;
+    assert!(first.is_done());
+
+    let second = harness.driver.run("continue", CancelToken::new()).await;
+    assert!(second.is_done());
+
+    let requests = harness.requests.lock().unwrap();
+    let request = &requests[1];
+    assert!(request.iter().any(|message| {
+        message.role == MessageRole::System
+            && message.content.starts_with("Context is nearly exhausted")
+    }));
+
+    let wrap_ups = harness
+        .events
+        .for_turn(second.turn_id)
+        .iter()
+        .filter(|record| matches!(record.event, Event::WrapUpInjected { .. }))
+        .count();
+    assert_eq!(wrap_ups, 1);
 }

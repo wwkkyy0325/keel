@@ -24,6 +24,9 @@ pub struct RuntimeConfig {
     /// Whether the endpoint accepts the kernel's `reasoning_effort` hint.
     pub supports_reasoning: bool,
     pub max_output_tokens: u32,
+    /// Model hard capacity. `context.budget_tokens` is the working set and
+    /// may be far below this.
+    pub context_window: u32,
     pub interaction: InteractionPolicy,
 }
 

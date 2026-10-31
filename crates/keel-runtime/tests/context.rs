@@ -68,6 +68,8 @@ fn build_ctx<'a>(input: &'a str, system_prompt: &'a str) -> BuildCtx<'a> {
         history: &[],
         system_prompt,
         budget_tokens: 4096,
+        detail_share: 0.8,
+        events: None,
     }
 }
 

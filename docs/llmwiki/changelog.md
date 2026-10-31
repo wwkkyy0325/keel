@@ -353,3 +353,23 @@
   keeps the driver across turns; all profiles list the `history` stage.
 - Verification: 141 tests; a 20-turn mock companion session reaches `Done` on
   every turn; `cargo fmt --check`, clippy and `cargo test --workspace` pass.
+
+### M3 budget assembly and context governor
+
+- Split `context_window` (model hard capacity) from `context.budget_tokens`
+  (working-set target). Profiles are rejected when the budget plus output
+  reserve exceeds the window, or when the window is below 8k with no tools or
+  16k with tools.
+- Added `ContextGovernor`: pressure is headroom in calls at the observed
+  growth rate, with a 90% guard for growth spikes. Levels map to detail shares
+  of 80/60/40/20%.
+- `HistoryStage` keeps whole turns: the newest two are a floor, the rest of the
+  detail share stays verbatim, and older turns become one compressed digest
+  block; turns that do not fit are dropped whole and counted.
+- The driver measures pressure at turn start and before every call, emits
+  `ContextPressure`, and injects one wrap-up instruction at red when the
+  message fits. An over-budget turn still ends in `ContextOverflow` until
+  mid-turn compaction lands.
+- Added `HistoryAssembled` with detail/digest/dropped counts and `WrapUpInjected`.
+- Verification: 152 tests; a 20-turn mock companion session still reaches
+  `Done` on every turn.

@@ -48,6 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         api_key_env: None,
         supports_reasoning: false,
         max_output_tokens: 256,
+        context_window: 128_000,
         interaction: InteractionPolicy::default(),
     };
 
@@ -77,6 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             interactions,
             system_prompt: "You are a benchmark agent.".to_owned(),
             max_output_tokens: 256,
+            context_window: 128_000,
             limits: TurnLimits {
                 max_model_calls: 4,
                 max_tool_calls: 0,

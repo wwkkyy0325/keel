@@ -23,7 +23,7 @@ pub mod verification;
 pub use cancel::CancelToken;
 pub use context::{estimate_tokens, BuildCtx, ContextStage, Fragment};
 pub use error::{ErrorCode, KernelError, ToolError};
-pub use event::Event;
+pub use event::{Event, EventSink};
 pub use ids::{InteractionId, ToolCallId, TurnId};
 pub use interaction::{
     GrantScope, InteractionKind, InteractionOption, InteractionOutcome, InteractionPolicy,

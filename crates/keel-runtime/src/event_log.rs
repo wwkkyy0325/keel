@@ -62,6 +62,12 @@ impl EventLog {
 
 /// The event log is an audit record and may be exported. Redact detected
 /// secrets before they reach disk; the host warns but does not block input.
+impl keel_core::EventSink for EventLog {
+    fn emit(&self, event: Event) {
+        self.append(event);
+    }
+}
+
 fn redact_event(event: Event) -> Event {
     match event {
         Event::TurnStarted { turn_id, input } => Event::TurnStarted {

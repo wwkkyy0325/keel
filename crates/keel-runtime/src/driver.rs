@@ -5,17 +5,18 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use keel_core::{
-    detect_secret, AcceptanceItem, BuildCtx, CancelToken, CommitCtx, CommitDecision, ErrorCode,
-    Event, InteractionId, InteractionRequest, InteractionResponse, KernelError, Message,
-    ModelChunk, ModelError, ModelProvider, ModelRequest, ModelRole, OnTimeout, Policy,
-    ReasoningLevel, SecretKind, Session, ToolArgs, ToolOutcome, TurnEvent, TurnState,
-    VerificationMode, VerificationReport,
+    detect_secret, estimate_tokens, AcceptanceItem, BuildCtx, CancelToken, CommitCtx,
+    CommitDecision, ErrorCode, Event, EventSink, InteractionId, InteractionRequest,
+    InteractionResponse, KernelError, Message, ModelChunk, ModelError, ModelProvider, ModelRequest,
+    ModelRole, OnTimeout, Policy, ReasoningLevel, SecretKind, Session, ToolArgs, ToolOutcome,
+    TurnEvent, TurnState, VerificationMode, VerificationReport,
 };
 
 use crate::context::ContextBuilder;
 use crate::dispatch::ToolDispatcher;
 use crate::event_log::EventLog;
 use crate::fsm::TurnFsm;
+use crate::governor::{ContextGovernor, PressureLevel};
 use crate::interaction::InteractionBroker;
 use crate::permission::PermissionEngine;
 use crate::registry::ToolRegistry;
@@ -31,8 +32,13 @@ pub struct TurnDriverConfig {
     pub interactions: Arc<InteractionBroker>,
     pub system_prompt: String,
     pub max_output_tokens: u32,
+    /// Model hard capacity; `context.budget_tokens` is the working set.
+    pub context_window: u32,
     pub limits: TurnLimits,
 }
+
+const WRAP_UP: &str = "Context is nearly exhausted. Do not start new work. \
+Finish the step in flight, then report: goal, done, pending, artifacts, decisions.";
 
 #[derive(Default)]
 struct TurnStats {
@@ -99,6 +105,7 @@ pub struct TurnDriver<M> {
     workspace_root: PathBuf,
     acceptance: Option<AcceptancePlan>,
     session: Mutex<Session>,
+    governor: ContextGovernor,
     next_turn: AtomicU64,
 }
 
@@ -117,6 +124,11 @@ impl<M: ModelProvider> TurnDriver<M> {
             config.limits.tool_timeout,
         )
         .with_interactions(config.interactions.clone());
+        let governor = ContextGovernor::new(
+            config.context_window,
+            policy.context_recipe().budget_tokens,
+            config.max_output_tokens,
+        );
         Self {
             model,
             tools,
@@ -131,6 +143,7 @@ impl<M: ModelProvider> TurnDriver<M> {
             workspace_root: config.permissions.root().to_path_buf(),
             acceptance: None,
             session: Mutex::new(Session::new()),
+            governor,
             next_turn: AtomicU64::new(1),
         }
     }
@@ -263,19 +276,38 @@ impl<M: ModelProvider> TurnDriver<M> {
         }
 
         let recipe = self.policy.context_recipe();
-        let history = {
+        let (history, session_growth) = {
             let session = self
                 .session
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            session.history()
+            (session.history(), session.last_turn_tokens())
         };
+        let used = estimate_tokens(&self.system_prompt)
+            .saturating_add(history.iter().fold(0u32, |total, message| {
+                total.saturating_add(message.estimated_tokens())
+            }))
+            .saturating_add(estimate_tokens(input));
+        // The first turn has no measured growth; a large first input is not
+        // evidence that the session grows that fast per call.
+        let growth = session_growth;
+        let pressure = self.governor.pressure(used, growth);
+        self.events.append(Event::ContextPressure {
+            turn_id,
+            used,
+            ceiling: pressure.ceiling,
+            growth,
+            headroom_calls: pressure.headroom_calls,
+            level: pressure.level.as_str().to_owned(),
+        });
         let build_ctx = BuildCtx {
             turn_id,
             input,
             history: &history,
             system_prompt: &self.system_prompt,
             budget_tokens: recipe.budget_tokens,
+            detail_share: pressure.level.detail_share(),
+            events: Some(self.events.as_ref() as &dyn EventSink),
         };
         let built = self.context.build(&build_ctx, &recipe, cancel).await?;
         self.events.append(Event::ContextBuilt {
@@ -296,6 +328,8 @@ impl<M: ModelProvider> TurnDriver<M> {
             .collect();
 
         let mut model_calls = 0u32;
+        let mut previous_used: Option<u32> = None;
+        let mut wrapped_up = false;
 
         'turn: loop {
             if cancel.is_cancelled() {
@@ -313,6 +347,32 @@ impl<M: ModelProvider> TurnDriver<M> {
             let estimated_tokens = messages.iter().fold(0u32, |total, message| {
                 total.saturating_add(message.estimated_tokens())
             });
+            let call_growth = match previous_used {
+                Some(previous) => estimated_tokens.saturating_sub(previous).max(1),
+                None => growth.max(1),
+            };
+            previous_used = Some(estimated_tokens);
+            let pressure = self.governor.pressure(estimated_tokens, call_growth);
+            self.events.append(Event::ContextPressure {
+                turn_id,
+                used: estimated_tokens,
+                ceiling: pressure.ceiling,
+                growth: call_growth,
+                headroom_calls: pressure.headroom_calls,
+                level: pressure.level.as_str().to_owned(),
+            });
+            let wrap_up_fits =
+                estimated_tokens.saturating_add(estimate_tokens(WRAP_UP)) <= recipe.budget_tokens;
+            if pressure.level == PressureLevel::Red && !wrapped_up && wrap_up_fits {
+                wrapped_up = true;
+                messages.push(Arc::new(Message::system(WRAP_UP)));
+                self.events.append(Event::WrapUpInjected {
+                    turn_id,
+                    used: estimated_tokens,
+                    ceiling: pressure.ceiling,
+                });
+                continue 'turn;
+            }
             if estimated_tokens > recipe.budget_tokens {
                 self.step(fsm, turn_id, TurnEvent::Overflow)?;
                 return Err(KernelError::ContextOverflow {
