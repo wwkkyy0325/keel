@@ -158,7 +158,15 @@ async fn run() -> Result<(), KernelError> {
     };
 
     if args.session {
-        return run_session(&driver, &config, &events, todos.as_ref()).await;
+        return run_session(
+            &driver,
+            &config,
+            &events,
+            todos.as_ref(),
+            args.turn_input.as_deref(),
+            args.stop_on_error,
+        )
+        .await;
     }
 
     let outcome = driver.run(&args.input, CancelToken::new()).await;
@@ -173,6 +181,8 @@ async fn run_session(
     config: &RuntimeConfig,
     events: &Arc<EventLog>,
     todos: Option<&Arc<Mutex<TodoList>>>,
+    turn_input: Option<&std::path::Path>,
+    stop_on_error: bool,
 ) -> Result<(), KernelError> {
     use std::io::{BufRead, IsTerminal, Write};
 
@@ -198,10 +208,20 @@ async fn run_session(
         if input.trim().is_empty() {
             continue;
         }
+        // A long-run host needs to know what this turn asked for. The file is
+        // read by the acceptance checker; it is written before the turn runs.
+        if let Some(path) = turn_input {
+            std::fs::write(path, input).map_err(|error| KernelError::Io {
+                message: format!("cannot write turn input `{}`: {error}", path.display()),
+            })?;
+        }
         let outcome = driver.run(input, CancelToken::new()).await;
         print_outcome(config, events, &outcome);
         print_todos(todos);
         if outcome.is_cancelled() {
+            break;
+        }
+        if stop_on_error && !outcome.is_done() {
             break;
         }
     }
@@ -514,6 +534,10 @@ struct Args {
     no_recall: bool,
     no_memo: bool,
     unbounded_tools: bool,
+    /// Debug/eval aid: write the current turn input here before it runs.
+    turn_input: Option<PathBuf>,
+    /// Long-run host behavior: stop instead of advancing after an error.
+    stop_on_error: bool,
 }
 
 fn parse_args() -> Result<Args, KernelError> {
@@ -527,6 +551,8 @@ fn parse_args() -> Result<Args, KernelError> {
     let mut no_recall = false;
     let mut no_memo = false;
     let mut unbounded_tools = false;
+    let mut turn_input = None;
+    let mut stop_on_error = false;
     let mut workspace = std::env::current_dir().map_err(|error| KernelError::Io {
         message: error.to_string(),
     })?;
@@ -592,6 +618,15 @@ fn parse_args() -> Result<Args, KernelError> {
             "--unbounded-tools" => {
                 unbounded_tools = true;
             }
+            "--turn-input" => {
+                turn_input =
+                    Some(PathBuf::from(args.next().ok_or_else(|| {
+                        invalid_config("missing value for `--turn-input`")
+                    })?));
+            }
+            "--stop-on-error" => {
+                stop_on_error = true;
+            }
             other => {
                 return Err(invalid_config(format!("unknown argument `{other}`")));
             }
@@ -610,6 +645,8 @@ fn parse_args() -> Result<Args, KernelError> {
         no_recall,
         no_memo,
         unbounded_tools,
+        turn_input,
+        stop_on_error,
     })
 }
 
