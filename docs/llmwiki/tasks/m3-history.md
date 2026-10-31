@@ -13,10 +13,12 @@ one at a time. Summarization is blocked on
       with a multi-message stage and an unchanged single-message stage
 - [ ] 3. CLI session loop — verify: 20-turn mock session reaches `Done` each
       turn and keeps history across turns
-- [ ] 4. Budget-driven assembly: detail window with a two-turn floor, digests
-      for older turns, records for sealed segments — verify: fixture sessions
-      at small, medium and large budgets produce the expected composition and
-      `HistoryAssembled` reports it
+- [ ] 4. Budget-driven assembly: detail window sized in tokens (70% share,
+      two-turn floor, no turn ceiling), digests for older turns, records for
+      sealed segments — verify: fixture sessions at small, medium and large
+      budgets produce the expected composition, a short-turn chat keeps many
+      turns verbatim, a tool-heavy turn is digested sooner, and
+      `HistoryAssembled` reports the composition
 - [ ] 5. Tool summaries: head and tail by character count, spill file under
       `.keel/outputs/`, marker carries the path — verify: a 200 kB output
       truncates, spills once, and is readable through `read_file`

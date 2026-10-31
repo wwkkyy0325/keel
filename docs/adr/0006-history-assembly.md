@@ -73,10 +73,17 @@ Assembly runs per model call, after the pinned stages, with the budget
 remaining at the history stage:
 
 1. the current input is pinned and never compressed;
-2. walk the current segment backwards and keep whole turns verbatim while they
-   fit; the floor is two turns;
-3. if the floor does not fit, degrade the oldest of those turns to a digest
-   rather than cutting it mid-sentence;
+2. the detail window is sized in tokens, not turns. It keeps the largest
+   number of whole turns that fits within the detail share, which defaults to
+   70% of the budget remaining at the history stage. There is no turn ceiling;
+   the floor is two turns;
+3. if two whole turns do not fit the detail share, they still take precedence
+   over sealed records; if they do not fit the whole history budget, the older
+   one is degraded to a digest rather than cut mid-sentence;
+3b. the turn count therefore falls out of the budget: a short-turn conversation
+   keeps dozens of turns verbatim, while a tool-heavy coding turn is digested
+   sooner. A profile that cares more about input cost than continuity lowers
+   `budget_tokens`; there is no separate turn-count knob;
 4. spend what remains on older turns of the current segment as digests, newest
    first;
 5. then on sealed segment records, newest first, emitted in chronological
@@ -88,7 +95,8 @@ If the pinned parts alone exceed the budget the turn ends in
 `ContextOverflow`; the kernel does not silently emit a partial prompt.
 
 Nothing is fixed at compile time: the detail window is the largest number of
-turns that fits between the floor and the ceiling.
+whole turns that fits the token share, above a two-turn floor and with no
+ceiling.
 
 ### 4. Compression ladder and triggers
 
@@ -195,7 +203,10 @@ without changing assembly.
 ## Alternatives rejected
 
 - Flat last-N turns: cannot keep a long task's result while dropping its
-  process, and overflows exactly when the task is most expensive.
+  process, and overflows exactly when the task is most expensive. A fixed
+  N = 6 draft of this ADR was also wrong: it is a cap, so it never protects the
+  budget of a tool-heavy coding turn, while it cuts a short-turn chat at six
+  when fifty would fit.
 - Fixed summary every K turns: spends tokens on every turn and compresses
   content that still fits.
 - Model-managed segmentation: unreliable, manipulable, and makes assembly
