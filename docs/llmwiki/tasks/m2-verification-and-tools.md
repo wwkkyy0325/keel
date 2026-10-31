@@ -10,7 +10,7 @@ not by the model's own claim.
       verifiers run real checks — verify: verifier unit/integration tests
 - [x] 2. Read-only tools: `list_dir` and `code_search` with permission requests
       and bounded output — verify: dispatch and permission tests
-- [ ] 3. Structured shell tool: program plus argument list, no interpolation,
+- [x] 3. Structured shell tool: program plus argument list, no interpolation,
       allowlist, permission request; command and test verifiers on top — verify:
       allowlist, timeout and permission tests
 - [ ] 4. One coding eval case with `setup/`, `hidden/` and `verify.sh` — verify:
@@ -51,4 +51,14 @@ not by the model's own claim.
   output.
 - The coding profiles now expose five tools: `echo`, `read_file`, `write_file`,
   `list_dir`, `code_search`.
-- `cargo test --workspace` passes: 114 tests.
+- Step 3 adds `shell` and command/test verification:
+  - program and arguments are separate; no shell and no interpolation;
+  - programs must match an allowlist; paths and shell names are rejected;
+  - the confirmation prompt shows the command line;
+  - child processes do not inherit environment names that look like keys,
+    tokens, secrets, passwords or credentials;
+  - command/test verifiers use the same execution path and a 60 s bound.
+- The CLI uses a terminal interaction port. A non-terminal stdin defers, so
+  headless runs deny permission-gated actions.
+- Coding profiles expose six tools, including `shell`.
+- `cargo test --workspace` passes: 122 tests.

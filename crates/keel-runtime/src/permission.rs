@@ -235,6 +235,7 @@ mod tests {
             tool: "test".to_owned(),
             access,
             path: Some(path.to_path_buf()),
+            detail: None,
         }
     }
 
@@ -314,6 +315,7 @@ mod tests {
             tool: "test".to_owned(),
             access: AccessKind::Write,
             path: None,
+            detail: None,
         };
         assert!(matches!(
             engine.check(&request),

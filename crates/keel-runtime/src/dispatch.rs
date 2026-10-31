@@ -274,8 +274,13 @@ impl ToolDispatcher {
                         .as_ref()
                         .map(|path| path.display().to_string())
                         .unwrap_or_else(|| "no path".to_owned());
+                    let detail = request
+                        .detail
+                        .as_deref()
+                        .map(|detail| format!("\ncommand: {detail}"))
+                        .unwrap_or_default();
                     let prompt = format!(
-                        "Allow `{tool_name}` to {} `{scope}`? {reason}",
+                        "Allow `{tool_name}` to {} `{scope}`? {reason}{detail}",
                         request.access.as_str()
                     );
                     let interaction = InteractionRequest::new(
@@ -291,6 +296,7 @@ impl ToolDispatcher {
                     ]);
                     let mut interaction = interaction;
                     interaction.correlation = Some(call_id);
+                    interaction.path = request.path.clone();
 
                     match interactions.request(interaction, cancel).await {
                         InteractionResponse::Approved {

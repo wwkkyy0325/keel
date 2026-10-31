@@ -115,3 +115,18 @@
   `code_search`.
 - Verification: 114 tests; clippy, fmt, `cargo deny check` and a CLI mock turn
   pass.
+
+### Structured shell and terminal approvals
+
+- Added `ShellTool` and a shared command runner: program plus argument list,
+  allowlist, no shell or interpolation, bounded output and timeout.
+- The shell confirmation prompt includes the command line; child processes
+  drop environment names that look like keys, tokens, secrets, passwords or
+  credentials.
+- Added command and test verifiers on the same execution path.
+- Added a terminal interaction port; non-terminal stdin defers, so headless
+  runs deny permission-gated actions.
+- Coding profiles now expose six tools; recorded the missing OS command sandbox
+  in `backlog.md`.
+- Verification: 122 tests; clippy, fmt, `cargo deny check` and a CLI mock turn
+  pass.

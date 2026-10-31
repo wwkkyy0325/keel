@@ -1,8 +1,10 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use keel_core::{AccessKind, ArgValue, CancelToken, Tool, ToolArgs, ToolCallId, ToolCtx, TurnId};
-use keel_runtime::{CodeSearchTool, ListDirTool, LocalTrashStore, WriteFileTool};
+use keel_core::{
+    AccessKind, ArgValue, CancelToken, ErrorCode, Tool, ToolArgs, ToolCallId, ToolCtx, TurnId,
+};
+use keel_runtime::{CodeSearchTool, ListDirTool, LocalTrashStore, ShellTool, WriteFileTool};
 
 fn ctx(root: &Path) -> ToolCtx {
     ToolCtx {
@@ -97,6 +99,42 @@ async fn code_search_finds_matches_and_skips_build_directories() {
     let request = &tool.permission_requests(&permission_args).unwrap()[0];
     assert_eq!(request.tool, "code_search");
     assert_eq!(request.access, AccessKind::Read);
+}
+
+#[tokio::test]
+async fn shell_runs_allowlisted_programs_without_a_shell() {
+    let dir = tempfile::tempdir().unwrap();
+    let tool = ShellTool::new(vec!["rustc".to_owned()]);
+    let mut args = ToolArgs::new();
+    args.insert("program", ArgValue::String("rustc".to_owned()));
+    args.insert("args", ArgValue::StringList(vec!["--version".to_owned()]));
+
+    let result = tool.call(args.clone(), &ctx(dir.path())).await;
+
+    assert!(result.is_success());
+    let content = result.content().unwrap();
+    assert!(content.contains("exit code: 0"));
+    assert!(content.contains("rustc"));
+
+    let request = &tool.permission_requests(&args).unwrap()[0];
+    assert_eq!(request.tool, "shell");
+    assert_eq!(request.access, AccessKind::Execute);
+}
+
+#[tokio::test]
+async fn shell_rejects_programs_outside_the_allowlist() {
+    let dir = tempfile::tempdir().unwrap();
+    let tool = ShellTool::new(vec!["rustc".to_owned()]);
+    let mut args = ToolArgs::new();
+    args.insert("program", ArgValue::String("not-allowed".to_owned()));
+
+    let result = tool.call(args, &ctx(dir.path())).await;
+
+    assert!(!result.is_success());
+    assert_eq!(
+        result.error().map(|error| error.code),
+        Some(ErrorCode::InvalidArguments)
+    );
 }
 
 #[tokio::test]

@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use keel_core::{
@@ -7,6 +8,7 @@ use keel_core::{
     ToolCtx, ToolError, ToolResult, ToolSchema,
 };
 
+use crate::command::{self, CommandSpec};
 use crate::trash::TrashStore;
 
 /// Returns the argument text unchanged. Used to exercise the tool loop.
@@ -90,6 +92,7 @@ impl Tool for ReadFileTool {
             tool: "read_file".to_owned(),
             access: AccessKind::Read,
             path: Some(PathBuf::from(path)),
+            detail: None,
         }])
     }
 
@@ -163,6 +166,7 @@ impl Tool for ListDirTool {
             tool: "list_dir".to_owned(),
             access: AccessKind::Read,
             path: Some(PathBuf::from(path)),
+            detail: None,
         }])
     }
 
@@ -287,6 +291,7 @@ impl Tool for CodeSearchTool {
             tool: "code_search".to_owned(),
             access: AccessKind::Read,
             path: Some(PathBuf::from(path)),
+            detail: None,
         }])
     }
 
@@ -459,6 +464,131 @@ fn display_relative(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
+/// Runs an allowlisted program without a shell.
+pub struct ShellTool {
+    allowlist: Vec<String>,
+}
+
+impl ShellTool {
+    pub fn new(allowlist: Vec<String>) -> Self {
+        Self { allowlist }
+    }
+
+    /// Developer programs useful for a coding profile. Shells are excluded so
+    /// the tool cannot be turned into an interpolating command string.
+    pub fn coding_defaults() -> Self {
+        Self::new(command::coding_allowlist())
+    }
+}
+
+#[async_trait]
+impl Tool for ShellTool {
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "shell".to_owned(),
+            description: "Run an allowlisted program with a fixed argument list; no shell."
+                .to_owned(),
+            risk: RiskLevel::Dangerous,
+            params: vec![
+                ParamSpec {
+                    name: "program".to_owned(),
+                    kind: ParamKind::String,
+                    required: true,
+                },
+                ParamSpec {
+                    name: "args".to_owned(),
+                    kind: ParamKind::StringList,
+                    required: false,
+                },
+                ParamSpec {
+                    name: "cwd".to_owned(),
+                    kind: ParamKind::String,
+                    required: false,
+                },
+            ],
+        }
+    }
+
+    fn permission_requests(&self, args: &ToolArgs) -> Result<Vec<PermissionRequest>, ToolError> {
+        let path = match args.get("cwd") {
+            Some(keel_core::ArgValue::String(value)) => value.as_str(),
+            Some(_) => {
+                return Err(ToolError::invalid_arguments(
+                    "argument `cwd` must be string",
+                ))
+            }
+            None => ".",
+        };
+        let program = args.require_str("program")?;
+        let detail = match args.get("args") {
+            Some(keel_core::ArgValue::StringList(values)) if !values.is_empty() => {
+                format!("{program} {}", values.join(" "))
+            }
+            _ => program.to_owned(),
+        };
+        Ok(vec![PermissionRequest {
+            tool: "shell".to_owned(),
+            access: AccessKind::Execute,
+            path: Some(PathBuf::from(path)),
+            detail: Some(detail),
+        }])
+    }
+
+    async fn call(&self, args: ToolArgs, ctx: &ToolCtx) -> ToolResult {
+        if ctx.cancel.is_cancelled() {
+            return ToolResult::failure(ctx.call_id, "shell", ToolError::cancelled());
+        }
+        let program = match args.require_str("program") {
+            Ok(program) => program,
+            Err(error) => return ToolResult::failure(ctx.call_id, "shell", error),
+        };
+        if !command::is_allowed(program, &self.allowlist) {
+            return ToolResult::failure(
+                ctx.call_id,
+                "shell",
+                ToolError::invalid_arguments(format!(
+                    "program `{program}` is not allowlisted; allowed: {}",
+                    self.allowlist.join(", ")
+                )),
+            );
+        }
+        let command_args = match args.get("args") {
+            Some(keel_core::ArgValue::StringList(values)) => values.clone(),
+            Some(_) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "shell",
+                    ToolError::invalid_arguments("argument `args` must be a string list"),
+                )
+            }
+            None => Vec::new(),
+        };
+        let cwd = match args.get("cwd") {
+            Some(keel_core::ArgValue::String(value)) => {
+                resolve_path(&ctx.workspace_root, Path::new(value))
+            }
+            Some(_) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "shell",
+                    ToolError::invalid_arguments("argument `cwd` must be string"),
+                )
+            }
+            None => ctx.workspace_root.clone(),
+        };
+        let spec = CommandSpec {
+            program,
+            args: &command_args,
+            cwd: &cwd,
+            timeout: Duration::from_secs(60),
+        };
+        match command::run(spec, &ctx.cancel).await {
+            Ok(output) => ToolResult::success(ctx.call_id, "shell", output.output),
+            Err(error) => ToolResult::failure(ctx.call_id, "shell", error),
+        }
+    }
+}
+
 /// Writes a UTF-8 text file inside the workspace.
 ///
 /// When the target already exists, the previous version is copied into the
@@ -502,6 +632,7 @@ impl Tool for WriteFileTool {
             tool: "write_file".to_owned(),
             access: AccessKind::Write,
             path: Some(PathBuf::from(path)),
+            detail: None,
         }])
     }
 

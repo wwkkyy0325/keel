@@ -1,3 +1,5 @@
+mod terminal;
+
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -9,11 +11,12 @@ use keel_core::{
 };
 use keel_model_openai::{OpenAiConfig, OpenAiProvider};
 use keel_runtime::{
-    load_profile, validate_config, CodeSearchTool, ContextBuilder, DeferAllInteractionPort,
-    EchoTool, EventLog, InteractionBroker, LatestStage, ListDirTool, LocalTrashStore, MockModel,
-    MockStep, PermissionEngine, ReadFileTool, RuntimeConfig, SystemStage, ToolRegistry, TurnDriver,
-    TurnDriverConfig, WriteFileTool,
+    load_profile, validate_config, CodeSearchTool, ContextBuilder, EchoTool, EventLog,
+    InteractionBroker, LatestStage, ListDirTool, LocalTrashStore, MockModel, MockStep,
+    PermissionEngine, ReadFileTool, RuntimeConfig, ShellTool, SystemStage, ToolRegistry,
+    TurnDriver, TurnDriverConfig, WriteFileTool,
 };
+use terminal::TerminalInteractionPort;
 
 enum HostModel {
     Mock(MockModel),
@@ -60,6 +63,7 @@ async fn run() -> Result<(), KernelError> {
     registry.register(Arc::new(ReadFileTool::new()))?;
     registry.register(Arc::new(ListDirTool::new()))?;
     registry.register(Arc::new(CodeSearchTool::new()))?;
+    registry.register(Arc::new(ShellTool::coding_defaults()))?;
     registry.register(Arc::new(WriteFileTool::new(Arc::new(
         LocalTrashStore::new(permissions.root().to_path_buf()),
     ))))?;
@@ -73,7 +77,7 @@ async fn run() -> Result<(), KernelError> {
 
     let events = Arc::new(EventLog::new());
     let interactions = Arc::new(InteractionBroker::new(
-        Arc::new(DeferAllInteractionPort),
+        Arc::new(TerminalInteractionPort),
         config.interaction,
         events.clone(),
     ));

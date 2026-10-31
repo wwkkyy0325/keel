@@ -115,23 +115,83 @@ async fn optional_failures_do_not_block_the_report() {
 }
 
 #[tokio::test]
-async fn command_and_human_items_remain_unverified_until_implemented() {
+async fn command_and_test_items_run_allowlisted_programs() {
     let dir = tempfile::tempdir().unwrap();
     let verifier = AcceptanceVerifier::new(dir.path());
     let items = vec![
         item(
-            "tests",
+            "command",
             true,
-            VerifySpec::Test {
-                program: "cargo".to_owned(),
-                args: vec!["test".to_owned()],
+            VerifySpec::Command {
+                program: "rustc".to_owned(),
+                args: vec!["--version".to_owned()],
+                expected_exit: 0,
             },
         ),
         item(
+            "test",
+            true,
+            VerifySpec::Test {
+                program: "rustc".to_owned(),
+                args: vec!["--version".to_owned()],
+            },
+        ),
+        item(
+            "wrong-exit",
+            true,
+            VerifySpec::Command {
+                program: "rustc".to_owned(),
+                args: vec!["--version".to_owned()],
+                expected_exit: 1,
+            },
+        ),
+    ];
+
+    let report = verifier.verify(&items).await;
+
+    assert_eq!(report.evidence[0].outcome, EvidenceOutcome::Passed);
+    assert_eq!(report.evidence[1].outcome, EvidenceOutcome::Passed);
+    assert_eq!(report.evidence[2].outcome, EvidenceOutcome::Failed);
+    assert_eq!(report.required_failed, vec!["wrong-exit".to_owned()]);
+}
+
+#[tokio::test]
+async fn commands_outside_the_allowlist_are_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let verifier = AcceptanceVerifier::new(dir.path());
+    let items = vec![item(
+        "dangerous",
+        true,
+        VerifySpec::Command {
+            program: "rm".to_owned(),
+            args: vec!["-rf".to_owned(), ".".to_owned()],
+            expected_exit: 0,
+        },
+    )];
+
+    let report = verifier.verify(&items).await;
+
+    assert_eq!(report.required_failed, vec!["dangerous".to_owned()]);
+    assert!(report.evidence[0].detail.contains("not allowlisted"));
+}
+
+#[tokio::test]
+async fn human_and_unverifiable_items_remain_unverified() {
+    let dir = tempfile::tempdir().unwrap();
+    let verifier = AcceptanceVerifier::new(dir.path());
+    let items = vec![
+        item(
             "human",
-            false,
+            true,
             VerifySpec::Human {
                 prompt: "does it look right?".to_owned(),
+            },
+        ),
+        item(
+            "unknown",
+            false,
+            VerifySpec::Unverifiable {
+                reason: "not checkable".to_owned(),
             },
         ),
     ];
@@ -139,7 +199,7 @@ async fn command_and_human_items_remain_unverified_until_implemented() {
     let report = verifier.verify(&items).await;
 
     assert!(!report.passed());
-    assert_eq!(report.required_unverified, vec!["tests".to_owned()]);
+    assert_eq!(report.required_unverified, vec!["human".to_owned()]);
     assert_eq!(report.evidence[0].outcome, EvidenceOutcome::Unverified);
     assert_eq!(report.evidence[1].outcome, EvidenceOutcome::Unverified);
 }

@@ -60,6 +60,9 @@ pub fn standard_registry(root: &Path) -> Arc<ToolRegistry> {
     registry.register(Arc::new(ListDirTool::new())).unwrap();
     registry.register(Arc::new(CodeSearchTool::new())).unwrap();
     registry
+        .register(Arc::new(keel_runtime::ShellTool::coding_defaults()))
+        .unwrap();
+    registry
         .register(Arc::new(WriteFileTool::new(Arc::new(
             LocalTrashStore::new(root.to_path_buf()),
         ))))

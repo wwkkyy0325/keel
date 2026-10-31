@@ -104,6 +104,9 @@ pub struct InteractionRequest {
     pub default: Option<String>,
     pub timeout_ms: Option<u64>,
     pub correlation: Option<ToolCallId>,
+    /// Path the permission request applies to, when the request has one. Hosts
+    /// use it to offer a path-scoped grant.
+    pub path: Option<PathBuf>,
 }
 
 impl InteractionRequest {
@@ -117,6 +120,7 @@ impl InteractionRequest {
             default: None,
             timeout_ms: None,
             correlation: None,
+            path: None,
         }
     }
 

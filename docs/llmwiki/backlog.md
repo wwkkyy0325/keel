@@ -38,7 +38,14 @@ path", not "never".
 
 ## Verification
 
-- **Command and test verifiers.** They need the structured shell tool so they
-  can run without string interpolation. Trigger: shell tool lands.
 - **Human verification and deferred acceptance items.** Trigger: M5, or the
   first plan that needs user sign-off.
+
+## Execution safety
+
+- **OS-level command sandbox.** `shell` runs allowlisted programs with fixed
+  arguments and a visible confirmation prompt, but it is not a filesystem or
+  network sandbox: an approved program can still read paths outside the
+  workspace. The hard deny list does not parse command arguments. Trigger: M5,
+  or the first external/untrusted workspace. Until then, `workspace_auto`
+  requires confirmation and `full_auto` is an explicit trust decision.

@@ -144,3 +144,17 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 - Verification: 114 tests; clippy, fmt, `cargo deny check`; CLI mock turn
   reaches `Done`.
 - Commit: `feat: add read-only workspace tools`.
+
+### M2 — Structured shell and terminal approvals
+
+- Added a shared command runner and `ShellTool`: fixed program/argument list,
+  allowlist, no shell interpolation, bounded output and 60 s timeout.
+- Permission prompts show the command line; sensitive environment names are
+  removed from child processes.
+- Added command and test acceptance verifiers using the same runner.
+- Added a terminal interaction port; piped stdin defers instead of blocking.
+- Coding profiles expose six tools.
+- OS-level command sandboxing remains open and is recorded in `backlog.md`.
+- Verification: 122 tests; clippy, fmt, `cargo deny check`; CLI mock turn
+  reaches `Done`.
+- Commit: `feat: add structured shell and terminal approvals`.

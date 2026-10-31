@@ -88,6 +88,7 @@ impl Tool for GuardedTool {
             tool: "guarded".to_owned(),
             access: keel_core::AccessKind::Write,
             path: Some(self.path.clone()),
+            detail: None,
         }])
     }
 

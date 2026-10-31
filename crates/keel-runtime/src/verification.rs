@@ -4,22 +4,31 @@
 //! structured shell tool so there is only one execution path.
 
 use std::path::{Component, Path, PathBuf};
+use std::time::Duration;
 
-use keel_core::{AcceptanceItem, Evidence, EvidenceOutcome, VerificationReport, VerifySpec};
+use keel_core::{
+    AcceptanceItem, CancelToken, Evidence, EvidenceOutcome, VerificationReport, VerifySpec,
+};
 use sha2::{Digest, Sha256};
 
 use crate::calculator;
+use crate::command::{self, CommandSpec};
 
 const MAX_HASH_FILE_BYTES: u64 = 16 * 1024 * 1024;
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Runs acceptance items against a workspace root.
 pub struct AcceptanceVerifier {
     root: PathBuf,
+    allowlist: Vec<String>,
 }
 
 impl AcceptanceVerifier {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self {
+            root: root.into(),
+            allowlist: command::coding_allowlist(),
+        }
     }
 
     /// Verifies every item and summarizes the required failures.
@@ -59,11 +68,18 @@ impl AcceptanceVerifier {
             VerifySpec::FileHash { path, sha256 } => {
                 self.verify_file_hash(&item.id, path, sha256).await
             }
-            VerifySpec::Command { .. } | VerifySpec::Test { .. } => unverified(
-                &item.id,
-                "command",
-                "command verification requires the structured shell tool",
-            ),
+            VerifySpec::Command {
+                program,
+                args,
+                expected_exit,
+            } => {
+                self.verify_command(&item.id, "command", program, args, Some(*expected_exit))
+                    .await
+            }
+            VerifySpec::Test { program, args } => {
+                self.verify_command(&item.id, "test", program, args, Some(0))
+                    .await
+            }
             VerifySpec::Human { prompt } => unverified(
                 &item.id,
                 "human",
@@ -72,6 +88,51 @@ impl AcceptanceVerifier {
             VerifySpec::Unverifiable { reason } => {
                 unverified(&item.id, "unverifiable", reason.clone())
             }
+        }
+    }
+
+    async fn verify_command(
+        &self,
+        item_id: &str,
+        verifier: &str,
+        program: &str,
+        args: &[String],
+        expected_exit: Option<i32>,
+    ) -> Evidence {
+        if !command::is_allowed(program, &self.allowlist) {
+            return failed(
+                item_id,
+                verifier,
+                format!("program `{program}` is not allowlisted"),
+            );
+        }
+        let spec = CommandSpec {
+            program,
+            args,
+            cwd: &self.root,
+            timeout: COMMAND_TIMEOUT,
+        };
+        let output = match command::run(spec, &CancelToken::new()).await {
+            Ok(output) => output,
+            Err(error) => return failed(item_id, verifier, error.to_string()),
+        };
+        let expected = expected_exit.unwrap_or(0);
+        if output.exit_code == Some(expected) {
+            Evidence {
+                item_id: item_id.to_owned(),
+                verifier: verifier.to_owned(),
+                outcome: EvidenceOutcome::Passed,
+                detail: format!("exit code {expected}\n{}", output.output),
+            }
+        } else {
+            failed(
+                item_id,
+                verifier,
+                format!(
+                    "expected exit code {expected}, got {:?}\n{}",
+                    output.exit_code, output.output
+                ),
+            )
         }
     }
 

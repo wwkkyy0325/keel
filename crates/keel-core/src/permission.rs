@@ -46,6 +46,9 @@ pub struct PermissionRequest {
     pub tool: String,
     pub access: AccessKind,
     pub path: Option<PathBuf>,
+    /// Human-readable detail shown in the confirmation prompt, such as the
+    /// command line for a shell call. It is not an authorization input.
+    pub detail: Option<String>,
 }
 
 /// Answer to a permission question.
