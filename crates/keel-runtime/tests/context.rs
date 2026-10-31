@@ -342,6 +342,13 @@ async fn facts_are_emitted_as_a_memory_block() {
             confirmed: true,
             segment_id: 1,
         },
+        Fact {
+            key: "constraint:repo".to_owned(),
+            statement: "always use tabs in this repo".to_owned(),
+            scope: FactScope::Workspace,
+            confirmed: false,
+            segment_id: 2,
+        },
     ];
     let ctx = BuildCtx {
         turn_id: TurnId::new(1),
@@ -355,7 +362,7 @@ async fn facts_are_emitted_as_a_memory_block() {
         events: None,
     };
     let built = builder
-        .build(&ctx, &recipe(&["memory"], 100), &CancelToken::new())
+        .build(&ctx, &recipe(&["memory"], 400), &CancelToken::new())
         .await
         .unwrap();
 
@@ -364,4 +371,7 @@ async fn facts_are_emitted_as_a_memory_block() {
     assert!(built.fragments[0].text.starts_with("[memory]"));
     assert!(built.fragments[0].text.contains("always use tabs (global)"));
     assert!(built.fragments[0].text.contains("modified a.rs (session)"));
+    assert!(built.fragments[0]
+        .text
+        .contains("always use tabs in this repo (workspace)"));
 }

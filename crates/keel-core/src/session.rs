@@ -61,6 +61,7 @@ impl ToolSummary {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FactScope {
     Session,
+    Workspace,
     Global,
 }
 
@@ -70,9 +71,20 @@ struct FactCandidate {
     statement: String,
     durable: bool,
     explicit: bool,
+    workspace: bool,
+    global: bool,
     occurrences: u32,
     confirmed: bool,
     segment_id: u32,
+}
+
+/// One parsed constraint and the scope hints it carries.
+struct Constraint {
+    key: String,
+    durable: bool,
+    explicit: bool,
+    workspace: bool,
+    global: bool,
 }
 
 /// How often a durable constraint has been stated and how.
@@ -136,7 +148,9 @@ pub struct SegmentChange {
     pub opened: Option<u32>,
     pub reason: Option<String>,
     pub skipped: Option<CompressionSkip>,
-    /// Keys promoted to global scope at this seal.
+    /// Keys removed by an explicit "forget" at this seal.
+    pub forgotten: Vec<String>,
+    /// Keys promoted above session scope at this seal.
     pub promoted: Vec<String>,
 }
 
@@ -160,6 +174,7 @@ pub struct Session {
     next_segment_id: u32,
     last_verified: bool,
     facts: Vec<Fact>,
+    workspace_facts: Vec<Fact>,
     global_facts: Vec<Fact>,
     candidates: BTreeMap<String, Candidate>,
 }
@@ -199,13 +214,14 @@ impl Session {
             return SegmentChange::default();
         };
         let sealed = open_id;
-        let (skipped, promoted) = self.seal_and_record();
+        let (skipped, forgotten, promoted) = self.seal_and_record();
         let opened = self.open_segment(input);
         SegmentChange {
             sealed: Some(sealed),
             opened: Some(opened),
             reason: Some(reason),
             skipped,
+            forgotten,
             promoted,
         }
     }
@@ -279,14 +295,15 @@ impl Session {
 
     /// Seals the open segment, builds its record when the gate passes, and
     /// sediments its facts.
-    fn seal_and_record(&mut self) -> (Option<CompressionSkip>, Vec<String>) {
-        let (skipped, facts) = {
+    fn seal_and_record(&mut self) -> (Option<CompressionSkip>, Vec<String>, Vec<String>) {
+        let (skipped, facts, forgotten_terms) = {
             let Some(segment) = self.segments.last_mut() else {
-                return (None, Vec::new());
+                return (None, Vec::new(), Vec::new());
             };
             segment.state = SegmentState::Sealed;
             let id = segment.id;
             let facts = extract_facts(segment);
+            let forgotten_terms = extract_forgotten(segment);
             let outcome = build_record(segment);
             let skipped = match outcome {
                 Ok(record) => {
@@ -298,9 +315,13 @@ impl Session {
                     missing,
                 }),
             };
-            (skipped, facts)
+            (skipped, facts, forgotten_terms)
         };
-        (skipped, self.apply_facts(facts))
+        let mut forgotten = Vec::new();
+        for term in forgotten_terms {
+            forgotten.extend(self.forget_matching(&term));
+        }
+        (skipped, forgotten, self.apply_facts(facts))
     }
 
     fn seal_reason(&mut self, input: &str) -> Option<String> {
@@ -333,10 +354,9 @@ impl Session {
     fn apply_facts(&mut self, candidates: Vec<FactCandidate>) -> Vec<String> {
         let mut promoted = Vec::new();
         for candidate in candidates {
-            // An explicit "remember" is enough. Anything else must be said in
-            // at least two separate turns. A different statement for the same
-            // key resets the count and demotes it.
-            let scope = if candidate.durable || candidate.explicit {
+            // Repetition is the only implicit promotion path, and it stops at
+            // workspace scope. Global needs an explicit, global-scoped request.
+            let repeated = if candidate.durable || candidate.explicit {
                 let entry = self
                     .candidates
                     .entry(candidate.key.clone())
@@ -350,11 +370,15 @@ impl Session {
                     entry.statement = candidate.statement.clone();
                     entry.occurrences = candidate.occurrences;
                 }
-                if candidate.explicit || entry.occurrences >= 2 {
-                    FactScope::Global
-                } else {
-                    FactScope::Session
-                }
+                entry.occurrences >= 2
+            } else {
+                false
+            };
+
+            let scope = if candidate.explicit && candidate.global {
+                FactScope::Global
+            } else if candidate.explicit || candidate.workspace || (candidate.durable && repeated) {
+                FactScope::Workspace
             } else {
                 FactScope::Session
             };
@@ -367,18 +391,49 @@ impl Session {
                 segment_id: candidate.segment_id,
             };
             // A newer statement for the same key replaces the old one, even
-            // when it moves scope.
+            // when it moves scope; that is the rollback path.
             self.facts.retain(|existing| existing.key != fact.key);
+            self.workspace_facts
+                .retain(|existing| existing.key != fact.key);
             self.global_facts
                 .retain(|existing| existing.key != fact.key);
-            if scope == FactScope::Global {
-                promoted.push(fact.key.clone());
-                self.global_facts.push(fact);
-            } else {
-                self.facts.push(fact);
+            match scope {
+                FactScope::Global => {
+                    promoted.push(fact.key.clone());
+                    self.global_facts.push(fact);
+                }
+                FactScope::Workspace => {
+                    promoted.push(fact.key.clone());
+                    self.workspace_facts.push(fact);
+                }
+                FactScope::Session => self.facts.push(fact),
             }
         }
         promoted
+    }
+
+    /// Removes every fact whose key or statement mentions `subject`.
+    pub fn forget_matching(&mut self, subject: &str) -> Vec<String> {
+        let needle = subject.trim().to_lowercase();
+        if needle.is_empty() {
+            return Vec::new();
+        }
+        let mut removed = Vec::new();
+        for store in [
+            &mut self.facts,
+            &mut self.workspace_facts,
+            &mut self.global_facts,
+        ] {
+            store.retain(|fact| {
+                let matches = fact.key.to_lowercase().contains(&needle)
+                    || fact.statement.to_lowercase().contains(&needle);
+                if matches {
+                    removed.push(fact.key.clone());
+                }
+                !matches
+            });
+        }
+        removed
     }
 
     /// Session-scoped facts.
@@ -386,14 +441,20 @@ impl Session {
         &self.facts
     }
 
+    /// Facts promoted to workspace scope.
+    pub fn workspace_facts(&self) -> &[Fact] {
+        &self.workspace_facts
+    }
+
     /// Facts promoted to global scope in this process.
     pub fn global_facts(&self) -> &[Fact] {
         &self.global_facts
     }
 
-    /// Global facts first, then session facts.
+    /// Global facts first, then workspace, then session.
     pub fn all_facts(&self) -> Vec<Fact> {
         let mut all = self.global_facts.clone();
+        all.extend(self.workspace_facts.iter().cloned());
         all.extend(self.facts.iter().cloned());
         all
     }
@@ -462,6 +523,24 @@ impl Session {
     }
 }
 
+/// Matches a marker on word boundaries for ASCII text, by substring for CJK.
+fn contains_marker(text: &str, marker: &str) -> bool {
+    if !marker.is_ascii() {
+        return text.contains(marker);
+    }
+    let words: Vec<&str> = text
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect();
+    let parts: Vec<&str> = marker.split_whitespace().collect();
+    if parts.is_empty() {
+        return false;
+    }
+    words
+        .windows(parts.len())
+        .any(|window| window == parts.as_slice())
+}
+
 /// Cues that mark a user sentence as a constraint.
 const CONSTRAINT_CUES: &[&str] = &[
     "always",
@@ -485,6 +564,30 @@ const CONSTRAINT_CUES: &[&str] = &[
 
 /// Phrases that ask the kernel to keep something, so one statement is enough.
 const EXPLICIT_MARKERS: &[&str] = &["remember", "记住", "请记住", "from now on", "以后都"];
+
+/// Phrases that scope a constraint to this repository or project.
+const WORKSPACE_CUES: &[&str] = &[
+    "this repo",
+    "this project",
+    "this workspace",
+    "这个项目",
+    "这个仓库",
+    "本项目",
+    "本仓库",
+];
+
+/// Phrases that ask for a constraint across every project.
+const GLOBAL_CUES: &[&str] = &[
+    "everywhere",
+    "all projects",
+    "globally",
+    "所有项目",
+    "任何项目",
+    "全局",
+];
+
+/// Phrases that retract a fact.
+const FORGET_MARKERS: &[&str] = &["forget about", "forget", "忘记", "忘掉", "不要记住"];
 
 /// Cues that make a constraint durable, so it may become global.
 const DURABLE_CUES: &[&str] = &[
@@ -523,10 +626,10 @@ fn extract_facts(segment: &Segment) -> Vec<FactCandidate> {
         // Count one occurrence per turn even when the sentence repeats.
         let mut seen_in_turn: BTreeSet<(String, String)> = BTreeSet::new();
         for sentence in sentences(&entry.message.content) {
-            let Some((key, durable, explicit)) = parse_constraint(&sentence) else {
+            let Some(constraint) = parse_constraint(&sentence) else {
                 continue;
             };
-            let key = format!("constraint:{key}");
+            let key = format!("constraint:{}", constraint.key);
             let statement = clip_statement(&sentence);
             if !seen_in_turn.insert((key.clone(), statement.clone())) {
                 continue;
@@ -534,20 +637,26 @@ fn extract_facts(segment: &Segment) -> Vec<FactCandidate> {
             if let Some(existing) = candidates.iter_mut().find(|candidate| candidate.key == key) {
                 if existing.statement == statement {
                     existing.occurrences = existing.occurrences.saturating_add(1);
-                    existing.durable |= durable;
-                    existing.explicit |= explicit;
+                    existing.durable |= constraint.durable;
+                    existing.explicit |= constraint.explicit;
+                    existing.workspace |= constraint.workspace;
+                    existing.global |= constraint.global;
                 } else {
                     existing.statement = statement;
                     existing.occurrences = 1;
-                    existing.durable = durable;
-                    existing.explicit = explicit;
+                    existing.durable = constraint.durable;
+                    existing.explicit = constraint.explicit;
+                    existing.workspace = constraint.workspace;
+                    existing.global = constraint.global;
                 }
             } else {
                 candidates.push(FactCandidate {
                     key,
                     statement,
-                    durable,
-                    explicit,
+                    durable: constraint.durable,
+                    explicit: constraint.explicit,
+                    workspace: constraint.workspace,
+                    global: constraint.global,
                     occurrences: 1,
                     confirmed: false,
                     segment_id: segment.id,
@@ -564,6 +673,8 @@ fn extract_facts(segment: &Segment) -> Vec<FactCandidate> {
                 statement: format!("modified {path}"),
                 durable: false,
                 explicit: false,
+                workspace: false,
+                global: false,
                 occurrences: 1,
                 confirmed: true,
                 segment_id: segment.id,
@@ -579,6 +690,8 @@ fn extract_facts(segment: &Segment) -> Vec<FactCandidate> {
                 statement: format!("verified: {}", segment.topic),
                 durable: false,
                 explicit: false,
+                workspace: false,
+                global: false,
                 occurrences: 1,
                 confirmed: true,
                 segment_id: segment.id,
@@ -592,6 +705,46 @@ fn extract_facts(segment: &Segment) -> Vec<FactCandidate> {
 fn upsert_candidate(candidates: &mut Vec<FactCandidate>, candidate: FactCandidate) {
     candidates.retain(|existing| existing.key != candidate.key);
     candidates.push(candidate);
+}
+
+/// Explicit retractions such as "forget about tabs".
+fn extract_forgotten(segment: &Segment) -> Vec<String> {
+    let mut terms = Vec::new();
+    for entry in &segment.entries {
+        if entry.message.role != MessageRole::User {
+            continue;
+        }
+        for sentence in sentences(&entry.message.content) {
+            if let Some(term) = parse_forget(&sentence) {
+                terms.push(term);
+            }
+        }
+    }
+    terms
+}
+
+fn parse_forget(sentence: &str) -> Option<String> {
+    let trimmed = sentence.trim();
+    if trimmed.ends_with('?') || trimmed.ends_with('？') {
+        return None;
+    }
+    let lower = trimmed.to_lowercase();
+    let lower = lower.strip_prefix("please ").unwrap_or(&lower).trim_start();
+    let marker = FORGET_MARKERS
+        .iter()
+        .find(|marker| lower.starts_with(*marker))?;
+    let rest = lower[marker.len()..].trim_start_matches(|character: char| {
+        character.is_whitespace() || matches!(character, ':' | ',' | '：' | '，')
+    });
+    let subject = rest
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|token| token.chars().count() >= 3)
+        .collect::<Vec<_>>()
+        .join(" ");
+    if subject.is_empty() {
+        return None;
+    }
+    Some(subject)
 }
 
 fn sentences(text: &str) -> Vec<String> {
@@ -611,7 +764,7 @@ fn sentences(text: &str) -> Vec<String> {
 ///
 /// The cue is removed, so "always use tabs" and "never use tabs" share a key
 /// and the newer statement replaces the older one.
-fn parse_constraint(sentence: &str) -> Option<(String, bool, bool)> {
+fn parse_constraint(sentence: &str) -> Option<Constraint> {
     let trimmed = sentence.trim();
     // Questions are never instructions.
     if trimmed.ends_with('?') || trimmed.ends_with('？') {
@@ -619,7 +772,10 @@ fn parse_constraint(sentence: &str) -> Option<(String, bool, bool)> {
     }
     let lower = trimmed.to_lowercase();
     // "In this task" / "for now" ties the sentence to the current work.
-    if SCOPING_MARKERS.iter().any(|marker| lower.contains(marker)) {
+    if SCOPING_MARKERS
+        .iter()
+        .any(|marker| contains_marker(&lower, marker))
+    {
         return None;
     }
     // First-person narration ("I always use tabs") is a description.
@@ -634,8 +790,13 @@ fn parse_constraint(sentence: &str) -> Option<(String, bool, bool)> {
     }
     let durable = DURABLE_CUES.iter().any(|cue| lower.starts_with(*cue));
     let explicit = EXPLICIT_MARKERS.iter().any(|cue| lower.starts_with(*cue));
+    let workspace = WORKSPACE_CUES.iter().any(|cue| contains_marker(lower, cue));
+    let global = GLOBAL_CUES.iter().any(|cue| contains_marker(lower, cue));
     let mut rest = lower.to_owned();
     for cue in CONSTRAINT_CUES {
+        rest = rest.replace(cue, " ");
+    }
+    for cue in WORKSPACE_CUES.iter().chain(GLOBAL_CUES.iter()) {
         rest = rest.replace(cue, " ");
     }
     let key = rest
@@ -646,7 +807,13 @@ fn parse_constraint(sentence: &str) -> Option<(String, bool, bool)> {
     if key.is_empty() {
         return None;
     }
-    Some((key, durable, explicit))
+    Some(Constraint {
+        key,
+        durable,
+        explicit,
+        workspace,
+        global,
+    })
 }
 
 fn clip_statement(text: &str) -> String {
@@ -1013,9 +1180,10 @@ mod fact_tests {
         let second = session.begin_turn("another topic entirely");
 
         assert_eq!(second.promoted, vec!["constraint:use tabs".to_owned()]);
-        assert_eq!(session.global_facts().len(), 1);
-        assert_eq!(session.global_facts()[0].scope, FactScope::Global);
-        assert!(session.global_facts()[0]
+        assert_eq!(session.workspace_facts().len(), 1);
+        assert!(session.global_facts().is_empty());
+        assert_eq!(session.workspace_facts()[0].scope, FactScope::Workspace);
+        assert!(session.workspace_facts()[0]
             .statement
             .contains("always use tabs"));
         assert!(!session
@@ -1032,7 +1200,7 @@ mod fact_tests {
 
         session.begin_turn("what is the weather today");
 
-        assert_eq!(session.global_facts().len(), 1);
+        assert_eq!(session.workspace_facts().len(), 1);
     }
 
     #[test]
@@ -1042,8 +1210,44 @@ mod fact_tests {
 
         session.begin_turn("what is the weather today");
 
+        assert_eq!(session.workspace_facts().len(), 1);
+        assert!(session.workspace_facts()[0].statement.contains("remember"));
+    }
+
+    #[test]
+    fn a_workspace_phrase_promotes_to_workspace() {
+        let mut session = Session::new();
+        record(&mut session, "always use tabs in this repo", &[]);
+
+        session.begin_turn("what is the weather today");
+
+        assert_eq!(session.workspace_facts().len(), 1);
+        assert!(session.global_facts().is_empty());
+    }
+
+    #[test]
+    fn an_explicit_global_request_promotes_to_global() {
+        let mut session = Session::new();
+        record(&mut session, "remember to use tabs everywhere", &[]);
+
+        session.begin_turn("what is the weather today");
+
         assert_eq!(session.global_facts().len(), 1);
-        assert!(session.global_facts()[0].statement.contains("remember"));
+        assert!(session.workspace_facts().is_empty());
+    }
+
+    #[test]
+    fn forget_removes_a_promoted_fact() {
+        let mut session = Session::new();
+        record(&mut session, "remember to use tabs everywhere", &[]);
+        session.begin_turn("write a haiku about the sea");
+        assert_eq!(session.global_facts().len(), 1);
+
+        record(&mut session, "forget about tabs", &[]);
+        let change = session.begin_turn("what is the weather today");
+
+        assert_eq!(change.forgotten, vec!["constraint:use tabs".to_owned()]);
+        assert!(session.global_facts().is_empty());
     }
 
     #[test]
@@ -1113,10 +1317,8 @@ mod fact_tests {
     #[test]
     fn a_contradiction_demotes_the_promoted_fact() {
         let mut session = Session::new();
-        record(&mut session, "always use tabs", &[]);
+        record(&mut session, "remember to use tabs everywhere", &[]);
         session.begin_turn("write a haiku about the sea");
-        record(&mut session, "always use tabs", &[]);
-        session.begin_turn("another topic entirely");
         assert_eq!(session.global_facts().len(), 1);
 
         record(&mut session, "never use tabs", &[]);

@@ -234,23 +234,37 @@ already has: verification outcomes, tool outcomes, changed artifacts, and
 user-stated constraints. Candidate facts carry a statement, scope,
 confidence, and provenance (segment and turn).
 
-Promotion is strict and never decided by a keyword alone:
+Facts live in three scopes, and most of them never leave the middle one:
+
+- `Session`: working facts, discarded at session end;
+- `Workspace`: the default home for anything the user asks to keep, shared by
+  sessions of the same workspace;
+- `Global`: only facts the user explicitly asks to apply everywhere.
+
+Placement is strict and never decided by a keyword alone:
 
 - only a sentence-initial imperative counts as a constraint; questions,
   first-person narration, cues in the middle of a sentence, and phrasing tied
   to the current task are rejected;
 - an explicit request (`remember`, `记住`, `请记住`, `from now on`, `以后都`)
-  promotes the fact immediately; the user performed the act of asking;
+  places the fact in `Workspace`;
+- the same explicit request with a global phrase (`everywhere`, `all projects`,
+  `全局`, `所有项目`) places it in `Global`; nothing else reaches `Global`;
+- workspace phrasing (`in this repo`, `本项目`) places it in `Workspace` even
+  without an explicit request;
 - a durable cue (`always`, `never`, `以后`, `永远`) without an explicit request
-  makes the sentence a *candidate*, not a global fact;
-- a candidate becomes global only after the same statement appears in at least
-  two separate turns; until then it stays session-scoped;
-- a different statement for the same key resets the count and demotes the
-  earlier fact;
-- everything else stays session-scoped and is discarded at session end.
+  must appear in at least two separate turns, and it stops at `Workspace`;
+- artifacts and verified outcomes stay in `Session`.
 
-The kernel never infers "global" from wording alone, because the same words can
-describe a habit, a question, this task, or this workspace.
+Rollback is part of the design:
+
+- a different statement for the same key replaces the fact in every store, so a
+  newer session-scoped statement demotes an older global one;
+- `forget X` / `忘记 X` removes every fact whose key or statement mentions `X`,
+  from all three stores.
+
+The kernel never infers global scope from wording alone, because the same words
+can describe a habit, a question, this task, or this workspace.
 
 Session facts are emitted by the memory stage; global facts are loaded by the
 host into that stage at session start.

@@ -356,6 +356,9 @@ impl<M: ModelProvider> TurnDriver<M> {
             for key in change.promoted {
                 self.events.append(Event::FactPromoted { turn_id, key });
             }
+            for key in change.forgotten {
+                self.events.append(Event::FactForgotten { turn_id, key });
+            }
             if let Some(segment_id) = change.opened {
                 let topic = session
                     .segments()

@@ -88,6 +88,10 @@ pub enum Event {
         turn_id: TurnId,
         key: String,
     },
+    FactForgotten {
+        turn_id: TurnId,
+        key: String,
+    },
     ModelStarted {
         turn_id: TurnId,
         provider: String,
@@ -162,6 +166,7 @@ impl Event {
             | Self::SegmentSealed { turn_id, .. }
             | Self::CompressionSkipped { turn_id, .. }
             | Self::FactPromoted { turn_id, .. }
+            | Self::FactForgotten { turn_id, .. }
             | Self::ModelStarted { turn_id, .. }
             | Self::ModelFinished { turn_id, .. }
             | Self::ToolStarted { turn_id, .. }
@@ -191,6 +196,7 @@ impl Event {
             Self::SegmentSealed { .. } => "segment_sealed",
             Self::CompressionSkipped { .. } => "compression_skipped",
             Self::FactPromoted { .. } => "fact_promoted",
+            Self::FactForgotten { .. } => "fact_forgotten",
             Self::ModelStarted { .. } => "model_started",
             Self::ModelFinished { .. } => "model_finished",
             Self::ToolStarted { .. } => "tool_started",

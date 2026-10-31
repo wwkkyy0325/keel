@@ -48,17 +48,19 @@ one at a time. Summarization is blocked on
       assistant text keeps its raw entries and emits `CompressionSkipped` with
       the missing field. The gate currently requires goal and result; error
       tracking is not recorded per turn yet, so errors are not a gate field.
-- [x] 10. Facts: extraction from structured signals, session and global scope,
-      strict promotion, contradiction handling — verify: only sentence-initial
+- [x] 10. Facts: a three-tier store (session, workspace, global) with
+      conservative promotion and rollback. Verify: only sentence-initial
       imperative constraints count (questions, first-person narration,
-      mid-sentence cues and scoped phrasing are rejected); an explicit request
-      (`remember`, `记住`, `from now on`) promotes at once, otherwise the same
-      statement must appear in at least **two separate turns**; an artifact
-      path and a verified outcome stay session-scoped; a different statement
-      for the same key resets the count and demotes the fact. A `MemoryStage`
-      emits facts as one block and all profiles include it. Limits: cue
-      matching is heuristic (no model), and global facts live in-process until
-      persistence lands in M5.
+      mid-sentence cues and task-scoped phrasing are rejected); an explicit
+      request promotes to workspace, and only an explicit request that also
+      says "everywhere / all projects / 全局" reaches global; without an
+      explicit request the same statement must appear in at least two separate
+      turns, and it stops at workspace; artifacts and verified outcomes stay in
+      the session; a contradiction replaces the key across all tiers
+      (demotion), and "forget X / 忘记 X" removes matching facts from every
+      tier. A `MemoryStage` emits global, workspace and session facts as one
+      bounded block. Limits: cue matching is heuristic (no model), and
+      workspace/global facts live in-process until persistence lands in M5.
 - [ ] 11. Window matrix: 8k, 16k, 32k, 64k, 128k and 1M with scripted growth,
       companion and coding, mock model — verify: success rate, overflow rate,
       compactions, wrap-ups and tokens per window are recorded, and the

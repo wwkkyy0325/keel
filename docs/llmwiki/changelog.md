@@ -493,3 +493,19 @@
   statement for the same key still resets the count and demotes the fact.
 - Verification: 188 tests, including two mentions in one segment and immediate
   promotion through an explicit request.
+
+### M3 three-tier memory with rollback
+
+- Facts now live in `Session`, `Workspace` or `Global` scope. Automatic
+  promotion stops at workspace: an explicit "remember" promotes there, a
+  workspace phrase promotes there, and a durable constraint repeated in two
+  turns promotes there.
+- Global scope requires an explicit request that also names a global scope
+  ("everywhere", "all projects", "全局", "所有项目").
+- A newer statement for the same key replaces the fact in every store, so a
+  correction demotes it. "Forget X" / "忘记 X" removes matching facts from all
+  three stores and emits `FactForgotten`.
+- `MemoryStage` labels facts as global, workspace or session and never takes
+  more than a quarter of the context allowance.
+- Verification: 191 tests; tier placement, global gating, contradiction
+  demotion and explicit forgetting are covered.

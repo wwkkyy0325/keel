@@ -497,14 +497,17 @@ impl ContextStage for MemoryStage {
         }
         let mut text = String::from("[memory]\n");
         let mut used = estimate_tokens(&text);
+        // Memory never takes more than a quarter of the allowance.
+        let budget = (ctx.budget_tokens / 4).max(50);
         for fact in ctx.facts {
             let scope = match fact.scope {
                 keel_core::FactScope::Global => "global",
+                keel_core::FactScope::Workspace => "workspace",
                 keel_core::FactScope::Session => "session",
             };
             let line = format!("- {} ({scope})\n", fact.statement);
             let tokens = estimate_tokens(&line);
-            if used.saturating_add(tokens) > ctx.budget_tokens {
+            if used.saturating_add(tokens) > budget {
                 break;
             }
             used = used.saturating_add(tokens);

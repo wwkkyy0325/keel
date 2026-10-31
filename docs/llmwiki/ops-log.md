@@ -529,3 +529,16 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 - `apply_facts` promotes immediately when explicit, otherwise when the
   occurrence count reaches two. A different statement resets the count.
 - Verification: 188 tests; fmt and clippy clean.
+
+### M3 three-tier memory with rollback
+
+- Added `FactScope::Workspace` and a workspace store. Scope decision: explicit
+  + global phrase -> global; explicit, workspace phrase, or durable repeated
+  twice -> workspace; everything else session.
+- `parse_constraint` returns `Constraint { key, durable, explicit, workspace,
+  global }`; marker matching uses word boundaries for ASCII, so "everywhere"
+  no longer matches the "here" scope marker.
+- `forget_matching` and `parse_forget` remove facts by subject across all
+  stores; `SegmentChange.forgotten` feeds `FactForgotten`.
+- `MemoryStage` caps itself at a quarter of the allowance.
+- Verification: 191 tests; fmt and clippy clean.
