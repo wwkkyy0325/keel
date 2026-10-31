@@ -192,3 +192,13 @@
   fix as unverified instead of claiming a test run.
 - Report: `evals/reports/2026-11-02-task-001-deepseek.md`.
 - Verification: 124 tests; clippy, fmt and `cargo deny check`.
+
+### Usage and latency reporting
+
+- `TurnOutcome` now carries summed token usage and turn duration; the CLI
+  prints `usage` and `duration_ms`.
+- A second real `task-001` run passed 4/4 hidden tests with 7437 tokens and
+  5916 ms.
+- Recorded the M2 acceptance state: one interactive terminal run remains, and
+  the `keel-policy` crate split is explicitly waived until a second consumer.
+- Verification: 124 tests; clippy, fmt and `cargo deny check`.

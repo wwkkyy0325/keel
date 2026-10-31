@@ -33,6 +33,7 @@ struct TurnStats {
     tool_calls: u32,
     interactions: u32,
     deferred: Vec<InteractionId>,
+    usage: keel_core::TokenUsage,
 }
 
 /// Terminal result of one turn.
@@ -46,6 +47,10 @@ pub struct TurnOutcome {
     /// Secret-like input seen at turn start. The turn still runs; the host
     /// surfaces the notice with this turn's result.
     pub secret_warning: Option<SecretKind>,
+    /// Token usage summed over model calls in this turn.
+    pub usage: keel_core::TokenUsage,
+    /// Wall-clock duration of the turn.
+    pub duration_ms: u64,
 }
 
 impl TurnOutcome {
@@ -105,6 +110,7 @@ impl<M: ModelProvider> TurnDriver<M> {
 
     /// Runs one turn. The returned state is always terminal.
     pub async fn run(&self, input: &str, cancel: CancelToken) -> TurnOutcome {
+        let started = std::time::Instant::now();
         let turn_id = keel_core::TurnId::new(self.next_turn.fetch_add(1, Ordering::Relaxed));
         let mut fsm = TurnFsm::new();
         let mut text = String::new();
@@ -171,6 +177,8 @@ impl<M: ModelProvider> TurnDriver<M> {
             error,
             deferred_interactions: stats.deferred,
             secret_warning,
+            usage: stats.usage,
+            duration_ms: started.elapsed().as_millis() as u64,
         }
     }
 
@@ -341,6 +349,11 @@ impl<M: ModelProvider> TurnDriver<M> {
                 }
             };
 
+            stats.usage.input_tokens = stats.usage.input_tokens.saturating_add(usage.input_tokens);
+            stats.usage.output_tokens = stats
+                .usage
+                .output_tokens
+                .saturating_add(usage.output_tokens);
             self.events.append(Event::ModelFinished {
                 turn_id,
                 tool_calls: calls.len(),

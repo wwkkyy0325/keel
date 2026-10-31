@@ -14,6 +14,14 @@ PASS. The hidden unittest suite ran four tests and all passed.
 The model changed `calc.py` to return `0.0` for an empty list and keep the
 mean for non-empty lists.
 
+The second run captured usage and latency:
+
+- input tokens: 6952
+- output tokens: 485
+- total tokens: 7437
+- wall clock: 5916 ms
+- events: 45
+
 ## Agent behavior
 
 - The model used workspace tools to inspect and write the file.

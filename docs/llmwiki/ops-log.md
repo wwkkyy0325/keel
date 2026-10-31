@@ -224,3 +224,13 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 - Report: `evals/reports/2026-11-02-task-001-deepseek.md`.
 - Verification: 124 tests; clippy, fmt and `cargo deny check`.
 - Commit: `feat: pass reasoning effort to the provider`.
+
+### M2 acceptance — usage and latency
+
+- Added summed token usage and turn duration to `TurnOutcome`; the CLI prints
+  `usage` and `duration_ms`.
+- Second real `task-001` run: 7437 tokens, 5916 ms, hidden tests 4/4.
+- Recorded M2 acceptance: interactive terminal self-run still pending; the
+  `keel-policy` crate split is waived until a second consumer.
+- Verification: 124 tests; clippy, fmt and `cargo deny check`.
+- Commit: `feat: report token usage and turn duration`.

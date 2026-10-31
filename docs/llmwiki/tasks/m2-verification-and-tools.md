@@ -77,5 +77,21 @@ not by the model's own claim.
 - `deepseek-flash` needs `reasoning_effort = "none"` for this tool loop; the
   thinking-mode default requires `reasoning_content` to be echoed back, which
   the adapter does not do yet.
-- M2's end-to-end criterion is met. Driver-side acceptance verification and
-  the `keel-policy` split remain.
+- M2's end-to-end criterion is met.
+- A second real run captured 7437 tokens and 5916 ms; `verify.sh` passed 4/4
+  again.
+
+## M2 acceptance
+
+- [x] OpenAI-compatible provider and real model call.
+- [x] Coding profile with six tools.
+- [x] `task-001` passes its hidden tests with a real model.
+- [x] Kernel benchmark: p50 4 us, p99 14 us.
+- [x] Token usage and turn duration are reported.
+- [ ] Interactive terminal run where the agent executes its own tests; the
+      non-terminal run defers shell approval, so the external verifier is the
+      evidence.
+- [ ] Driver-side acceptance verification is wired into `Verify` (ADR 0004).
+- [x] `keel-policy` crate split waived: profile/policy live in `keel-runtime`
+      while there is one consumer and validation depends on the runtime
+      registry/context. Revisit when a second consumer appears.

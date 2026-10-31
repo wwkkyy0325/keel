@@ -101,6 +101,16 @@ async fn run() -> Result<(), KernelError> {
     println!("state: {}", outcome.state);
     println!("assistant: {}", outcome.text);
     println!("events: {}", events.len());
+    println!(
+        "usage: input={} output={} total={}",
+        outcome.usage.input_tokens,
+        outcome.usage.output_tokens,
+        outcome
+            .usage
+            .input_tokens
+            .saturating_add(outcome.usage.output_tokens)
+    );
+    println!("duration_ms: {}", outcome.duration_ms);
     if let Some(kind) = outcome.secret_warning {
         println!(
             "notice: this turn's input matched a secret pattern ({}); it was not blocked. If it is real, rotate it and keep credentials in .env.",
