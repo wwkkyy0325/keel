@@ -1,0 +1,50 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - uses: EmbarkStudios/cargo-deny-action@v2
+
+  harness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m py_compile evals/harness/*.py
+      - name: Validate dataset importer fixtures
+        run: |
+          set -euo pipefail
+          python evals/harness/import_public.py \
+            --dataset humaneval \
+            --input evals/harness/fixtures/humaneval_sample.jsonl \
+            --output /tmp/he_cases
+          python evals/harness/import_public.py \
+            --dataset mbpp \
+            --input evals/harness/fixtures/mbpp_sample.jsonl \
+            --output /tmp/mbpp_cases
+          for kind in he mbpp; do
+            case_dir=$(find "/tmp/${kind}_cases" -mindepth 1 -maxdepth 1 -type d | head -1)
+            workspace=$(mktemp -d)
+            cp -R "$case_dir/setup/." "$workspace/"
+            if bash "$case_dir/verify.sh" "$workspace"; then
+              echo "setup unexpectedly passed for $kind"
+              exit 1
+            fi
+            cp -R "$case_dir/reference/." "$workspace/"
+            bash "$case_dir/verify.sh" "$workspace"
+          done

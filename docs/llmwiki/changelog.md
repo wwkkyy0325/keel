@@ -278,4 +278,6 @@
   passes for HumanEval-style `check(candidate)` and MBPP-style assertions.
 - The datasets server was unreachable from this environment, so the download
   path remains untested here; the local-file path works.
+- Added a GitHub Actions workflow for fmt, clippy, tests, `cargo deny`, Python
+  compile checks and importer fixture validation.
 - Verification: both importer fixtures; no Rust changes.

@@ -307,3 +307,5 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 - Validated both styles with local fixtures: setup fails, reference passes.
 - `--download` is implemented but the datasets server was unreachable here.
 - Commit: `feat: support HumanEval+ and MBPP+ imports`.
+- Added `.github/workflows/ci.yml` for Rust gates, Python compile checks and
+  importer fixture validation.
