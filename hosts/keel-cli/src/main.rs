@@ -13,9 +13,9 @@ use keel_core::{
 use keel_model_openai::{OpenAiConfig, OpenAiProvider};
 use keel_runtime::{
     load_profile, validate_config, CodeSearchTool, ContextBuilder, EchoTool, EventLog,
-    HistoryStage, InteractionBroker, LatestStage, ListDirTool, LocalTrashStore, MockModel,
-    MockStep, PermissionEngine, ReadFileTool, RuntimeConfig, ShellTool, SystemStage, ToolRegistry,
-    TurnDriver, TurnDriverConfig, TurnOutcome, WriteFileTool,
+    HistoryStage, InteractionBroker, LatestStage, ListDirTool, LocalTrashStore, MemoryStage,
+    MockModel, MockStep, PermissionEngine, ReadFileTool, RuntimeConfig, ShellTool, SystemStage,
+    ToolRegistry, TurnDriver, TurnDriverConfig, TurnOutcome, WriteFileTool,
 };
 use terminal::TerminalInteractionPort;
 
@@ -72,6 +72,7 @@ async fn run() -> Result<(), KernelError> {
 
     let context = ContextBuilder::new(vec![
         Arc::new(SystemStage::new()),
+        Arc::new(MemoryStage::new()),
         Arc::new(HistoryStage::new()),
         Arc::new(LatestStage::new()),
     ]);

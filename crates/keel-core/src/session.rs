@@ -57,6 +57,23 @@ impl ToolSummary {
     }
 }
 
+/// Where a fact lives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FactScope {
+    Session,
+    Global,
+}
+
+/// One durable statement extracted from a sealed segment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fact {
+    pub key: String,
+    pub statement: String,
+    pub scope: FactScope,
+    pub confirmed: bool,
+    pub segment_id: u32,
+}
+
 /// Compressed form of a sealed segment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SegmentRecord {
@@ -101,6 +118,8 @@ pub struct SegmentChange {
     pub opened: Option<u32>,
     pub reason: Option<String>,
     pub skipped: Option<CompressionSkip>,
+    /// Keys promoted to global scope at this seal.
+    pub promoted: Vec<String>,
 }
 
 /// Everything one finished turn contributes to the session.
@@ -122,6 +141,8 @@ pub struct Session {
     segments: Vec<Segment>,
     next_segment_id: u32,
     last_verified: bool,
+    facts: Vec<Fact>,
+    global_facts: Vec<Fact>,
 }
 
 impl Session {
@@ -159,13 +180,14 @@ impl Session {
             return SegmentChange::default();
         };
         let sealed = open_id;
-        let skipped = self.seal_and_record();
+        let (skipped, promoted) = self.seal_and_record();
         let opened = self.open_segment(input);
         SegmentChange {
             sealed: Some(sealed),
             opened: Some(opened),
             reason: Some(reason),
             skipped,
+            promoted,
         }
     }
 
@@ -236,22 +258,30 @@ impl Session {
         id
     }
 
-    /// Seals the open segment and builds its record when the gate passes.
-    fn seal_and_record(&mut self) -> Option<CompressionSkip> {
-        let segment = self.segments.last_mut()?;
-        segment.state = SegmentState::Sealed;
-        let id = segment.id;
-        let outcome = build_record(segment);
-        match outcome {
-            Ok(record) => {
-                segment.record = Some(record);
-                None
-            }
-            Err(missing) => Some(CompressionSkip {
-                segment_id: id,
-                missing,
-            }),
-        }
+    /// Seals the open segment, builds its record when the gate passes, and
+    /// sediments its facts.
+    fn seal_and_record(&mut self) -> (Option<CompressionSkip>, Vec<String>) {
+        let (skipped, facts) = {
+            let Some(segment) = self.segments.last_mut() else {
+                return (None, Vec::new());
+            };
+            segment.state = SegmentState::Sealed;
+            let id = segment.id;
+            let facts = extract_facts(segment);
+            let outcome = build_record(segment);
+            let skipped = match outcome {
+                Ok(record) => {
+                    segment.record = Some(record);
+                    None
+                }
+                Err(missing) => Some(CompressionSkip {
+                    segment_id: id,
+                    missing,
+                }),
+            };
+            (skipped, facts)
+        };
+        (skipped, self.apply_facts(facts))
     }
 
     fn seal_reason(&mut self, input: &str) -> Option<String> {
@@ -279,6 +309,41 @@ impl Session {
             return Some("topic".to_owned());
         }
         None
+    }
+
+    fn apply_facts(&mut self, facts: Vec<Fact>) -> Vec<String> {
+        let mut promoted = Vec::new();
+        for fact in facts {
+            // A newer statement for the same key replaces the old one, even
+            // when it moves scope.
+            self.facts.retain(|existing| existing.key != fact.key);
+            self.global_facts
+                .retain(|existing| existing.key != fact.key);
+            if fact.scope == FactScope::Global {
+                promoted.push(fact.key.clone());
+                self.global_facts.push(fact);
+            } else {
+                self.facts.push(fact);
+            }
+        }
+        promoted
+    }
+
+    /// Session-scoped facts.
+    pub fn facts(&self) -> &[Fact] {
+        &self.facts
+    }
+
+    /// Facts promoted to global scope in this process.
+    pub fn global_facts(&self) -> &[Fact] {
+        &self.global_facts
+    }
+
+    /// Global facts first, then session facts.
+    pub fn all_facts(&self) -> Vec<Fact> {
+        let mut all = self.global_facts.clone();
+        all.extend(self.facts.iter().cloned());
+        all
     }
 
     /// Seals the open segment. Returns whether one was sealed.
@@ -343,6 +408,141 @@ impl Session {
             .filter_map(|segment| segment.record.clone())
             .collect()
     }
+}
+
+/// Cues that mark a user sentence as a constraint.
+const CONSTRAINT_CUES: &[&str] = &[
+    "always",
+    "never",
+    "from now on",
+    "must",
+    "do not",
+    "don't",
+    "不要",
+    "必须",
+    "禁止",
+    "务必",
+    "总是",
+    "永远",
+    "以后",
+    "始终",
+];
+
+/// Cues that make a constraint durable, so it may become global.
+const DURABLE_CUES: &[&str] = &[
+    "always",
+    "never",
+    "from now on",
+    "总是",
+    "永远",
+    "以后",
+    "始终",
+];
+
+/// Extracts facts from structure the kernel already has: user constraints,
+/// changed artifacts and verified segments.
+fn extract_facts(segment: &Segment) -> Vec<Fact> {
+    let mut facts: Vec<Fact> = Vec::new();
+
+    for entry in &segment.entries {
+        if entry.message.role != MessageRole::User {
+            continue;
+        }
+        for sentence in sentences(&entry.message.content) {
+            if let Some((key, durable)) = parse_constraint(&sentence) {
+                upsert_fact(
+                    &mut facts,
+                    Fact {
+                        key: format!("constraint:{key}"),
+                        statement: clip_statement(&sentence),
+                        scope: if durable {
+                            FactScope::Global
+                        } else {
+                            FactScope::Session
+                        },
+                        confirmed: true,
+                        segment_id: segment.id,
+                    },
+                );
+            }
+        }
+    }
+
+    for path in &segment.artifacts {
+        upsert_fact(
+            &mut facts,
+            Fact {
+                key: format!("artifact:{path}"),
+                statement: format!("modified {path}"),
+                scope: FactScope::Session,
+                confirmed: true,
+                segment_id: segment.id,
+            },
+        );
+    }
+
+    if segment.verified {
+        upsert_fact(
+            &mut facts,
+            Fact {
+                key: format!("verified:{}", segment.topic),
+                statement: format!("verified: {}", segment.topic),
+                scope: FactScope::Session,
+                confirmed: true,
+                segment_id: segment.id,
+            },
+        );
+    }
+
+    facts
+}
+
+fn upsert_fact(facts: &mut Vec<Fact>, fact: Fact) {
+    facts.retain(|existing| existing.key != fact.key);
+    facts.push(fact);
+}
+
+fn sentences(text: &str) -> Vec<String> {
+    text.split(|character: char| {
+        matches!(
+            character,
+            '.' | '!' | '?' | '。' | '！' | '？' | '\n' | ';' | '；'
+        )
+    })
+    .map(str::trim)
+    .filter(|sentence| !sentence.is_empty())
+    .map(str::to_owned)
+    .collect()
+}
+
+/// Returns a stable key and whether the constraint is durable.
+///
+/// The cue is removed, so "always use tabs" and "never use tabs" share a key
+/// and the newer statement replaces the older one.
+fn parse_constraint(sentence: &str) -> Option<(String, bool)> {
+    let lower = sentence.to_lowercase();
+    let cue = CONSTRAINT_CUES.iter().find(|cue| lower.contains(**cue))?;
+    let durable = DURABLE_CUES.contains(cue);
+    let rest = lower.replace(cue, " ");
+    let key = rest
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if key.is_empty() {
+        return None;
+    }
+    Some((key, durable))
+}
+
+fn clip_statement(text: &str) -> String {
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= 200 {
+        return flat;
+    }
+    let mut clipped: String = flat.chars().take(200).collect();
+    clipped.push_str("...");
+    clipped
 }
 
 /// Builds the compressed record, or reports the fields the gate requires.
@@ -666,5 +866,81 @@ mod record_tests {
             result_text("fixed it\n\n[tools]\n- read_file path=a.rs -> ok"),
             "fixed it"
         );
+    }
+}
+
+#[cfg(test)]
+mod fact_tests {
+    use super::*;
+
+    fn record(session: &mut Session, input: &str, artifacts: &[String]) {
+        session.record_turn(TurnRecord {
+            input,
+            text: "done",
+            tools: &[],
+            artifacts,
+            pending: &[],
+            verified: false,
+        });
+    }
+
+    #[test]
+    fn a_durable_constraint_is_promoted_to_global() {
+        let mut session = Session::new();
+        record(&mut session, "always use tabs", &[]);
+
+        let change = session.begin_turn("write a haiku about the sea");
+
+        assert_eq!(change.promoted, vec!["constraint:use tabs".to_owned()]);
+        assert_eq!(session.global_facts().len(), 1);
+        assert_eq!(session.global_facts()[0].scope, FactScope::Global);
+        assert!(session.global_facts()[0]
+            .statement
+            .contains("always use tabs"));
+        assert!(session.facts().is_empty());
+    }
+
+    #[test]
+    fn a_transient_artifact_stays_in_session() {
+        let mut session = Session::new();
+        let artifacts = vec!["src/widget.rs".to_owned()];
+        record(&mut session, "fix the widget", &artifacts);
+
+        let change = session.begin_turn("write a haiku about the sea");
+
+        assert!(change.promoted.is_empty());
+        assert!(session.global_facts().is_empty());
+        assert_eq!(session.facts().len(), 1);
+        assert_eq!(session.facts()[0].key, "artifact:src/widget.rs");
+        assert_eq!(session.facts()[0].scope, FactScope::Session);
+    }
+
+    #[test]
+    fn a_non_durable_constraint_stays_in_session() {
+        let mut session = Session::new();
+        record(&mut session, "must keep the tests untouched", &[]);
+
+        session.begin_turn("write a haiku about the sea");
+
+        assert!(session.global_facts().is_empty());
+        assert_eq!(session.facts().len(), 1);
+        assert!(session.facts()[0].statement.contains("must keep"));
+    }
+
+    #[test]
+    fn a_contradiction_replaces_the_promoted_fact() {
+        let mut session = Session::new();
+        record(&mut session, "always use tabs", &[]);
+        session.begin_turn("write a haiku about the sea");
+        assert_eq!(session.global_facts().len(), 1);
+
+        record(&mut session, "never use tabs", &[]);
+        let change = session.begin_turn("another topic entirely");
+
+        assert_eq!(change.promoted, vec!["constraint:use tabs".to_owned()]);
+        assert_eq!(session.global_facts().len(), 1);
+        assert!(session.global_facts()[0]
+            .statement
+            .contains("never use tabs"));
     }
 }

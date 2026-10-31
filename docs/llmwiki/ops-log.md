@@ -492,3 +492,17 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 - The driver emits `SegmentSealed`, `CompressionSkipped` and `HistoryAssembled`
   with the record count.
 - Verification: 176 tests; fmt and clippy clean.
+
+### M3 fact sedimentation
+
+- Added `Fact` and `FactScope`; segments now feed facts into two stores at
+  seal. Extraction covers user constraint sentences, `Segment.artifacts` and
+  `Segment.verified`.
+- Constraint keys drop the cue word, so "always use tabs" and "never use tabs"
+  share `constraint:use tabs`; the newer statement replaces the older one and
+  can move scope.
+- Added `MemoryStage` (priority 5) rendering `[memory]` with global facts
+  first; registered in the CLI and added to every profile's stage list.
+- The driver passes `session.all_facts()` into `BuildCtx` and emits
+  `FactPromoted`.
+- Verification: 182 tests; fmt and clippy clean.

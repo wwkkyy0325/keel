@@ -84,6 +84,10 @@ pub enum Event {
         segment_id: u32,
         missing: Vec<String>,
     },
+    FactPromoted {
+        turn_id: TurnId,
+        key: String,
+    },
     ModelStarted {
         turn_id: TurnId,
         provider: String,
@@ -157,6 +161,7 @@ impl Event {
             | Self::SegmentOpened { turn_id, .. }
             | Self::SegmentSealed { turn_id, .. }
             | Self::CompressionSkipped { turn_id, .. }
+            | Self::FactPromoted { turn_id, .. }
             | Self::ModelStarted { turn_id, .. }
             | Self::ModelFinished { turn_id, .. }
             | Self::ToolStarted { turn_id, .. }
@@ -185,6 +190,7 @@ impl Event {
             Self::SegmentOpened { .. } => "segment_opened",
             Self::SegmentSealed { .. } => "segment_sealed",
             Self::CompressionSkipped { .. } => "compression_skipped",
+            Self::FactPromoted { .. } => "fact_promoted",
             Self::ModelStarted { .. } => "model_started",
             Self::ModelFinished { .. } => "model_finished",
             Self::ToolStarted { .. } => "tool_started",

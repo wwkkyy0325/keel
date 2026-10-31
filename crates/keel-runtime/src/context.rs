@@ -465,3 +465,57 @@ fn clip(text: &str, max_chars: usize) -> String {
     out.push_str("...");
     out
 }
+
+/// Emits global and session facts as one bounded block.
+pub struct MemoryStage;
+
+impl MemoryStage {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for MemoryStage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl ContextStage for MemoryStage {
+    fn name(&self) -> &'static str {
+        "memory"
+    }
+
+    fn priority(&self) -> i32 {
+        5
+    }
+
+    async fn build(&self, ctx: &BuildCtx<'_>) -> Option<Vec<Fragment>> {
+        if ctx.facts.is_empty() {
+            return None;
+        }
+        let mut text = String::from("[memory]\n");
+        let mut used = estimate_tokens(&text);
+        for fact in ctx.facts {
+            let scope = match fact.scope {
+                keel_core::FactScope::Global => "global",
+                keel_core::FactScope::Session => "session",
+            };
+            let line = format!("- {} ({scope})\n", fact.statement);
+            let tokens = estimate_tokens(&line);
+            if used.saturating_add(tokens) > ctx.budget_tokens {
+                break;
+            }
+            used = used.saturating_add(tokens);
+            text.push_str(&line);
+        }
+        if text == "[memory]\n" {
+            return None;
+        }
+        Some(vec![Fragment {
+            role: MessageRole::System,
+            text,
+        }])
+    }
+}

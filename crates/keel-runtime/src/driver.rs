@@ -333,7 +333,7 @@ impl<M: ModelProvider> TurnDriver<M> {
         }
 
         let recipe = self.policy.context_recipe();
-        let (history, records, session_growth) = {
+        let (history, records, facts, session_growth) = {
             let mut session = self
                 .session
                 .lock()
@@ -353,6 +353,9 @@ impl<M: ModelProvider> TurnDriver<M> {
                     missing: skip.missing,
                 });
             }
+            for key in change.promoted {
+                self.events.append(Event::FactPromoted { turn_id, key });
+            }
             if let Some(segment_id) = change.opened {
                 let topic = session
                     .segments()
@@ -368,6 +371,7 @@ impl<M: ModelProvider> TurnDriver<M> {
             (
                 session.history(),
                 session.records(),
+                session.all_facts(),
                 session.last_turn_tokens(),
             )
         };
@@ -393,6 +397,7 @@ impl<M: ModelProvider> TurnDriver<M> {
             input,
             history: &history,
             records: &records,
+            facts: &facts,
             system_prompt: &self.system_prompt,
             budget_tokens: recipe.budget_tokens,
             detail_share: pressure.level.detail_share(),

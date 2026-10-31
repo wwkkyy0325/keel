@@ -9,8 +9,8 @@ use keel_core::{
 };
 use keel_runtime::{
     validate_config, ContextBuilder, DeferAllInteractionPort, EventLog, HistoryStage,
-    InteractionBroker, LatestStage, MockModel, MockStep, PermissionEngine, SystemStage, TurnDriver,
-    TurnDriverConfig,
+    InteractionBroker, LatestStage, MemoryStage, MockModel, MockStep, PermissionEngine,
+    SystemStage, TurnDriver, TurnDriverConfig,
 };
 
 /// Records the messages of every model request and replies with fixed text.
@@ -49,6 +49,7 @@ fn harness(budget_tokens: u32) -> Harness {
     let mut config = common::runtime_config(&["echo"], 4, PermissionLevel::WorkspaceAuto);
     config.context.stages = vec![
         "system".to_owned(),
+        "memory".to_owned(),
         "history".to_owned(),
         "latest".to_owned(),
     ];
@@ -57,6 +58,7 @@ fn harness(budget_tokens: u32) -> Harness {
     let tools = common::standard_registry(dir.path());
     let context = ContextBuilder::new(vec![
         Arc::new(SystemStage::new()),
+        Arc::new(MemoryStage::new()),
         Arc::new(HistoryStage::new()),
         Arc::new(LatestStage::new()),
     ]);
@@ -301,4 +303,38 @@ async fn a_topic_change_seals_the_segment() {
     assert!(!requests[1].iter().any(
         |message| message.role == MessageRole::User && message.content == "fix the parser bug"
     ));
+}
+
+#[tokio::test]
+async fn a_durable_constraint_reaches_the_next_request() {
+    let harness = harness(4096);
+    let first = harness
+        .driver
+        .run("always use tabs", CancelToken::new())
+        .await;
+    assert!(first.is_done());
+
+    let second = harness
+        .driver
+        .run("write a haiku about the sea", CancelToken::new())
+        .await;
+    assert!(second.is_done());
+
+    let promoted = harness
+        .events
+        .for_turn(second.turn_id)
+        .iter()
+        .any(|record| {
+            matches!(&record.event, Event::FactPromoted { key, .. } if key == "constraint:use tabs")
+        });
+    assert!(promoted, "the constraint was not promoted");
+
+    let requests = harness.requests.lock().unwrap();
+    let memory = requests[1]
+        .iter()
+        .find(|message| {
+            message.role == MessageRole::System && message.content.starts_with("[memory]")
+        })
+        .expect("memory block");
+    assert!(memory.content.contains("always use tabs (global)"));
 }

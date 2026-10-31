@@ -11,7 +11,7 @@ max_output_tokens = 4096
 context_window = 128000
 
 [context]
-stages = ["system", "history", "latest"]
+stages = ["system", "memory", "history", "latest"]
 budget_tokens = 16000
 
 [tools]

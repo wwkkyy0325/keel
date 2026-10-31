@@ -58,6 +58,7 @@ fn coding_profile_loads() {
         config.context.stages,
         vec![
             "system".to_owned(),
+            "memory".to_owned(),
             "history".to_owned(),
             "latest".to_owned()
         ]

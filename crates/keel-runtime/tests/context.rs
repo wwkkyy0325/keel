@@ -3,8 +3,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use keel_core::{
-    BuildCtx, CancelToken, CompactionStep, ContextRecipe, ContextStage, Fragment, KernelError,
-    MessageRole, TurnId,
+    BuildCtx, CancelToken, CompactionStep, ContextRecipe, ContextStage, Fact, FactScope, Fragment,
+    KernelError, MessageRole, TurnId,
 };
 use keel_runtime::ContextBuilder;
 
@@ -67,6 +67,7 @@ fn build_ctx<'a>(input: &'a str, system_prompt: &'a str) -> BuildCtx<'a> {
         input,
         history: &[],
         records: &[],
+        facts: &[],
         system_prompt,
         budget_tokens: 4096,
         detail_share: 0.8,
@@ -321,4 +322,46 @@ async fn each_stage_sees_the_remaining_budget() {
 
     let seen = seen.lock().unwrap();
     assert_eq!(*seen, vec![100, 90]);
+}
+
+#[tokio::test]
+async fn facts_are_emitted_as_a_memory_block() {
+    let builder = ContextBuilder::new(vec![Arc::new(keel_runtime::MemoryStage::new())]);
+    let facts = vec![
+        Fact {
+            key: "constraint:use tabs".to_owned(),
+            statement: "always use tabs".to_owned(),
+            scope: FactScope::Global,
+            confirmed: true,
+            segment_id: 0,
+        },
+        Fact {
+            key: "artifact:a.rs".to_owned(),
+            statement: "modified a.rs".to_owned(),
+            scope: FactScope::Session,
+            confirmed: true,
+            segment_id: 1,
+        },
+    ];
+    let ctx = BuildCtx {
+        turn_id: TurnId::new(1),
+        input: "input",
+        history: &[],
+        records: &[],
+        facts: &facts,
+        system_prompt: "system",
+        budget_tokens: 4096,
+        detail_share: 0.8,
+        events: None,
+    };
+    let built = builder
+        .build(&ctx, &recipe(&["memory"], 100), &CancelToken::new())
+        .await
+        .unwrap();
+
+    assert_eq!(built.fragments.len(), 1);
+    assert_eq!(built.fragments[0].role, MessageRole::System);
+    assert!(built.fragments[0].text.starts_with("[memory]"));
+    assert!(built.fragments[0].text.contains("always use tabs (global)"));
+    assert!(built.fragments[0].text.contains("modified a.rs (session)"));
 }

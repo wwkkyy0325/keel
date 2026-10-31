@@ -20,7 +20,9 @@ pub mod tools;
 pub mod trash;
 pub mod verification;
 
-pub use context::{BuiltContext, ContextBuilder, HistoryStage, LatestStage, SystemStage};
+pub use context::{
+    BuiltContext, ContextBuilder, HistoryStage, LatestStage, MemoryStage, SystemStage,
+};
 pub use dispatch::ToolDispatcher;
 pub use driver::{TurnDriver, TurnDriverConfig, TurnOutcome};
 pub use event_log::{EventLog, EventRecord};

@@ -451,3 +451,18 @@
 - Verification: 176 tests; a topic change replaces the old raw turn with a
   record line, and an unanswered segment keeps its entries and reports the
   gate failure.
+
+### M3 fact sedimentation
+
+- Sealing a segment now extracts facts from structure the kernel already has:
+  user constraints (cue words), changed artifacts, and verified segments.
+- Facts have a key, statement, scope, confirmation flag and segment id. A
+  durable constraint (always, never, from now on, 以后, 永远, 总是) is promoted
+  to global; artifacts and verified outcomes stay session-scoped.
+- A newer fact with the same key replaces the older one in either store, so a
+  contradiction demotes it.
+- Added `MemoryStage`: global facts first, then session facts, as one bounded
+  `[memory]` block. All profiles list `memory` ahead of `history`.
+- `FactPromoted` reports each promotion.
+- Verification: 182 tests; promotion, transient artifacts, non-durable
+  constraints and contradiction replacement are covered.

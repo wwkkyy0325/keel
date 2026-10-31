@@ -13,9 +13,9 @@ use keel_core::{
 };
 use keel_runtime::{
     validate_config, CodeSearchTool, ContextBuilder, DeferAllInteractionPort, EchoTool, EventLog,
-    HistoryStage, InteractionBroker, LatestStage, ListDirTool, LocalTrashStore, PermissionEngine,
-    ReadFileTool, RuntimeConfig, SystemStage, ToolRegistry, TurnDriver, TurnDriverConfig,
-    TurnLimits, WriteFileTool,
+    HistoryStage, InteractionBroker, LatestStage, ListDirTool, LocalTrashStore, MemoryStage,
+    PermissionEngine, ReadFileTool, RuntimeConfig, SystemStage, ToolRegistry, TurnDriver,
+    TurnDriverConfig, TurnLimits, WriteFileTool,
 };
 
 pub fn runtime_config(
@@ -75,6 +75,7 @@ pub fn standard_registry(root: &Path) -> Arc<ToolRegistry> {
 pub fn standard_context() -> ContextBuilder {
     ContextBuilder::new(vec![
         Arc::new(SystemStage::new()),
+        Arc::new(MemoryStage::new()),
         Arc::new(HistoryStage::new()),
         Arc::new(LatestStage::new()),
     ])
