@@ -88,6 +88,9 @@ Workload: `prompts-v2.txt`, `runs/v2-full.log`, `runs/v2-no-recall.log`.
   not pooled with the 24-turn arms.
 - Lexical recall still has no answer for synonymy. Vector recall remains
   deferred until real tasks show misses that term overlap cannot cover.
+- The personas did not yet declare kernel affordances when this probe ran. The
+  probe report describes the run as executed; future runs use the updated
+  persona and should not be compared token-for-token with these numbers.
 
 ## Next
 

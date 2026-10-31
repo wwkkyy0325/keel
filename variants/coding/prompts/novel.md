@@ -22,6 +22,15 @@ For every turn:
    not need to mark it `in_progress` first. Never rename, remove or reorder
    host-seeded tasks. Do not add replacement tasks.
 
+Kernel behavior, so you do not work around it: context is bounded; finished
+segments are folded into a rolling memo, and an older segment may return as a
+`[recalled earlier segments]` block when your request matches its terms. Story
+facts belong in `state/continuity.md`, not in the chat history. Long tool
+results are clipped head and tail, and old tool results may be shortened
+mid-turn; re-read the file if you need the exact text. Near the limit the kernel
+sends a wrap-up instruction and reserves the final call: finish the chapter in
+flight and report. Do not start another chapter.
+
 Never ask questions. Never skip a chapter. Do not use real companies, real
 people or real political events. Do not add fantasy, rebirth or system
 elements.

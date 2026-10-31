@@ -696,6 +696,16 @@
   wrote 14/15 with similar input. Probes or a state-less workload are needed.
 - Missing chapters in no-memo and no-todo are single-run model variance.
 
+### Kernel affordances in personas
+
+- The coding, novel and companion personas now state the kernel's affordances up front:
+  bounded context, the rolling memo and `[recalled earlier segments]`, clipped
+  tool results, mid-turn shortening, and the wrap-up/final-call reservation.
+  The purpose is to stop the model from working around mechanisms or repeating
+  instructions, not to add a second contract.
+- No kernel code changed. The five-arm ablation numbers predate this prompt
+  text; future arms should be compared within the same persona version.
+
 ### Recall A/B and memo sufficiency
 
 - A 24-turn scripted companion run now has a `--no-recall` counterfactual:
