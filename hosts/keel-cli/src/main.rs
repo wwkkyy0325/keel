@@ -165,6 +165,7 @@ async fn run() -> Result<(), KernelError> {
             todos.as_ref(),
             args.turn_input.as_deref(),
             args.stop_on_error,
+            args.retry_errors,
         )
         .await;
     }
@@ -183,6 +184,7 @@ async fn run_session(
     todos: Option<&Arc<Mutex<TodoList>>>,
     turn_input: Option<&std::path::Path>,
     stop_on_error: bool,
+    retry_errors: u32,
 ) -> Result<(), KernelError> {
     use std::io::{BufRead, IsTerminal, Write};
 
@@ -215,9 +217,22 @@ async fn run_session(
                 message: format!("cannot write turn input `{}`: {error}", path.display()),
             })?;
         }
-        let outcome = driver.run(input, CancelToken::new()).await;
-        print_outcome(config, events, &outcome);
-        print_todos(todos);
+        let mut retries = 0u32;
+        let outcome = loop {
+            let outcome = driver.run(input, CancelToken::new()).await;
+            print_outcome(config, events, &outcome);
+            print_todos(todos);
+            if outcome.is_done() || outcome.is_cancelled() || retries >= retry_errors {
+                break outcome;
+            }
+            retries = retries.saturating_add(1);
+            let reason = outcome
+                .error
+                .as_ref()
+                .map(|error| format!("{error}"))
+                .unwrap_or_else(|| "turn did not finish".to_owned());
+            println!("retry: {retries}/{retry_errors} after {reason}");
+        };
         if outcome.is_cancelled() {
             break;
         }
@@ -538,6 +553,8 @@ struct Args {
     turn_input: Option<PathBuf>,
     /// Long-run host behavior: stop instead of advancing after an error.
     stop_on_error: bool,
+    /// Re-run the same input after a failed turn, at most this many times.
+    retry_errors: u32,
 }
 
 fn parse_args() -> Result<Args, KernelError> {
@@ -553,6 +570,7 @@ fn parse_args() -> Result<Args, KernelError> {
     let mut unbounded_tools = false;
     let mut turn_input = None;
     let mut stop_on_error = false;
+    let mut retry_errors = 0u32;
     let mut workspace = std::env::current_dir().map_err(|error| KernelError::Io {
         message: error.to_string(),
     })?;
@@ -627,6 +645,14 @@ fn parse_args() -> Result<Args, KernelError> {
             "--stop-on-error" => {
                 stop_on_error = true;
             }
+            "--retry-errors" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| invalid_config("missing value for `--retry-errors`"))?;
+                retry_errors = value.parse::<u32>().map_err(|_| {
+                    invalid_config("`--retry-errors` must be a non-negative integer")
+                })?;
+            }
             other => {
                 return Err(invalid_config(format!("unknown argument `{other}`")));
             }
@@ -647,6 +673,7 @@ fn parse_args() -> Result<Args, KernelError> {
         unbounded_tools,
         turn_input,
         stop_on_error,
+        retry_errors,
     })
 }
 
