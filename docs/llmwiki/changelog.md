@@ -480,3 +480,16 @@
   habits, questions or task-local instructions.
 - Verification: 186 tests; the new rejection cases and the two-segment
   promotion and demotion paths are covered.
+
+### M3 explicit and repeated fact promotion
+
+- A single explicit request ("remember", "记住", "请记住", "from now on",
+  "以后都") now promotes a constraint immediately.
+- Without that request, a durable constraint must appear in at least two
+  separate turns; it no longer needs two different topic segments. This
+  removes the case where a single-topic session could never promote a genuine
+  preference.
+- Repetition is counted per user turn, not per sentence, and a different
+  statement for the same key still resets the count and demotes the fact.
+- Verification: 188 tests, including two mentions in one segment and immediate
+  promotion through an explicit request.

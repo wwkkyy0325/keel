@@ -239,10 +239,12 @@ Promotion is strict and never decided by a keyword alone:
 - only a sentence-initial imperative counts as a constraint; questions,
   first-person narration, cues in the middle of a sentence, and phrasing tied
   to the current task are rejected;
-- a durable cue (`always`, `never`, `from now on`, `以后`, `永远`) makes the
-  sentence a *candidate*, not a global fact;
-- a candidate becomes global only after the same statement repeats in a second
-  segment; until then it stays session-scoped;
+- an explicit request (`remember`, `记住`, `请记住`, `from now on`, `以后都`)
+  promotes the fact immediately; the user performed the act of asking;
+- a durable cue (`always`, `never`, `以后`, `永远`) without an explicit request
+  makes the sentence a *candidate*, not a global fact;
+- a candidate becomes global only after the same statement appears in at least
+  two separate turns; until then it stays session-scoped;
 - a different statement for the same key resets the count and demotes the
   earlier fact;
 - everything else stays session-scoped and is discarded at session end.

@@ -51,8 +51,9 @@ one at a time. Summarization is blocked on
 - [x] 10. Facts: extraction from structured signals, session and global scope,
       strict promotion, contradiction handling — verify: only sentence-initial
       imperative constraints count (questions, first-person narration,
-      mid-sentence cues and scoped phrasing are rejected); a durable constraint
-      must repeat in a **second segment** before it becomes global; an artifact
+      mid-sentence cues and scoped phrasing are rejected); an explicit request
+      (`remember`, `记住`, `from now on`) promotes at once, otherwise the same
+      statement must appear in at least **two separate turns**; an artifact
       path and a verified outcome stay session-scoped; a different statement
       for the same key resets the count and demotes the fact. A `MemoryStage`
       emits facts as one block and all profiles include it. Limits: cue

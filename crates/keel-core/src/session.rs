@@ -69,6 +69,8 @@ struct FactCandidate {
     key: String,
     statement: String,
     durable: bool,
+    explicit: bool,
+    occurrences: u32,
     confirmed: bool,
     segment_id: u32,
 }
@@ -77,7 +79,7 @@ struct FactCandidate {
 #[derive(Debug, Clone)]
 struct Candidate {
     statement: String,
-    segments: u32,
+    occurrences: u32,
 }
 
 /// One durable statement extracted from a sealed segment.
@@ -331,24 +333,24 @@ impl Session {
     fn apply_facts(&mut self, candidates: Vec<FactCandidate>) -> Vec<String> {
         let mut promoted = Vec::new();
         for candidate in candidates {
-            // A durable constraint is only a candidate: it must repeat in a
-            // second segment before it becomes global. A different statement
-            // for the same key resets the count and demotes it.
-            let scope = if candidate.durable {
+            // An explicit "remember" is enough. Anything else must be said in
+            // at least two separate turns. A different statement for the same
+            // key resets the count and demotes it.
+            let scope = if candidate.durable || candidate.explicit {
                 let entry = self
                     .candidates
                     .entry(candidate.key.clone())
                     .or_insert_with(|| Candidate {
                         statement: candidate.statement.clone(),
-                        segments: 0,
+                        occurrences: 0,
                     });
                 if entry.statement == candidate.statement {
-                    entry.segments = entry.segments.saturating_add(1);
+                    entry.occurrences = entry.occurrences.saturating_add(candidate.occurrences);
                 } else {
                     entry.statement = candidate.statement.clone();
-                    entry.segments = 1;
+                    entry.occurrences = candidate.occurrences;
                 }
-                if entry.segments >= 2 {
+                if candidate.explicit || entry.occurrences >= 2 {
                     FactScope::Global
                 } else {
                     FactScope::Session
@@ -468,6 +470,9 @@ const CONSTRAINT_CUES: &[&str] = &[
     "must",
     "do not",
     "don't",
+    "remember",
+    "记住",
+    "请记住",
     "不要",
     "必须",
     "禁止",
@@ -477,6 +482,9 @@ const CONSTRAINT_CUES: &[&str] = &[
     "以后",
     "始终",
 ];
+
+/// Phrases that ask the kernel to keep something, so one statement is enough.
+const EXPLICIT_MARKERS: &[&str] = &["remember", "记住", "请记住", "from now on", "以后都"];
 
 /// Cues that make a constraint durable, so it may become global.
 const DURABLE_CUES: &[&str] = &[
@@ -512,18 +520,38 @@ fn extract_facts(segment: &Segment) -> Vec<FactCandidate> {
         if entry.message.role != MessageRole::User {
             continue;
         }
+        // Count one occurrence per turn even when the sentence repeats.
+        let mut seen_in_turn: BTreeSet<(String, String)> = BTreeSet::new();
         for sentence in sentences(&entry.message.content) {
-            if let Some((key, durable)) = parse_constraint(&sentence) {
-                upsert_candidate(
-                    &mut candidates,
-                    FactCandidate {
-                        key: format!("constraint:{key}"),
-                        statement: clip_statement(&sentence),
-                        durable,
-                        confirmed: false,
-                        segment_id: segment.id,
-                    },
-                );
+            let Some((key, durable, explicit)) = parse_constraint(&sentence) else {
+                continue;
+            };
+            let key = format!("constraint:{key}");
+            let statement = clip_statement(&sentence);
+            if !seen_in_turn.insert((key.clone(), statement.clone())) {
+                continue;
+            }
+            if let Some(existing) = candidates.iter_mut().find(|candidate| candidate.key == key) {
+                if existing.statement == statement {
+                    existing.occurrences = existing.occurrences.saturating_add(1);
+                    existing.durable |= durable;
+                    existing.explicit |= explicit;
+                } else {
+                    existing.statement = statement;
+                    existing.occurrences = 1;
+                    existing.durable = durable;
+                    existing.explicit = explicit;
+                }
+            } else {
+                candidates.push(FactCandidate {
+                    key,
+                    statement,
+                    durable,
+                    explicit,
+                    occurrences: 1,
+                    confirmed: false,
+                    segment_id: segment.id,
+                });
             }
         }
     }
@@ -535,6 +563,8 @@ fn extract_facts(segment: &Segment) -> Vec<FactCandidate> {
                 key: format!("artifact:{path}"),
                 statement: format!("modified {path}"),
                 durable: false,
+                explicit: false,
+                occurrences: 1,
                 confirmed: true,
                 segment_id: segment.id,
             },
@@ -548,6 +578,8 @@ fn extract_facts(segment: &Segment) -> Vec<FactCandidate> {
                 key: format!("verified:{}", segment.topic),
                 statement: format!("verified: {}", segment.topic),
                 durable: false,
+                explicit: false,
+                occurrences: 1,
                 confirmed: true,
                 segment_id: segment.id,
             },
@@ -579,7 +611,7 @@ fn sentences(text: &str) -> Vec<String> {
 ///
 /// The cue is removed, so "always use tabs" and "never use tabs" share a key
 /// and the newer statement replaces the older one.
-fn parse_constraint(sentence: &str) -> Option<(String, bool)> {
+fn parse_constraint(sentence: &str) -> Option<(String, bool, bool)> {
     let trimmed = sentence.trim();
     // Questions are never instructions.
     if trimmed.ends_with('?') || trimmed.ends_with('？') {
@@ -601,19 +633,20 @@ fn parse_constraint(sentence: &str) -> Option<(String, bool)> {
         return None;
     }
     let durable = DURABLE_CUES.iter().any(|cue| lower.starts_with(*cue));
+    let explicit = EXPLICIT_MARKERS.iter().any(|cue| lower.starts_with(*cue));
     let mut rest = lower.to_owned();
     for cue in CONSTRAINT_CUES {
         rest = rest.replace(cue, " ");
     }
     let key = rest
         .split(|character: char| !character.is_alphanumeric())
-        .filter(|token| !token.is_empty())
+        .filter(|token| token.chars().count() >= 3)
         .collect::<Vec<_>>()
         .join(" ");
     if key.is_empty() {
         return None;
     }
-    Some((key, durable))
+    Some((key, durable, explicit))
 }
 
 fn clip_statement(text: &str) -> String {
@@ -989,6 +1022,28 @@ mod fact_tests {
             .facts()
             .iter()
             .any(|fact| fact.key == "constraint:use tabs"));
+    }
+
+    #[test]
+    fn two_mentions_in_one_segment_are_enough() {
+        let mut session = Session::new();
+        record(&mut session, "always use tabs", &[]);
+        record(&mut session, "always use tabs", &[]);
+
+        session.begin_turn("what is the weather today");
+
+        assert_eq!(session.global_facts().len(), 1);
+    }
+
+    #[test]
+    fn an_explicit_remember_promotes_immediately() {
+        let mut session = Session::new();
+        record(&mut session, "remember to use tabs", &[]);
+
+        session.begin_turn("what is the weather today");
+
+        assert_eq!(session.global_facts().len(), 1);
+        assert!(session.global_facts()[0].statement.contains("remember"));
     }
 
     #[test]

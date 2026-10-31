@@ -519,3 +519,13 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
   four rejection cases. The driver integration now asserts a single statement
   stays session-scoped.
 - Verification: 186 tests; fmt and clippy clean.
+
+### M3 explicit and repeated fact promotion
+
+- `parse_constraint` now returns explicitness alongside durability. Explicit
+  markers are "remember", "记住", "请记住", "from now on" and "以后都".
+- `FactCandidate` carries an occurrence count and an explicit flag; extraction
+  counts one occurrence per user turn and merges repeated statements.
+- `apply_facts` promotes immediately when explicit, otherwise when the
+  occurrence count reaches two. A different statement resets the count.
+- Verification: 188 tests; fmt and clippy clean.
