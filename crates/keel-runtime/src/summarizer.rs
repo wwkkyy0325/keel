@@ -24,6 +24,10 @@ pub const MIN_TRANSCRIPT_TOKENS: u32 = 256;
 pub const TRANSCRIPT_HEAD_CHARS: usize = 1000;
 /// Characters kept from the tail of one transcript message.
 pub const TRANSCRIPT_TAIL_CHARS: usize = 500;
+/// A summary below a quarter of its budget cannot replace the records it
+/// covers. The floor is clamped so small sessions stay usable.
+const MIN_SUMMARY_FLOOR: u32 = 64;
+const MAX_SUMMARY_FLOOR: u32 = 256;
 
 const SUMMARY_PROMPT: &str = "You maintain one rolling summary of a long work session. \
 You receive the previous summary, finished segments, and the newest segment transcript. \
@@ -37,6 +41,11 @@ Errors and fixes; Open items. No preamble.";
 /// Summary budget for one session, scaled from the working set.
 pub fn memo_budget(working_set: u32) -> u32 {
     (working_set / 10).clamp(MEMO_BUDGET_FLOOR, MEMO_BUDGET_CEILING)
+}
+
+/// Minimum text a summary must carry before it may absorb a segment.
+fn summary_floor(max_tokens: u32) -> u32 {
+    (max_tokens / 4).clamp(MIN_SUMMARY_FLOOR, MAX_SUMMARY_FLOOR)
 }
 
 /// A summary and the tokens it cost.
@@ -116,6 +125,11 @@ impl<M: ModelProvider> Summarizer for ProviderSummarizer<M> {
         let text = trim_to_budget(text.trim(), max_tokens);
         if text.is_empty() {
             return Err(ModelError::internal("summarizer returned no text"));
+        }
+        // A summary this short cannot stand in for the records it covers; let
+        // the driver keep the previous memo and write the structured fallback.
+        if estimate_tokens(&text) < summary_floor(max_tokens) {
+            return Err(ModelError::internal("summarizer returned too little text"));
         }
         Ok(Summarized { text, usage })
     }
@@ -206,13 +220,31 @@ mod tests {
 
     #[tokio::test]
     async fn a_provider_summary_returns_its_text() {
+        let text = "summary ".repeat(200);
         let summarizer =
-            ProviderSummarizer::new(MockModel::new(vec![MockStep::Text("summary".to_owned())]));
+            ProviderSummarizer::new(MockModel::new(vec![MockStep::Text(text.clone())]));
         let summary = summarizer
-            .summarize("user: hello", 64, &CancelToken::new())
+            .summarize("user: hello", 512, &CancelToken::new())
             .await
             .unwrap();
-        assert_eq!(summary.text, "summary");
+        assert_eq!(summary.text, text.trim_end());
+    }
+
+    #[tokio::test]
+    async fn a_degenerate_summary_is_an_error() {
+        let summarizer =
+            ProviderSummarizer::new(MockModel::new(vec![MockStep::Text("摘要".repeat(63))]));
+        assert!(summarizer
+            .summarize("user: hello", 756, &CancelToken::new())
+            .await
+            .is_err());
+    }
+
+    #[test]
+    fn the_summary_floor_scales_and_stays_bounded() {
+        assert_eq!(summary_floor(128), 64);
+        assert_eq!(summary_floor(756), 189);
+        assert_eq!(summary_floor(4_096), 256);
     }
 
     #[tokio::test]

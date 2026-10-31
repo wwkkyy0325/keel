@@ -272,6 +272,12 @@ item, and a verification outcome when a plan existed.
   visible marker, so the model knows detail was lost instead of assuming it
   never existed.
 
+The same gate applies to the model-written summary. A summary whose estimated
+size is below a quarter of its token budget, clamped to 64..256 tokens, is
+treated as a failed summarizer call. The driver keeps the previous memo and
+writes the structured fallback; a segment is covered only where its record
+fits. A near-empty summary must not absorb the records it cannot replace.
+
 ### 7. Tool entries
 
 - The call is recorded as tool name plus key arguments.
