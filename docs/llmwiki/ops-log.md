@@ -309,3 +309,14 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 - Commit: `feat: support HumanEval+ and MBPP+ imports`.
 - Added `.github/workflows/ci.yml` for Rust gates, Python compile checks and
   importer fixture validation.
+
+### Public suite
+
+- Imported 20 HumanEval+ and 20 MBPP+ cases through the local proxy; cases stay
+  gitignored.
+- HumanEval+: 20/20, 115,847 tokens, 105 s.
+- MBPP+: 19/20, 105,723 tokens, 119 s; `Mbpp/16` is an ambiguous public prompt.
+- Fixed MBPP entry-point selection and setup skeleton; fixed Windows suite
+  filtering.
+- Report: `evals/reports/2026-11-02-public-suite.md`.
+- Commit: `fix: select MBPP entry points and add public suite report`.

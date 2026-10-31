@@ -281,3 +281,15 @@
 - Added a GitHub Actions workflow for fmt, clippy, tests, `cargo deny`, Python
   compile checks and importer fixture validation.
 - Verification: both importer fixtures; no Rust changes.
+
+### Public suite
+
+- Downloaded HumanEval+ and MBPP+ through the local proxy and imported 20
+  cases from each.
+- HumanEval+: 20/20; 115,847 tokens in 105 s.
+- MBPP+: 19/20; 105,723 tokens in 119 s. The one failure (`Mbpp/16`) is an
+  ambiguous public prompt about repeated underscore groups.
+- Fixed MBPP entry-point selection (test-referenced function, not the first
+  helper) and generated a setup skeleton from the canonical signature.
+- Fixed suite filters to compare POSIX paths on Windows.
+- Report: `evals/reports/2026-11-02-public-suite.md`.

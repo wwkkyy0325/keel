@@ -20,7 +20,8 @@ def discover(filter_text: str | None) -> list[Path]:
     selected = []
     for meta in cases:
         case_dir = meta.parent
-        if filter_text and filter_text not in str(case_dir.relative_to(REPO_ROOT)):
+        relative = case_dir.relative_to(REPO_ROOT).as_posix()
+        if filter_text and filter_text not in relative:
             continue
         selected.append(case_dir)
     return selected

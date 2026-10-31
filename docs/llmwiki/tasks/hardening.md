@@ -13,8 +13,8 @@ failures observable before memory and compaction change the system.
       (10/10 passed on 2026-11-02)
 - [x] 4. Public permissive cases (HumanEval+/MBPP+) as code-correctness smoke
       tests, downloaded locally and never vendored — verify: importer and
-      provenance (local-file path tested; the HF datasets server was not
-      reachable from this environment)
+      provenance (local-file path tested; HumanEval+ 20/20 and MBPP+ 19/20
+      through the local proxy)
 - [x] 5. Fault injection: provider 429/500 retry path, stream cut, model-call
       bound, tool repeat, verification failure, context overflow — verify:
       provider and driver tests

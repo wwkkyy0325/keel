@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import urllib.request
 from pathlib import Path
@@ -74,15 +75,31 @@ def download_rows(dataset: str, limit: int) -> list[dict]:
     return rows
 
 
+def function_defs(text: str) -> list[str]:
+    return re.findall(r"^def\s+([A-Za-z_]\w*)\s*\(", text, re.M)
+
+
 def entry_point(row: dict) -> str:
     if row.get("entry_point"):
         return row["entry_point"]
-    for text in (row.get("prompt", ""), row.get("canonical_solution", "")):
-        for line in text.splitlines():
-            stripped = line.strip()
-            if stripped.startswith("def "):
-                return stripped[4:].split("(", 1)[0].strip()
-    raise ValueError(f"cannot determine entry point for {row.get('task_id')}")
+    canonical = row.get("canonical_solution") or row.get("code") or ""
+    defs = function_defs(canonical) or function_defs(row.get("prompt", ""))
+    if not defs:
+        raise ValueError(f"cannot determine entry point for {row.get('task_id')}")
+    test = row.get("test", "") + "\n" + "\n".join(row.get("test_list") or [])
+    for name in reversed(defs):
+        if re.search(rf"\b{re.escape(name)}\s*\(", test):
+            return name
+    return defs[-1]
+
+
+def signature_for(text: str, entry: str) -> str | None:
+    match = re.search(
+        rf"^def\s+{re.escape(entry)}\s*\([^)]*\)\s*:",
+        text,
+        re.M | re.S,
+    )
+    return match.group(0) if match else None
 
 
 def write_case(row: dict, output: Path, dataset: str) -> Path:
@@ -99,10 +116,14 @@ def write_case(row: dict, output: Path, dataset: str) -> Path:
         setup = prompt + ("" if prompt.endswith("\n") else "\n") + "    pass\n"
         reference = prompt + canonical if not canonical.lstrip().startswith("def ") else canonical
     else:
-        setup = f"# {prompt}\n# Implement `{entry}` in this file.\n"
         reference = canonical
         if reference and not reference.endswith("\n"):
             reference += "\n"
+        signature = signature_for(reference, entry)
+        if signature:
+            setup = f"# {prompt}\n{signature}\n    pass\n"
+        else:
+            setup = f"# {prompt}\n# Implement `{entry}` in this file.\n"
     (case / "setup" / "solution.py").write_text(setup, encoding="utf-8")
     (case / "reference" / "solution.py").write_text(reference, encoding="utf-8")
 
