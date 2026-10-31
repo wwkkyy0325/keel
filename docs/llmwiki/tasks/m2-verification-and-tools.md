@@ -8,7 +8,7 @@ not by the model's own claim.
 - [x] 1. Acceptance types and deterministic verifiers: `AcceptanceItem`,
       `VerifySpec`, `Evidence`, `VerificationReport`; compute and file-hash
       verifiers run real checks — verify: verifier unit/integration tests
-- [ ] 2. Read-only tools: `list_dir` and `code_search` with permission requests
+- [x] 2. Read-only tools: `list_dir` and `code_search` with permission requests
       and bounded output — verify: dispatch and permission tests
 - [ ] 3. Structured shell tool: program plus argument list, no interpolation,
       allowlist, permission request; command and test verifiers on top — verify:
@@ -46,4 +46,9 @@ not by the model's own claim.
   execution path exists.
 - File-hash paths are workspace-relative and may not escape the root.
 - Calculator is a bounded parser; no shell, no `eval`.
-- `cargo test --workspace` passes: 112 tests.
+- Step 2 adds `list_dir` and `code_search`. Both are read-only, request read
+  permission, do not follow symlinks, and bound entries, file size, depth and
+  output.
+- The coding profiles now expose five tools: `echo`, `read_file`, `write_file`,
+  `list_dir`, `code_search`.
+- `cargo test --workspace` passes: 114 tests.

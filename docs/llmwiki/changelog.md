@@ -103,3 +103,15 @@
 - Recorded deferred context, profile and pipeline-registry work in
   `docs/llmwiki/backlog.md` with triggers.
 - Verification: 112 tests; clippy, fmt and `cargo deny check` pass.
+
+### Read-only coding tools
+
+- Added `list_dir` and `code_search`; both are read-only, request read
+  permission, do not follow symlinks, and bound output.
+- `code_search` skips `.git`, `.keel`, `target`, `node_modules`, `dist`,
+  `build`, virtualenv and cache directories; it skips files over 1 MiB and
+  non-UTF-8 content.
+- Coding profiles expose `echo`, `read_file`, `write_file`, `list_dir` and
+  `code_search`.
+- Verification: 114 tests; clippy, fmt, `cargo deny check` and a CLI mock turn
+  pass.

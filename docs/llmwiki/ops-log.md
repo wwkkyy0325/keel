@@ -133,3 +133,14 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 - Verification: `cargo test --workspace` (112 tests), clippy, fmt and
   `cargo deny check`.
 - Commit: `feat: add acceptance verifier for compute and file hashes`.
+
+### M2 — Read-only coding tools
+
+- Added `list_dir` and `code_search` with read permission requests, symlink
+  skipping and bounded entries, file size, depth and output.
+- `code_search` skips build/VCS/cache directories and non-UTF-8 or oversized
+  files.
+- Registered both in the CLI and exposed them in the coding profiles.
+- Verification: 114 tests; clippy, fmt, `cargo deny check`; CLI mock turn
+  reaches `Done`.
+- Commit: `feat: add read-only workspace tools`.

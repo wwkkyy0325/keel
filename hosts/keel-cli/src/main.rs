@@ -9,10 +9,10 @@ use keel_core::{
 };
 use keel_model_openai::{OpenAiConfig, OpenAiProvider};
 use keel_runtime::{
-    load_profile, validate_config, ContextBuilder, DeferAllInteractionPort, EchoTool, EventLog,
-    InteractionBroker, LatestStage, LocalTrashStore, MockModel, MockStep, PermissionEngine,
-    ReadFileTool, RuntimeConfig, SystemStage, ToolRegistry, TurnDriver, TurnDriverConfig,
-    WriteFileTool,
+    load_profile, validate_config, CodeSearchTool, ContextBuilder, DeferAllInteractionPort,
+    EchoTool, EventLog, InteractionBroker, LatestStage, ListDirTool, LocalTrashStore, MockModel,
+    MockStep, PermissionEngine, ReadFileTool, RuntimeConfig, SystemStage, ToolRegistry, TurnDriver,
+    TurnDriverConfig, WriteFileTool,
 };
 
 enum HostModel {
@@ -58,6 +58,8 @@ async fn run() -> Result<(), KernelError> {
     let mut registry = ToolRegistry::new();
     registry.register(Arc::new(EchoTool::new()))?;
     registry.register(Arc::new(ReadFileTool::new()))?;
+    registry.register(Arc::new(ListDirTool::new()))?;
+    registry.register(Arc::new(CodeSearchTool::new()))?;
     registry.register(Arc::new(WriteFileTool::new(Arc::new(
         LocalTrashStore::new(permissions.root().to_path_buf()),
     ))))?;

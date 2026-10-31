@@ -1,8 +1,8 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use keel_core::{ArgValue, CancelToken, Tool, ToolArgs, ToolCallId, ToolCtx, TurnId};
-use keel_runtime::{LocalTrashStore, WriteFileTool};
+use keel_core::{AccessKind, ArgValue, CancelToken, Tool, ToolArgs, ToolCallId, ToolCtx, TurnId};
+use keel_runtime::{CodeSearchTool, ListDirTool, LocalTrashStore, WriteFileTool};
 
 fn ctx(root: &Path) -> ToolCtx {
     ToolCtx {
@@ -40,6 +40,63 @@ async fn overwriting_backs_up_the_previous_version() {
     let entry = entries.next().unwrap().unwrap();
     assert!(entries.next().is_none());
     assert_eq!(std::fs::read_to_string(entry.path()).unwrap(), "old");
+}
+
+#[tokio::test]
+async fn list_dir_reports_files_and_directories() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "a").unwrap();
+    std::fs::create_dir(dir.path().join("src")).unwrap();
+    let tool = ListDirTool::new();
+    let mut args = ToolArgs::new();
+    args.insert("path", ArgValue::String(".".to_owned()));
+
+    let result = tool.call(args, &ctx(dir.path())).await;
+
+    assert!(result.is_success());
+    let content = result.content().unwrap();
+    assert!(content.contains("f a.txt"));
+    assert!(content.contains("d src"));
+
+    let mut permission_args = ToolArgs::new();
+    permission_args.insert("path", ArgValue::String(".".to_owned()));
+    let request = &tool.permission_requests(&permission_args).unwrap()[0];
+    assert_eq!(request.tool, "list_dir");
+    assert_eq!(request.access, AccessKind::Read);
+}
+
+#[tokio::test]
+async fn code_search_finds_matches_and_skips_build_directories() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::create_dir_all(dir.path().join("target")).unwrap();
+    std::fs::write(
+        dir.path().join("src").join("main.rs"),
+        "fn main() {\n    println!(\"Hello World\");\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("target").join("generated.rs"),
+        "hello world\n",
+    )
+    .unwrap();
+
+    let tool = CodeSearchTool::new();
+    let mut args = ToolArgs::new();
+    args.insert("query", ArgValue::String("hello world".to_owned()));
+
+    let result = tool.call(args, &ctx(dir.path())).await;
+
+    assert!(result.is_success());
+    let content = result.content().unwrap();
+    assert!(content.contains("src/main.rs:2:"));
+    assert!(!content.contains("target/generated.rs"));
+
+    let mut permission_args = ToolArgs::new();
+    permission_args.insert("query", ArgValue::String("hello".to_owned()));
+    let request = &tool.permission_requests(&permission_args).unwrap()[0];
+    assert_eq!(request.tool, "code_search");
+    assert_eq!(request.access, AccessKind::Read);
 }
 
 #[tokio::test]

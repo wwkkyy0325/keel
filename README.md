@@ -7,8 +7,9 @@ runtime — turn state machine, tool protocol, context assembly, permissions,
 memory, model wire — small and stable, while variants (coding, companionship,
 automation) arrive as policy profiles and plugins.
 
-**Status:** M1 implemented — core types, mock turn loop, three tools and the
-CLI. M2 (real provider and coding profile) is next.
+**Status:** M1 implemented; M2 in progress — OpenAI-compatible streaming
+provider, acceptance verifier (compute and file hash), five coding tools and
+profile-driven provider selection. The first real coding eval is next.
 
 ## Why "Keel"
 

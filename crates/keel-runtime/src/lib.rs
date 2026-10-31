@@ -29,6 +29,6 @@ pub use permission::PermissionEngine;
 pub use policy::{RuntimeConfig, TurnLimits};
 pub use profile::{from_profile_str, load_profile, validate_config};
 pub use registry::ToolRegistry;
-pub use tools::{EchoTool, ReadFileTool, WriteFileTool};
+pub use tools::{CodeSearchTool, EchoTool, ListDirTool, ReadFileTool, WriteFileTool};
 pub use trash::{LocalTrashStore, TrashEntry, TrashStore};
 pub use verification::AcceptanceVerifier;

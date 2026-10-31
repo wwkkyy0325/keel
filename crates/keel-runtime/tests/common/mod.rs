@@ -12,10 +12,10 @@ use keel_core::{
     Policy, PromotionMode, TurnId, TurnState, VerificationMode,
 };
 use keel_runtime::{
-    validate_config, ContextBuilder, DeferAllInteractionPort, EchoTool, EventLog,
-    InteractionBroker, LatestStage, LocalTrashStore, MockModel, PermissionEngine, ReadFileTool,
-    RuntimeConfig, SystemStage, ToolRegistry, TurnDriver, TurnDriverConfig, TurnLimits,
-    WriteFileTool,
+    validate_config, CodeSearchTool, ContextBuilder, DeferAllInteractionPort, EchoTool, EventLog,
+    InteractionBroker, LatestStage, ListDirTool, LocalTrashStore, MockModel, PermissionEngine,
+    ReadFileTool, RuntimeConfig, SystemStage, ToolRegistry, TurnDriver, TurnDriverConfig,
+    TurnLimits, WriteFileTool,
 };
 
 pub fn runtime_config(
@@ -57,6 +57,8 @@ pub fn standard_registry(root: &Path) -> Arc<ToolRegistry> {
     let mut registry = ToolRegistry::new();
     registry.register(Arc::new(EchoTool::new())).unwrap();
     registry.register(Arc::new(ReadFileTool::new())).unwrap();
+    registry.register(Arc::new(ListDirTool::new())).unwrap();
+    registry.register(Arc::new(CodeSearchTool::new())).unwrap();
     registry
         .register(Arc::new(WriteFileTool::new(Arc::new(
             LocalTrashStore::new(root.to_path_buf()),
