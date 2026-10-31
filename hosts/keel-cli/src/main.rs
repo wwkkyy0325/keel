@@ -167,6 +167,7 @@ fn build_model(config: &RuntimeConfig, input: &str) -> Result<HostModel, KernelE
                 api_key,
                 model: config.model_route.model.clone(),
                 supports_reasoning: config.supports_reasoning,
+                max_retries: 2,
             })
             .map_err(|error| invalid_config(error.to_string()))?;
             Ok(HostModel::OpenAi(provider))

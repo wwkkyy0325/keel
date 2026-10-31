@@ -58,12 +58,70 @@ async fn spawn_server(
     format!("http://{address}/v1")
 }
 
+async fn spawn_sequence(responses: Vec<(&'static str, &'static str, &'static str)>) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        for (status, content_type, body) in responses {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0u8; 4096];
+            let headers_end = loop {
+                let read = match socket.read(&mut buffer).await {
+                    Ok(0) | Err(_) => return,
+                    Ok(read) => read,
+                };
+                request.extend_from_slice(&buffer[..read]);
+                if let Some(index) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+                    break index + 4;
+                }
+            };
+            let headers = String::from_utf8_lossy(&request[..headers_end]).to_ascii_lowercase();
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    line.strip_prefix("content-length:")
+                        .map(|value| value.trim().parse::<usize>().unwrap_or(0))
+                })
+                .unwrap_or(0);
+            let mut remaining =
+                content_length.saturating_sub(request.len().saturating_sub(headers_end));
+            while remaining > 0 {
+                let read = match socket.read(&mut buffer).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(read) => read,
+                };
+                remaining = remaining.saturating_sub(read);
+            }
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = socket.write_all(response.as_bytes()).await;
+            let _ = socket.shutdown().await;
+        }
+    });
+    format!("http://{address}/v1")
+}
+
 fn provider(url: String) -> OpenAiProvider {
     OpenAiProvider::new(OpenAiConfig {
         base_url: url,
         api_key: "test-key".to_owned(),
         model: "fallback-model".to_owned(),
         supports_reasoning: false,
+        max_retries: 0,
+    })
+    .unwrap()
+}
+
+fn provider_with_retries(url: String, max_retries: u32) -> OpenAiProvider {
+    OpenAiProvider::new(OpenAiConfig {
+        base_url: url,
+        api_key: "test-key".to_owned(),
+        model: "fallback-model".to_owned(),
+        supports_reasoning: false,
+        max_retries,
     })
     .unwrap()
 }
@@ -181,6 +239,32 @@ async fn control_tool_becomes_an_interaction() {
     });
     let interaction = interaction.expect("interaction");
     assert_eq!(interaction.prompt, "which?");
+}
+
+#[tokio::test]
+async fn transient_500_is_retried_before_streaming() {
+    let url = spawn_sequence(vec![
+        ("500 Internal Server Error", "text/plain", "boom"),
+        ("500 Internal Server Error", "text/plain", "boom"),
+        (
+            "200 OK",
+            "text/event-stream",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"},\"finish_reason\":\"stop\"}]}\n\n\
+             data: [DONE]\n\n",
+        ),
+    ])
+    .await;
+
+    let stream = provider_with_retries(url, 2)
+        .stream(request(), &CancelToken::new())
+        .await
+        .unwrap();
+    let chunks = collect(stream).await;
+
+    assert!(chunks.iter().any(|chunk| matches!(
+        chunk.as_ref(),
+        Ok(ModelChunk::TextDelta(text)) if text == "hello"
+    )));
 }
 
 #[tokio::test]

@@ -256,3 +256,14 @@
   missing verification; it now ends in `verification_failed`.
 - Suite result: 10/10 passed, 152,807 tokens, 103 s.
 - Verification: 132 tests; clippy, fmt and `cargo deny check`.
+
+### Provider resilience
+
+- Retry transient provider failures before a stream starts: HTTP 429/5xx,
+  connect, timeout and request errors. Backoff is cancellation-aware.
+- The CLI allows two retries; tests default to zero for deterministic error
+  assertions.
+- The driver bounds each model call to 120 s, below the 180 s turn deadline.
+- Added a local-server test where two 500 responses are followed by a healthy
+  stream.
+- Verification: 133 tests; clippy, fmt and `cargo deny check`.

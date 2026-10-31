@@ -18,6 +18,8 @@ pub struct OpenAiConfig {
     pub model: String,
     /// Whether this endpoint accepts `reasoning_effort`.
     pub supports_reasoning: bool,
+    /// Retries for transient failures before a stream starts.
+    pub max_retries: u32,
 }
 
 pub struct OpenAiProvider {
@@ -26,6 +28,7 @@ pub struct OpenAiProvider {
     api_key: String,
     fallback_model: String,
     supports_reasoning: bool,
+    max_retries: u32,
 }
 
 impl OpenAiProvider {
@@ -48,6 +51,7 @@ impl OpenAiProvider {
             api_key: config.api_key,
             fallback_model: config.model,
             supports_reasoning: config.supports_reasoning,
+            max_retries: config.max_retries,
         })
     }
 }
@@ -61,35 +65,82 @@ impl ModelProvider for OpenAiProvider {
     ) -> Result<ModelStream, ModelError> {
         let reasoning = self.supports_reasoning.then_some(request.reasoning);
         let body = build_request(&request, &self.fallback_model, reasoning);
-        let response = tokio::select! {
-            _ = cancel.cancelled() => {
-                return Err(ModelError::new(ErrorCode::Cancelled, "model request cancelled", false));
-            }
-            result = self
-                .client
-                .post(&self.endpoint)
-                .bearer_auth(&self.api_key)
-                .json(&body)
-                .send() => result.map_err(|error| ModelError::provider(error.to_string()))?,
-        };
+        let attempts = self.max_retries.saturating_add(1);
 
-        let status = response.status();
-        if !status.is_success() {
-            let retryable = status.is_server_error() || status.as_u16() == 429;
-            let body = response.text().await.unwrap_or_default();
-            return Err(ModelError::new(
-                ErrorCode::ModelProvider,
-                format!("provider returned {status}: {body}"),
-                retryable,
-            ));
+        for attempt in 0..attempts {
+            if cancel.is_cancelled() {
+                return Err(ModelError::new(
+                    ErrorCode::Cancelled,
+                    "model request cancelled",
+                    false,
+                ));
+            }
+
+            let response = tokio::select! {
+                _ = cancel.cancelled() => {
+                    return Err(ModelError::new(
+                        ErrorCode::Cancelled,
+                        "model request cancelled",
+                        false,
+                    ));
+                }
+                result = self
+                    .client
+                    .post(&self.endpoint)
+                    .bearer_auth(&self.api_key)
+                    .json(&body)
+                    .send() => result,
+            };
+
+            match response {
+                Ok(response) if response.status().is_success() => {
+                    let (tx, rx) = mpsc::channel(32);
+                    let cancel = cancel.clone();
+                    tokio::spawn(async move {
+                        read_stream(response, tx, cancel).await;
+                    });
+                    return Ok(ModelStream::new(rx));
+                }
+                Ok(response) => {
+                    let status = response.status();
+                    let retryable = status.is_server_error() || status.as_u16() == 429;
+                    let body = response.text().await.unwrap_or_default();
+                    let error = ModelError::new(
+                        ErrorCode::ModelProvider,
+                        format!("provider returned {status}: {body}"),
+                        retryable,
+                    );
+                    if retryable && attempt + 1 < attempts {
+                        backoff(cancel, attempt).await?;
+                        continue;
+                    }
+                    return Err(error);
+                }
+                Err(error) => {
+                    let retryable = error.is_timeout() || error.is_connect() || error.is_request();
+                    let error = ModelError::provider(error.to_string());
+                    if retryable && attempt + 1 < attempts {
+                        backoff(cancel, attempt).await?;
+                        continue;
+                    }
+                    return Err(error);
+                }
+            }
         }
 
-        let (tx, rx) = mpsc::channel(32);
-        let cancel = cancel.clone();
-        tokio::spawn(async move {
-            read_stream(response, tx, cancel).await;
-        });
-        Ok(ModelStream::new(rx))
+        Err(ModelError::provider("model request failed after retries"))
+    }
+}
+
+async fn backoff(cancel: &CancelToken, attempt: u32) -> Result<(), ModelError> {
+    let delay = Duration::from_millis(200u64.saturating_mul(1u64 << attempt.min(4)));
+    tokio::select! {
+        _ = cancel.cancelled() => Err(ModelError::new(
+            ErrorCode::Cancelled,
+            "model request cancelled",
+            false,
+        )),
+        _ = tokio::time::sleep(delay) => Ok(()),
     }
 }
 

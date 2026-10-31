@@ -287,3 +287,13 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 - Suite: 10/10 passed, 152,807 tokens, 103 s.
 - Verification: 132 tests; clippy, fmt and `cargo deny check`.
 - Commit: `feat: add hardening harness and eval cases`.
+
+### Provider resilience
+
+- Added retry for transient HTTP/connect/timeout failures before streaming,
+  with cancellation-aware backoff. CLI uses two retries; tests use zero.
+- Bounded each model call to 120 s; the turn deadline remains 180 s.
+- Added a local-server test: two 500 responses then a healthy stream.
+- Verification: 133 tests; clippy, fmt and `cargo deny check`; real DeepSeek
+  smoke returned `pong`.
+- Commit: `fix: retry transient provider failures and bound model calls`.

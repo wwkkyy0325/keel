@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use keel_core::{
     detect_secret, AcceptanceItem, BuildCtx, CancelToken, CommitCtx, CommitDecision, ErrorCode,
@@ -19,6 +20,8 @@ use crate::interaction::InteractionBroker;
 use crate::permission::PermissionEngine;
 use crate::registry::ToolRegistry;
 use crate::verification::AcceptanceVerifier;
+
+const MODEL_CALL_TIMEOUT: Duration = Duration::from_secs(120);
 use crate::TurnLimits;
 
 /// Host configuration that is not one of the seven policy questions.
@@ -317,11 +320,12 @@ impl<M: ModelProvider> TurnDriver<M> {
                 model: route.model.clone(),
             });
 
+            let call_deadline = deadline.min(tokio::time::Instant::now() + MODEL_CALL_TIMEOUT);
             let stream_result = tokio::select! {
                 _ = cancel.cancelled() => {
                     return Err(KernelError::Cancelled { stage: "model" });
                 }
-                result = tokio::time::timeout_at(deadline, self.model.stream(request, cancel)) => result,
+                result = tokio::time::timeout_at(call_deadline, self.model.stream(request, cancel)) => result,
             };
 
             let mut stream = match stream_result {
@@ -357,7 +361,7 @@ impl<M: ModelProvider> TurnDriver<M> {
                     _ = cancel.cancelled() => {
                         return Err(KernelError::Cancelled { stage: "model stream" });
                     }
-                    result = tokio::time::timeout_at(deadline, stream.recv()) => result,
+                    result = tokio::time::timeout_at(call_deadline, stream.recv()) => result,
                 };
 
                 match chunk {
