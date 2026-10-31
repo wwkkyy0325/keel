@@ -46,4 +46,20 @@ survive compression, cost stays bounded, and tests stay deterministic?
 
 ## Outcome
 
-Not run yet. No compression level calls a model before this note has a result.
+Decided on 2026-11-03, without running the probe experiment: the product owner
+requires model summaries, so the segment level uses one.
+
+- `L2` turn digests stay structured and model-free; they are per-turn and would
+  be too expensive to model-summarize.
+- `L3` segment records keep the kernel's structured fields and gain an optional
+  model summary. The summarizer is called once per sealed segment, only when
+  the transcript is at least 800 estimated tokens.
+- The call uses the same provider, 300 maximum output tokens, a 30-second
+  timeout and the turn's cancellation token. Failure falls back to the
+  structured record; a summary is clipped to 800 characters.
+- The prompt forbids inventing facts, requires paths, identifiers, commands and
+  numbers to stay exact, keeps entity names in their original language, and
+  replies in the transcript's language.
+- Summary usage is folded into the turn's reported token usage.
+- The probe experiment remains available if quality needs to be compared later;
+  it is no longer a blocking decision.

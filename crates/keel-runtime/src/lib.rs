@@ -15,6 +15,7 @@ pub mod mock_model;
 pub mod permission;
 pub mod profile;
 pub mod registry;
+pub mod summarizer;
 pub mod summary;
 pub mod tools;
 pub mod trash;
@@ -34,6 +35,9 @@ pub use mock_model::{MockModel, MockStep};
 pub use permission::PermissionEngine;
 pub use profile::{from_profile_str, load_profile, validate_config};
 pub use registry::ToolRegistry;
+pub use summarizer::{
+    transcript_text, ProviderSummarizer, Summarized, Summarizer, SUMMARY_MIN_TOKENS,
+};
 pub use tools::{CodeSearchTool, EchoTool, ListDirTool, ReadFileTool, ShellTool, WriteFileTool};
 pub use trash::{LocalTrashStore, TrashEntry, TrashStore};
 pub use verification::AcceptanceVerifier;

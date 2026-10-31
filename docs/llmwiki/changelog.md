@@ -548,3 +548,19 @@
   It now creates parent directories inside the workspace, with a test.
 - Added `variants/coding/profile.deepseek.session.toml` for headless sessions
   and `evals/reports/2026-11-03-coding-20-turn.md`.
+
+### M3 model segment summaries
+
+- The segment level now gets one model-written summary per sealed segment when
+  the transcript is at least 800 estimated tokens. L2 turn digests stay
+  structured and model-free.
+- The summary runs through the same provider with 300 output tokens, a 30-second
+  timeout and cancellation; failure falls back to the structured record. The
+  prompt forbids new facts and requires paths, identifiers and numbers to stay
+  exact.
+- The summary is clipped to 800 characters, rendered in place of the one-line
+  result, and its token usage is added to the turn's reported usage.
+- A real three-turn smoke triggered one summary (63 characters) and showed the
+  record in the next request; `summary:` is now printed by the CLI.
+- Verification: 204 tests; large/short segment gating, fallback and usage
+  accounting are covered.

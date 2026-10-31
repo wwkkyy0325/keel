@@ -20,10 +20,12 @@ use crate::governor::{ContextGovernor, PressureLevel};
 use crate::interaction::InteractionBroker;
 use crate::permission::PermissionEngine;
 use crate::registry::ToolRegistry;
+use crate::summarizer::{transcript_text, Summarizer, SUMMARY_MIN_TOKENS};
 use crate::summary::{compact_args, summarize_output};
 use crate::verification::AcceptanceVerifier;
 
 const MODEL_CALL_TIMEOUT: Duration = Duration::from_secs(120);
+const SUMMARY_TIMEOUT: Duration = Duration::from_secs(30);
 use crate::TurnLimits;
 
 /// Host configuration that is not one of the seven policy questions.
@@ -126,6 +128,7 @@ pub struct TurnDriver<M> {
     /// Measured difference between reported input tokens and the kernel
     /// estimate: tool schemas and provider template overhead.
     overhead: AtomicU64,
+    summarizer: Option<Arc<dyn Summarizer>>,
     next_turn: AtomicU64,
 }
 
@@ -163,8 +166,15 @@ impl<M: ModelProvider> TurnDriver<M> {
             output_reserve: config.max_output_tokens,
             working_set,
             overhead: AtomicU64::new(0),
+            summarizer: None,
             next_turn: AtomicU64::new(1),
         }
+    }
+
+    /// Enables model-written summaries for large sealed segments.
+    pub fn with_summarizer(mut self, summarizer: Arc<dyn Summarizer>) -> Self {
+        self.summarizer = Some(summarizer);
+        self
     }
 
     /// Enables host-provided acceptance checks at the `Verify` phase.
@@ -349,44 +359,101 @@ impl<M: ModelProvider> TurnDriver<M> {
             self.working_set.saturating_sub(overhead),
             self.output_reserve,
         );
-        let (history, records, facts, session_growth) = {
+        let (change, transcript, opened_topic) = {
             let mut session = self
                 .session
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             let change = session.begin_turn(input);
-            if let Some(segment_id) = change.sealed {
-                self.events.append(Event::SegmentSealed {
-                    turn_id,
-                    segment_id,
-                    reason: change.reason.unwrap_or_default(),
-                });
-            }
-            if let Some(skip) = change.skipped {
-                self.events.append(Event::CompressionSkipped {
-                    turn_id,
-                    segment_id: skip.segment_id,
-                    missing: skip.missing,
-                });
-            }
-            for key in change.promoted {
-                self.events.append(Event::FactPromoted { turn_id, key });
-            }
-            for key in change.forgotten {
-                self.events.append(Event::FactForgotten { turn_id, key });
-            }
-            if let Some(segment_id) = change.opened {
-                let topic = session
+            let transcript = change.sealed.and_then(|id| session.sealed_transcript(id));
+            let opened_topic = change.opened.and_then(|_| {
+                session
                     .segments()
                     .last()
                     .map(|segment| segment.topic.clone())
-                    .unwrap_or_default();
-                self.events.append(Event::SegmentOpened {
-                    turn_id,
-                    segment_id,
-                    topic,
-                });
+            });
+            (change, transcript, opened_topic)
+        };
+        if let Some(segment_id) = change.sealed {
+            self.events.append(Event::SegmentSealed {
+                turn_id,
+                segment_id,
+                reason: change.reason.clone().unwrap_or_default(),
+            });
+        }
+        if let Some(skip) = &change.skipped {
+            self.events.append(Event::CompressionSkipped {
+                turn_id,
+                segment_id: skip.segment_id,
+                missing: skip.missing.clone(),
+            });
+        }
+        for key in &change.promoted {
+            self.events.append(Event::FactPromoted {
+                turn_id,
+                key: key.clone(),
+            });
+        }
+        for key in &change.forgotten {
+            self.events.append(Event::FactForgotten {
+                turn_id,
+                key: key.clone(),
+            });
+        }
+        if let (Some(segment_id), Some(topic)) = (change.opened, opened_topic) {
+            self.events.append(Event::SegmentOpened {
+                turn_id,
+                segment_id,
+                topic,
+            });
+        }
+
+        // One model summary per large sealed segment; the structured record
+        // is the fallback when this fails or the segment is too small.
+        if let (Some(summarizer), Some(messages), Some(segment_id)) =
+            (self.summarizer.as_ref(), transcript.as_ref(), change.sealed)
+        {
+            let raw_tokens: u32 = messages.iter().fold(0u32, |total, message| {
+                total.saturating_add(message.estimated_tokens())
+            });
+            let text = transcript_text(messages);
+            if raw_tokens >= SUMMARY_MIN_TOKENS {
+                let result = tokio::select! {
+                    _ = cancel.cancelled() => None,
+                    result = tokio::time::timeout(
+                        SUMMARY_TIMEOUT,
+                        summarizer.summarize(&text, cancel),
+                    ) => result.ok().and_then(|inner| inner.ok()),
+                };
+                if let Some(summary) = result {
+                    let mut session = self
+                        .session
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    session.set_record_summary(segment_id, &summary.text);
+                    drop(session);
+                    stats.usage.input_tokens = stats
+                        .usage
+                        .input_tokens
+                        .saturating_add(summary.usage.input_tokens);
+                    stats.usage.output_tokens = stats
+                        .usage
+                        .output_tokens
+                        .saturating_add(summary.usage.output_tokens);
+                    self.events.append(Event::SegmentSummarized {
+                        turn_id,
+                        segment_id,
+                        chars: summary.text.chars().count() as u32,
+                    });
+                }
             }
+        }
+
+        let (history, records, facts, session_growth) = {
+            let session = self
+                .session
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             (
                 session.history(),
                 session.records(),

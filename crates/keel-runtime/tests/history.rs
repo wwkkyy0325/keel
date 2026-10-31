@@ -1,16 +1,17 @@
 mod common;
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use keel_core::{
     CancelToken, Event, Message, MessageRole, ModelError, ModelProvider, ModelRequest, ModelStream,
-    PermissionLevel, Policy,
+    PermissionLevel, Policy, TokenUsage,
 };
 use keel_runtime::{
     validate_config, ContextBuilder, DeferAllInteractionPort, EventLog, HistoryStage,
-    InteractionBroker, LatestStage, MemoryStage, MockModel, MockStep, PermissionEngine,
-    SystemStage, TurnDriver, TurnDriverConfig,
+    InteractionBroker, LatestStage, MemoryStage, MockModel, MockStep, PermissionEngine, Summarized,
+    Summarizer, SystemStage, TurnDriver, TurnDriverConfig,
 };
 
 /// Records the messages of every model request and replies with fixed text.
@@ -44,6 +45,14 @@ struct Harness {
 }
 
 fn harness(budget_tokens: u32) -> Harness {
+    harness_with(budget_tokens, "ack", None)
+}
+
+fn harness_with(
+    budget_tokens: u32,
+    reply: &str,
+    summarizer: Option<Arc<dyn Summarizer>>,
+) -> Harness {
     let dir = tempfile::tempdir().unwrap();
     let events = Arc::new(EventLog::new());
     let mut config = common::runtime_config(&["echo"], 4, PermissionLevel::WorkspaceAuto);
@@ -73,7 +82,7 @@ fn harness(budget_tokens: u32) -> Harness {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let model = RecordingModel {
         requests: requests.clone(),
-        reply: "ack".to_owned(),
+        reply: reply.to_owned(),
     };
     let policy: Arc<dyn Policy> = Arc::new(config.clone());
     let driver = TurnDriver::new(
@@ -91,6 +100,11 @@ fn harness(budget_tokens: u32) -> Harness {
             limits: common::test_limits(),
         },
     );
+
+    let driver = match summarizer {
+        Some(summarizer) => driver.with_summarizer(summarizer),
+        None => driver,
+    };
 
     Harness {
         requests,
@@ -351,4 +365,83 @@ async fn a_constraint_reaches_the_next_request() {
         })
         .expect("memory block");
     assert!(memory.content.contains("always use tabs (session)"));
+}
+
+struct FixedSummarizer {
+    calls: Arc<AtomicU32>,
+    text: String,
+}
+
+#[async_trait]
+impl Summarizer for FixedSummarizer {
+    async fn summarize(
+        &self,
+        _transcript: &str,
+        _cancel: &CancelToken,
+    ) -> Result<Summarized, ModelError> {
+        self.calls.fetch_add(1, Ordering::Relaxed);
+        Ok(Summarized {
+            text: self.text.clone(),
+            usage: TokenUsage::default(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_large_segment_gets_a_model_summary() {
+    let calls = Arc::new(AtomicU32::new(0));
+    let summarizer = Arc::new(FixedSummarizer {
+        calls: calls.clone(),
+        text: "MODEL SUMMARY".to_owned(),
+    });
+    let harness = harness_with(4096, &"x".repeat(4000), Some(summarizer));
+
+    assert!(harness
+        .driver
+        .run("fix the parser bug", CancelToken::new())
+        .await
+        .is_done());
+    assert!(harness
+        .driver
+        .run("write a haiku about the sea", CancelToken::new())
+        .await
+        .is_done());
+    let third = harness
+        .driver
+        .run("what is the weather today", CancelToken::new())
+        .await;
+    assert!(third.is_done());
+
+    assert!(calls.load(Ordering::Relaxed) >= 1);
+    let requests = harness.requests.lock().unwrap();
+    let record = requests[2]
+        .iter()
+        .find(|message| {
+            message.role == MessageRole::System && message.content.starts_with("[earlier segments]")
+        })
+        .expect("record block");
+    assert!(record.content.contains("MODEL SUMMARY"));
+}
+
+#[tokio::test]
+async fn a_short_segment_is_not_summarized() {
+    let calls = Arc::new(AtomicU32::new(0));
+    let summarizer = Arc::new(FixedSummarizer {
+        calls: calls.clone(),
+        text: "MODEL SUMMARY".to_owned(),
+    });
+    let harness = harness_with(4096, "ack", Some(summarizer));
+
+    assert!(harness
+        .driver
+        .run("fix the parser bug", CancelToken::new())
+        .await
+        .is_done());
+    assert!(harness
+        .driver
+        .run("write a haiku about the sea", CancelToken::new())
+        .await
+        .is_done());
+
+    assert_eq!(calls.load(Ordering::Relaxed), 0);
 }

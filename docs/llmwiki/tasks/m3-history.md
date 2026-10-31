@@ -79,6 +79,13 @@ one at a time. Summarization is blocked on
       `write_file` could not create a missing parent directory; the tool now
       does.
 
+## Model segment summaries
+
+- [x] One model call per large sealed segment, with the structured record as
+      fallback — verify: a large segment gets the model summary in the next
+      record block; a short segment makes zero calls; the summary usage is
+      counted; failure falls back
+
 ## Answer artifact (ADR 0007)
 
 - [x] Turn answer as a separate artifact: body from the latest text-only

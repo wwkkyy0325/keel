@@ -290,13 +290,19 @@ host into that stage at session start.
 - Every governor decision emits `ContextPressure` with the ratio, level,
   action and estimated savings.
 
-### 10. Summarization is an open research item
+### 10. Summarization levels
 
-`L2` and `L3` are structured extracts in the first implementation: no model
-call, no cost, deterministic, and testable. A model-written summary may replace
-or augment them only after the research note compares quality, cost, drift and
-prompt-injection risk. The interface is level-based so the mechanism can change
-without changing assembly.
+`L2` turn digests stay structured and model-free: they run per turn and a model
+call there would be too expensive.
+
+`L3` segment records keep the structured fields and may gain one model summary
+per sealed segment. The call is gated at 800 estimated transcript tokens, uses
+300 maximum output tokens, a 30-second timeout and the turn's cancellation, and
+falls back to the structured record on failure. The summary is clipped to 800
+characters and must not invent facts; paths, identifiers, commands and numbers
+stay exact, and entity names keep their original language. Summary usage is
+included in the turn's reported tokens. The probe experiment in the research
+note remains available for quality comparison but is no longer blocking.
 
 ## Consequences
 

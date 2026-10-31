@@ -115,6 +115,9 @@ pub struct SegmentRecord {
     pub pending: Vec<String>,
     pub verified: bool,
     pub turns: u32,
+    /// Model-written summary, when a summarizer is configured and the segment
+    /// was large enough. The structured fields stay authoritative.
+    pub summary: Option<String>,
 }
 
 /// A topic span of a session.
@@ -530,6 +533,40 @@ impl Session {
             .collect()
     }
 
+    /// Verbatim messages of one segment, for a summarizer.
+    pub fn sealed_transcript(&self, segment_id: u32) -> Option<Vec<Arc<Message>>> {
+        let segment = self
+            .segments
+            .iter()
+            .find(|segment| segment.id == segment_id)?;
+        Some(
+            segment
+                .entries
+                .iter()
+                .map(|entry| entry.message.clone())
+                .collect(),
+        )
+    }
+
+    /// Attaches a model summary to an existing record.
+    pub fn set_record_summary(&mut self, segment_id: u32, summary: &str) {
+        let Some(segment) = self
+            .segments
+            .iter_mut()
+            .find(|segment| segment.id == segment_id)
+        else {
+            return;
+        };
+        let Some(record) = segment.record.as_mut() else {
+            return;
+        };
+        let text = summary.trim();
+        if text.is_empty() {
+            return;
+        }
+        record.summary = Some(text.chars().take(800).collect());
+    }
+
     /// Records of sealed segments that are no longer the newest content.
     pub fn records(&self) -> Vec<SegmentRecord> {
         let newest = self
@@ -892,6 +929,7 @@ fn build_record(segment: &Segment) -> Result<SegmentRecord, Vec<String>> {
         pending: segment.pending.clone(),
         verified: segment.verified,
         turns: segment.turns,
+        summary: None,
     })
 }
 

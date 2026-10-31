@@ -579,3 +579,16 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 - `write_file` now creates missing parent directories; added a nested-write
   test.
 - Verification: 199 tests; fmt and clippy clean.
+
+### M3 model segment summaries
+
+- Added `Summarizer` and `ProviderSummarizer`; `Summarized` carries the text and
+  its token usage. The driver calls it at seal when the segment exceeds 800
+  estimated tokens, with a 30-second timeout.
+- `SegmentRecord.summary` is optional; `render_record` prefers it and keeps the
+  structured changes, verification and pending flags.
+- The CLI builds a summarizer for OpenAI-compatible profiles (`with_summarizer`)
+  and prints `summary: segment=... chars=...`.
+- Real smoke: turn 1 long answer, turn 2 topic change produced a 63-character
+  summary, turn 3 carried the record.
+- Verification: 204 tests; fmt and clippy clean.

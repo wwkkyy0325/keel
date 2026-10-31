@@ -411,10 +411,11 @@ fn assemble(history: &[Arc<Message>], budget: u32, share: f32) -> Option<Assembl
 }
 
 fn render_record(record: &keel_core::SegmentRecord) -> String {
-    let mut line = format!(
-        "- \"{}\" ({} turns): {}",
-        record.goal, record.turns, record.result
-    );
+    let body = match &record.summary {
+        Some(summary) => summary.split_whitespace().collect::<Vec<_>>().join(" "),
+        None => record.result.clone(),
+    };
+    let mut line = format!("- \"{}\" ({} turns): {}", record.goal, record.turns, body);
     if !record.changes.is_empty() {
         line.push_str("; changed: ");
         line.push_str(&record.changes.join(", "));

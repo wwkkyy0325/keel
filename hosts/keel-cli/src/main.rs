@@ -14,8 +14,9 @@ use keel_model_openai::{OpenAiConfig, OpenAiProvider};
 use keel_runtime::{
     load_profile, validate_config, CodeSearchTool, ContextBuilder, EchoTool, EventLog,
     HistoryStage, InteractionBroker, LatestStage, ListDirTool, LocalTrashStore, MemoryStage,
-    MockModel, MockStep, PermissionEngine, ReadFileTool, RuntimeConfig, ShellTool, SystemStage,
-    ToolRegistry, TurnDriver, TurnDriverConfig, TurnOutcome, WriteFileTool,
+    MockModel, MockStep, PermissionEngine, ProviderSummarizer, ReadFileTool, RuntimeConfig,
+    ShellTool, Summarizer, SystemStage, ToolRegistry, TurnDriver, TurnDriverConfig, TurnOutcome,
+    WriteFileTool,
 };
 use terminal::TerminalInteractionPort;
 
@@ -102,6 +103,10 @@ async fn run() -> Result<(), KernelError> {
         },
     );
 
+    let driver = match build_summarizer(&config)? {
+        Some(summarizer) => driver.with_summarizer(summarizer),
+        None => driver,
+    };
     let driver = match &args.acceptance {
         Some(path) => driver.with_acceptance(acceptance::load(path)?, 2),
         None => driver,
@@ -188,6 +193,20 @@ fn print_outcome(config: &RuntimeConfig, events: &EventLog, outcome: &TurnOutcom
     {
         println!("history: detail={detail} digest={digest} records={records}");
     }
+    if let Some((segment_id, chars)) =
+        events
+            .for_turn(outcome.turn_id)
+            .iter()
+            .rev()
+            .find_map(|record| match &record.event {
+                Event::SegmentSummarized {
+                    segment_id, chars, ..
+                } => Some((*segment_id, *chars)),
+                _ => None,
+            })
+    {
+        println!("summary: segment={segment_id} chars={chars}");
+    }
     println!("answer: {}", outcome.answer.body);
     if outcome.answer.missing {
         println!("notice: the turn ended without an answer; the transcript is kept separately");
@@ -240,6 +259,46 @@ fn done_or_error(outcome: TurnOutcome) -> Result<(), KernelError> {
     }
 }
 
+fn build_openai_provider(
+    config: &RuntimeConfig,
+    max_retries: u32,
+) -> Result<OpenAiProvider, KernelError> {
+    let base_url = config
+        .model_base_url
+        .clone()
+        .unwrap_or_else(|| "https://api.openai.com/v1".to_owned());
+    let api_key_env = config
+        .api_key_env
+        .clone()
+        .unwrap_or_else(|| "OPENAI_API_KEY".to_owned());
+    let api_key = std::env::var(&api_key_env).map_err(|_| {
+        invalid_config(format!(
+            "{api_key_env} is not set. Copy .env.example to .env and fill it locally; never paste keys into the chat."
+        ))
+    })?;
+    if api_key.trim().is_empty() {
+        return Err(invalid_config(format!("{api_key_env} is empty")));
+    }
+    OpenAiProvider::new(OpenAiConfig {
+        base_url,
+        api_key,
+        model: config.model_route.model.clone(),
+        supports_reasoning: config.supports_reasoning,
+        max_retries,
+    })
+    .map_err(|error| invalid_config(error.to_string()))
+}
+
+fn build_summarizer(config: &RuntimeConfig) -> Result<Option<Arc<dyn Summarizer>>, KernelError> {
+    match config.model_route.provider.as_str() {
+        "openai" | "openai-compatible" => {
+            let provider = build_openai_provider(config, 1)?;
+            Ok(Some(Arc::new(ProviderSummarizer::new(provider, 300))))
+        }
+        _ => Ok(None),
+    }
+}
+
 fn build_model(
     config: &RuntimeConfig,
     input: &str,
@@ -255,30 +314,7 @@ fn build_model(
             Ok(HostModel::Mock(model))
         }
         "openai" | "openai-compatible" => {
-            let base_url = config
-                .model_base_url
-                .clone()
-                .unwrap_or_else(|| "https://api.openai.com/v1".to_owned());
-            let api_key_env = config
-                .api_key_env
-                .clone()
-                .unwrap_or_else(|| "OPENAI_API_KEY".to_owned());
-            let api_key = std::env::var(&api_key_env).map_err(|_| {
-                invalid_config(format!(
-                    "{api_key_env} is not set. Copy .env.example to .env and fill it locally; never paste keys into the chat."
-                ))
-            })?;
-            if api_key.trim().is_empty() {
-                return Err(invalid_config(format!("{api_key_env} is empty")));
-            }
-            let provider = OpenAiProvider::new(OpenAiConfig {
-                base_url,
-                api_key,
-                model: config.model_route.model.clone(),
-                supports_reasoning: config.supports_reasoning,
-                max_retries: 2,
-            })
-            .map_err(|error| invalid_config(error.to_string()))?;
+            let provider = build_openai_provider(config, 2)?;
             Ok(HostModel::OpenAi(provider))
         }
         other => Err(invalid_config(format!("unknown model provider `{other}`"))),
