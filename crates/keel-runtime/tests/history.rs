@@ -253,3 +253,44 @@ async fn red_pressure_injects_one_wrap_up() {
         .count();
     assert_eq!(wrap_ups, 1);
 }
+
+#[tokio::test]
+async fn a_topic_change_seals_the_segment() {
+    let harness = harness(4096);
+    let first = harness
+        .driver
+        .run("fix the parser bug", CancelToken::new())
+        .await;
+    assert!(first.is_done());
+
+    let second = harness
+        .driver
+        .run("write a haiku about the sea", CancelToken::new())
+        .await;
+    assert!(second.is_done());
+
+    let sealed = harness
+        .events
+        .for_turn(second.turn_id)
+        .iter()
+        .find_map(|record| match &record.event {
+            Event::SegmentSealed {
+                segment_id, reason, ..
+            } => Some((*segment_id, reason.clone())),
+            _ => None,
+        })
+        .expect("segment seal event");
+    assert_eq!(sealed, (0, "topic".to_owned()));
+
+    let opened = harness
+        .events
+        .for_turn(second.turn_id)
+        .iter()
+        .any(|record| matches!(record.event, Event::SegmentOpened { segment_id: 1, .. }));
+    assert!(opened);
+
+    let requests = harness.requests.lock().unwrap();
+    assert!(requests[1].iter().any(
+        |message| message.role == MessageRole::User && message.content == "fix the parser bug"
+    ));
+}

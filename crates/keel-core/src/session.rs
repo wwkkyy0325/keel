@@ -1,6 +1,18 @@
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use crate::message::{Message, MessageRole};
+
+/// Turns in one segment before the kernel seals it.
+pub const SEGMENT_TURN_CAP: u32 = 12;
+/// Input-to-segment term overlap below this is a topic change.
+pub const TOPIC_OVERLAP_FLOOR: f32 = 0.2;
+
+/// Words ignored when comparing a new input with a segment.
+const STOPWORDS: &[&str] = &[
+    "the", "and", "for", "with", "this", "that", "from", "into", "your", "you", "are", "was",
+    "has", "have", "still", "also", "please", "then", "them", "they",
+];
 
 /// Lifecycle of one topic segment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +67,26 @@ pub struct Segment {
     pub topic: String,
     pub state: SegmentState,
     pub entries: Vec<Entry>,
+    pub turns: u32,
+    pub terms: BTreeSet<String>,
+    pub artifacts: BTreeSet<String>,
+}
+
+/// What `begin_turn` did to the segment list.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SegmentChange {
+    pub sealed: Option<u32>,
+    pub opened: Option<u32>,
+    pub reason: Option<String>,
+}
+
+/// Everything one finished turn contributes to the session.
+pub struct TurnRecord<'a> {
+    pub input: &'a str,
+    pub text: &'a str,
+    pub tools: &'a [ToolSummary],
+    pub artifacts: &'a [String],
+    pub verified: bool,
 }
 
 /// Ordered conversation state for one host session.
@@ -65,6 +97,7 @@ pub struct Segment {
 pub struct Session {
     segments: Vec<Segment>,
     next_segment_id: u32,
+    last_verified: bool,
 }
 
 impl Session {
@@ -72,29 +105,71 @@ impl Session {
         Self::default()
     }
 
-    /// Records a completed turn, opening a segment when none is open.
+    /// Decides the segment boundary for an input before the turn runs.
+    ///
+    /// The kernel seals the open segment when the previous turn passed an
+    /// acceptance plan, when the segment reached its turn cap, or when the
+    /// input neither shares terms with the segment nor names one of its
+    /// artifacts.
+    pub fn begin_turn(&mut self, input: &str) -> SegmentChange {
+        let Some((state, open_id)) = self
+            .segments
+            .last()
+            .map(|segment| (segment.state, segment.id))
+        else {
+            let opened = self.open_segment(input);
+            return SegmentChange {
+                opened: Some(opened),
+                ..SegmentChange::default()
+            };
+        };
+        if state == SegmentState::Sealed {
+            let opened = self.open_segment(input);
+            return SegmentChange {
+                opened: Some(opened),
+                ..SegmentChange::default()
+            };
+        }
+
+        let Some(reason) = self.seal_reason(input) else {
+            return SegmentChange::default();
+        };
+        let sealed = open_id;
+        if let Some(segment) = self.segments.last_mut() {
+            segment.state = SegmentState::Sealed;
+        }
+        let opened = self.open_segment(input);
+        SegmentChange {
+            sealed: Some(sealed),
+            opened: Some(opened),
+            reason: Some(reason),
+        }
+    }
+
+    /// Records a completed turn in the open segment.
     ///
     /// The input is stored even when the turn produced no text, so the next
     /// turn can see what was asked. Tool summaries are appended to the
     /// assistant entry as a compact block.
-    pub fn record_turn(&mut self, input: &str, text: &str, tools: &[ToolSummary]) {
+    pub fn record_turn(&mut self, turn: TurnRecord<'_>) {
         if !matches!(
             self.segments.last().map(|segment| segment.state),
             Some(SegmentState::Open)
         ) {
-            let id = self.next_segment_id;
-            self.next_segment_id = self.next_segment_id.saturating_add(1);
-            self.segments.push(Segment {
-                id,
-                topic: topic_of(input),
-                state: SegmentState::Open,
-                entries: Vec::new(),
-            });
+            self.open_segment(turn.input);
         }
 
         let Some(segment) = self.segments.last_mut() else {
             return;
         };
+        segment.turns = segment.turns.saturating_add(1);
+        segment.terms.extend(terms(turn.input));
+        segment.artifacts.extend(turn.artifacts.iter().cloned());
+        self.last_verified = turn.verified;
+
+        let input = turn.input;
+        let text = turn.text;
+        let tools = turn.tools;
         if !input.trim().is_empty() {
             segment.entries.push(Entry {
                 message: Arc::new(Message::user(input)),
@@ -118,6 +193,48 @@ impl Session {
         }
     }
 
+    fn open_segment(&mut self, input: &str) -> u32 {
+        let id = self.next_segment_id;
+        self.next_segment_id = self.next_segment_id.saturating_add(1);
+        self.segments.push(Segment {
+            id,
+            topic: topic_of(input),
+            state: SegmentState::Open,
+            entries: Vec::new(),
+            turns: 0,
+            terms: terms(input),
+            artifacts: BTreeSet::new(),
+        });
+        id
+    }
+
+    fn seal_reason(&mut self, input: &str) -> Option<String> {
+        let verified = std::mem::take(&mut self.last_verified);
+        if verified {
+            return Some("verified".to_owned());
+        }
+        let segment = self.segments.last()?;
+        if segment.turns >= SEGMENT_TURN_CAP {
+            return Some("size".to_owned());
+        }
+
+        let input_terms = terms(input);
+        let overlap = if input_terms.is_empty() {
+            1.0
+        } else {
+            let hits = input_terms
+                .iter()
+                .filter(|term| segment.terms.contains(*term))
+                .count();
+            hits as f32 / input_terms.len() as f32
+        };
+        let references_artifact = segment.artifacts.iter().any(|path| references(input, path));
+        if overlap < TOPIC_OVERLAP_FLOOR && !references_artifact {
+            return Some("topic".to_owned());
+        }
+        None
+    }
+
     /// Seals the open segment. Returns whether one was sealed.
     pub fn seal_current(&mut self) -> bool {
         let Some(segment) = self.segments.last_mut() else {
@@ -135,8 +252,16 @@ impl Session {
     }
 
     /// Tokens in the most recent turn, used as a growth estimate.
+    ///
+    /// `begin_turn` may have opened an empty segment already, so this looks
+    /// at the newest segment that has entries.
     pub fn last_turn_tokens(&self) -> u32 {
-        let Some(segment) = self.segments.last() else {
+        let Some(segment) = self
+            .segments
+            .iter()
+            .rev()
+            .find(|segment| !segment.entries.is_empty())
+        else {
             return 0;
         };
         let start = segment
@@ -173,14 +298,44 @@ fn topic_of(input: &str) -> String {
     trimmed.chars().take(80).collect()
 }
 
+/// Lowercased words of at least three characters, minus common stopwords.
+fn terms(text: &str) -> BTreeSet<String> {
+    text.split(|character: char| !character.is_alphanumeric())
+        .filter(|token| token.chars().count() >= 3)
+        .map(|token| token.to_lowercase())
+        .filter(|token| !STOPWORDS.contains(&token.as_str()))
+        .collect()
+}
+
+/// Whether the input names a recorded artifact, by full path or file name.
+fn references(input: &str, path: &str) -> bool {
+    if input.contains(path) {
+        return true;
+    }
+    match path.rsplit(['/', '\\']).next() {
+        Some(name) if name.chars().count() >= 3 => input.contains(name),
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn record(session: &mut Session, input: &str, text: &str) {
+        session.record_turn(TurnRecord {
+            input,
+            text,
+            tools: &[],
+            artifacts: &[],
+            verified: false,
+        });
+    }
+
     #[test]
     fn first_turn_opens_a_segment_and_keeps_order() {
         let mut session = Session::new();
-        session.record_turn("fix the parser", "done", &[]);
+        record(&mut session, "fix the parser", "done");
 
         assert_eq!(session.segments().len(), 1);
         let segment = &session.segments()[0];
@@ -199,10 +354,10 @@ mod tests {
     #[test]
     fn sealing_starts_a_new_segment() {
         let mut session = Session::new();
-        session.record_turn("first topic", "ok", &[]);
+        record(&mut session, "first topic", "ok");
         assert!(session.seal_current());
         assert!(!session.seal_current());
-        session.record_turn("second topic", "ok", &[]);
+        record(&mut session, "second topic", "ok");
 
         assert_eq!(session.segments().len(), 2);
         assert_eq!(session.segments()[0].state, SegmentState::Sealed);
@@ -213,7 +368,7 @@ mod tests {
     #[test]
     fn a_turn_without_text_still_records_the_input() {
         let mut session = Session::new();
-        session.record_turn("unanswered", "", &[]);
+        record(&mut session, "unanswered", "");
 
         let history = session.history();
         assert_eq!(history.len(), 1);
@@ -224,7 +379,7 @@ mod tests {
     fn topic_keeps_the_original_language_and_is_bounded() {
         let mut session = Session::new();
         let long = "修复解析器".repeat(40);
-        session.record_turn(&long, "done", &[]);
+        record(&mut session, &long, "done");
 
         let topic = &session.segments()[0].topic;
         assert!(topic.starts_with("修复解析器"));
@@ -246,7 +401,13 @@ mod tool_summary_tests {
             status: "ok".to_owned(),
             output: "line one\nline two".to_owned(),
         };
-        session.record_turn("read it", "it parses", &[summary]);
+        session.record_turn(TurnRecord {
+            input: "read it",
+            text: "it parses",
+            tools: &[summary],
+            artifacts: &[],
+            verified: false,
+        });
 
         let history = session.history();
         assert_eq!(history.len(), 2);
@@ -256,5 +417,93 @@ mod tool_summary_tests {
             .content
             .contains("- read_file path=src/lib.rs -> ok"));
         assert!(history[1].content.contains("  line one"));
+    }
+}
+
+#[cfg(test)]
+mod segmentation_tests {
+    use super::*;
+
+    fn record(session: &mut Session, input: &str) {
+        session.record_turn(TurnRecord {
+            input,
+            text: "done",
+            tools: &[],
+            artifacts: &[],
+            verified: false,
+        });
+    }
+
+    #[test]
+    fn a_new_topic_seals_the_segment() {
+        let mut session = Session::new();
+        record(&mut session, "fix the parser bug");
+
+        let change = session.begin_turn("write a haiku about the sea");
+
+        assert_eq!(change.sealed, Some(0));
+        assert_eq!(change.reason.as_deref(), Some("topic"));
+        assert_eq!(session.segments().len(), 2);
+        assert_eq!(session.segments()[0].state, SegmentState::Sealed);
+        assert_eq!(session.segments()[1].state, SegmentState::Open);
+    }
+
+    #[test]
+    fn a_follow_up_keeps_the_segment() {
+        let mut session = Session::new();
+        record(&mut session, "fix the parser bug");
+
+        let change = session.begin_turn("the parser bug is still there");
+
+        assert_eq!(change, SegmentChange::default());
+        assert_eq!(session.segments().len(), 1);
+    }
+
+    #[test]
+    fn an_artifact_reference_keeps_the_segment() {
+        let mut session = Session::new();
+        session.record_turn(TurnRecord {
+            input: "fix the parser",
+            text: "done",
+            tools: &[],
+            artifacts: &["src/widget.rs".to_owned()],
+            verified: false,
+        });
+
+        let change = session.begin_turn("open src/widget.rs");
+
+        assert!(change.sealed.is_none());
+        assert_eq!(session.segments().len(), 1);
+    }
+
+    #[test]
+    fn a_verified_turn_seals_before_the_next_turn() {
+        let mut session = Session::new();
+        session.record_turn(TurnRecord {
+            input: "fix the parser",
+            text: "done",
+            tools: &[],
+            artifacts: &[],
+            verified: true,
+        });
+
+        let change = session.begin_turn("fix the parser again");
+
+        assert_eq!(change.reason.as_deref(), Some("verified"));
+        assert_eq!(change.sealed, Some(0));
+    }
+
+    #[test]
+    fn the_turn_cap_seals_the_segment() {
+        let mut session = Session::new();
+        for _ in 0..SEGMENT_TURN_CAP {
+            session.begin_turn("keep going");
+            record(&mut session, "keep going");
+        }
+
+        let change = session.begin_turn("keep going again");
+
+        assert_eq!(change.reason.as_deref(), Some("size"));
+        assert_eq!(change.sealed, Some(0));
     }
 }

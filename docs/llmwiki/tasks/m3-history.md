@@ -37,9 +37,11 @@ one at a time. Summarization is blocked on
       truncates to 2000 + 1000 characters, spills once, and is readable through
       `read_file`; arguments are clipped at 200 characters; args and output are
       redacted before recording or spilling
-- [ ] 8. Kernel segmentation heuristic — verify: transcript fixtures seal on
-      topic change, verified completion, and size cap, and do not seal on a
-      follow-up that references the same artifact
+- [x] 8. Kernel segmentation heuristic — verify: fixtures seal on topic change,
+      verified completion and the 12-turn cap, and keep the segment when a
+      follow-up shares terms or names a recorded artifact. The driver emits
+      `SegmentOpened` and `SegmentSealed` with the reason; history still spans
+      sealed segments until records land in step 9.
 - [ ] 9. L2 turn digest and L3 segment record with the sufficiency gate —
       verify: a record missing a required field keeps raw entries and emits
       `CompressionSkipped`; a complete record replaces them

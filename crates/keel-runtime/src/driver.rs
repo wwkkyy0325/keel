@@ -9,7 +9,7 @@ use keel_core::{
     CancelToken, CommitCtx, CommitDecision, ErrorCode, Event, EventSink, InteractionId,
     InteractionRequest, InteractionResponse, KernelError, Message, ModelChunk, ModelError,
     ModelProvider, ModelRequest, ModelRole, OnTimeout, Policy, ReasoningLevel, SecretKind, Session,
-    ToolArgs, ToolOutcome, TurnEvent, TurnState, VerificationMode, VerificationReport,
+    ToolArgs, ToolOutcome, TurnEvent, TurnRecord, TurnState, VerificationMode, VerificationReport,
 };
 
 use crate::context::ContextBuilder;
@@ -251,10 +251,27 @@ impl<M: ModelProvider> TurnDriver<M> {
         stats.answer.missing = stats.answer.body.trim().is_empty();
 
         if state != TurnState::Cancelled {
+            let artifacts: Vec<String> = stats
+                .answer
+                .changes
+                .iter()
+                .map(|change| change.path.clone())
+                .collect();
+            let verified = stats
+                .verification
+                .as_ref()
+                .map(|report| report.passed())
+                .unwrap_or(false);
             self.session
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .record_turn(input, &stats.answer.body, &stats.tool_summaries);
+                .record_turn(TurnRecord {
+                    input,
+                    text: &stats.answer.body,
+                    tools: &stats.tool_summaries,
+                    artifacts: &artifacts,
+                    verified,
+                });
         }
 
         TurnOutcome {
@@ -310,10 +327,30 @@ impl<M: ModelProvider> TurnDriver<M> {
 
         let recipe = self.policy.context_recipe();
         let (history, session_growth) = {
-            let session = self
+            let mut session = self
                 .session
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let change = session.begin_turn(input);
+            if let Some(segment_id) = change.sealed {
+                self.events.append(Event::SegmentSealed {
+                    turn_id,
+                    segment_id,
+                    reason: change.reason.unwrap_or_default(),
+                });
+            }
+            if let Some(segment_id) = change.opened {
+                let topic = session
+                    .segments()
+                    .last()
+                    .map(|segment| segment.topic.clone())
+                    .unwrap_or_default();
+                self.events.append(Event::SegmentOpened {
+                    turn_id,
+                    segment_id,
+                    topic,
+                });
+            }
             (session.history(), session.last_turn_tokens())
         };
         let used = estimate_tokens(&self.system_prompt)

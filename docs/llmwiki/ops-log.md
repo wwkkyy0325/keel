@@ -464,3 +464,16 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 - Added `MockStep::TextAndToolCall` for narration-plus-tool rounds.
 - Verification: 167 tests; the 200 kB read spills and is re-readable through
   `read_file`; fmt and clippy clean.
+
+### M3 kernel segmentation
+
+- Added `SegmentChange` and `TurnRecord`; segments now carry turns, terms and
+  artifacts. `begin_turn` seals on verified completion, the 12-turn cap, or a
+  topic change, and opens a new segment.
+- Term signature: alphanumeric tokens of at least three characters, lowercased,
+  minus a small stopword list. Artifact reference matches the full path or the
+  file name.
+- The driver calls `begin_turn` before building context and emits
+  `SegmentOpened` / `SegmentSealed`.
+- Fixed `last_turn_tokens` to skip the empty segment opened by `begin_turn`.
+- Verification: 173 tests; fmt and clippy clean.

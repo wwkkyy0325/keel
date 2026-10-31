@@ -44,7 +44,7 @@ pub use policy::{
     ModelRoute, Policy, PromotionMode, ReasoningLevel, VerificationMode,
 };
 pub use secret::{detect_secret, redact_secrets, SecretKind};
-pub use session::{Entry, Segment, SegmentState, Session, ToolSummary};
+pub use session::{Entry, Segment, SegmentChange, SegmentState, Session, ToolSummary, TurnRecord};
 pub use state::{TurnEvent, TurnState};
 pub use tool::{
     ArgValue, ParamKind, ParamSpec, RiskLevel, Tool, ToolArgs, ToolCtx, ToolOutcome, ToolResult,

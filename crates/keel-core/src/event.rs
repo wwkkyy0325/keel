@@ -68,6 +68,16 @@ pub enum Event {
     FinalCallForced {
         turn_id: TurnId,
     },
+    SegmentOpened {
+        turn_id: TurnId,
+        segment_id: u32,
+        topic: String,
+    },
+    SegmentSealed {
+        turn_id: TurnId,
+        segment_id: u32,
+        reason: String,
+    },
     ModelStarted {
         turn_id: TurnId,
         provider: String,
@@ -138,6 +148,8 @@ impl Event {
             | Self::HistoryAssembled { turn_id, .. }
             | Self::WrapUpInjected { turn_id, .. }
             | Self::FinalCallForced { turn_id, .. }
+            | Self::SegmentOpened { turn_id, .. }
+            | Self::SegmentSealed { turn_id, .. }
             | Self::ModelStarted { turn_id, .. }
             | Self::ModelFinished { turn_id, .. }
             | Self::ToolStarted { turn_id, .. }
@@ -163,6 +175,8 @@ impl Event {
             Self::HistoryAssembled { .. } => "history_assembled",
             Self::WrapUpInjected { .. } => "wrap_up_injected",
             Self::FinalCallForced { .. } => "final_call_forced",
+            Self::SegmentOpened { .. } => "segment_opened",
+            Self::SegmentSealed { .. } => "segment_sealed",
             Self::ModelStarted { .. } => "model_started",
             Self::ModelFinished { .. } => "model_finished",
             Self::ToolStarted { .. } => "tool_started",

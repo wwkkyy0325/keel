@@ -423,3 +423,16 @@
   the full output.
 - Verification: 167 tests; a 200 kB `read_file` result truncates, spills, and is
   readable back through `read_file`.
+
+### M3 kernel segmentation
+
+- `Session::begin_turn` decides boundaries before a turn runs: it seals the
+  open segment when the previous turn passed an acceptance plan, when the
+  segment reached 12 turns, or when the input's term overlap is below 0.2 and
+  it names none of the segment's artifacts.
+- Segments track their turn count, term signature and artifact paths.
+- The driver emits `SegmentOpened` and `SegmentSealed` with the reason.
+- `last_turn_tokens` now looks at the newest non-empty segment, because
+  `begin_turn` may have opened an empty one.
+- Verification: 173 tests; topic change, follow-up, artifact reference,
+  verified completion and the cap are covered in unit and integration tests.
