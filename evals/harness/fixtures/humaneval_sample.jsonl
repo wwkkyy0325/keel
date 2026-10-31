@@ -1,0 +1,1 @@
+{"task_id":"HumanEval/999","prompt":"def add(a, b):\n    \"\"\"Return the sum of two integers.\"\"\"\n","canonical_solution":"    return a + b\n","test":"def check(candidate):\n    assert candidate(1, 2) == 3\n    assert candidate(-1, 1) == 0\n","entry_point":"add"}

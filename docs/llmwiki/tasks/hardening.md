@@ -11,9 +11,10 @@ failures observable before memory and compaction change the system.
 - [x] 3. Self-authored agentic cases: multi-file, permission, verification
       failure, context pressure and tool errors — verify: suite report
       (10/10 passed on 2026-11-02)
-- [ ] 4. Public permissive cases (HumanEval+/MBPP+) as code-correctness smoke
+- [x] 4. Public permissive cases (HumanEval+/MBPP+) as code-correctness smoke
       tests, downloaded locally and never vendored — verify: importer and
-      provenance
+      provenance (local-file path tested; the HF datasets server was not
+      reachable from this environment)
 - [x] 5. Fault injection: provider 429/500 retry path, stream cut, model-call
       bound, tool repeat, verification failure, context overflow — verify:
       provider and driver tests
@@ -34,6 +35,9 @@ failures observable before memory and compaction change the system.
 - One model stream hung until the 180 s turn deadline. Fixed at two levels:
   transient HTTP/connect/timeout failures are retried before streaming, and
   each model call is bounded to 120 s.
+- The Hugging Face datasets server was unreachable here, so the HumanEval+
+  importer was validated with a local fixture. The `--download` path is
+  implemented but not exercised in this environment.
 
 ## Constraints
 

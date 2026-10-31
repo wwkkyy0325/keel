@@ -31,6 +31,8 @@ Thumbs.db
 evals/reports/raw/
 evals/reports/runs/*.json
 !evals/reports/runs/summary-*.json
+evals/data/
+evals/cases/public/
 
 # Python bytecode
 __pycache__/

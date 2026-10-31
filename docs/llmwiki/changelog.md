@@ -267,3 +267,14 @@
 - Added a local-server test where two 500 responses are followed by a healthy
   stream.
 - Verification: 133 tests; clippy, fmt and `cargo deny check`.
+
+### Public dataset importer
+
+- Added `evals/harness/import_humaneval.py` for local JSONL/JSON or the
+  Hugging Face rows API. It creates `setup/`, `reference/`, hidden test runner,
+  `verify.sh` and `meta.toml` under a gitignored `evals/cases/public/`.
+- Validated the importer with `evals/harness/fixtures/humaneval_sample.jsonl`:
+  the setup fails and the reference passes.
+- The datasets server was unreachable from this environment, so the download
+  path remains untested here; the local-file path works.
+- Verification: importer fixture; no Rust changes.

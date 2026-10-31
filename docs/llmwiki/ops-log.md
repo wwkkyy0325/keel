@@ -297,3 +297,13 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 - Verification: 133 tests; clippy, fmt and `cargo deny check`; real DeepSeek
   smoke returned `pong`.
 - Commit: `fix: retry transient provider failures and bound model calls`.
+
+### Public dataset importer
+
+- Added `evals/harness/import_humaneval.py` for local JSONL/JSON or the
+  Hugging Face rows API; output is gitignored.
+- Generated cases include a function skeleton, reference solution, hidden
+  runner, `verify.sh` and `meta.toml`.
+- Validated with a local fixture: setup fails, reference passes.
+- `--download` is implemented but the datasets server was unreachable here.
+- Commit: `feat: add HumanEval+ importer`.
