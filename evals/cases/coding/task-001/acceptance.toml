@@ -1,0 +1,8 @@
+[[items]]
+id = "empty-mean"
+description = "mean([]) returns 0.0 and non-empty means are unchanged"
+required = true
+kind = "command"
+program = "python"
+args = ["-c", "import calc; assert calc.mean([]) == 0.0; assert calc.mean([2, 4]) == 3.0"]
+expected_exit = 0

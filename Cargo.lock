@@ -546,7 +546,9 @@ dependencies = [
  "keel-core",
  "keel-model-openai",
  "keel-runtime",
+ "serde",
  "tokio",
+ "toml",
 ]
 
 [[package]]
@@ -570,11 +572,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "keel-policy"
+version = "0.1.0"
+dependencies = [
+ "keel-core",
+ "serde",
+ "toml",
+]
+
+[[package]]
 name = "keel-runtime"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "keel-core",
+ "keel-policy",
  "serde",
  "sha2",
  "tempfile",

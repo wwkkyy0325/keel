@@ -20,11 +20,6 @@ path", not "never".
 - **Base profile / `default.toml` / `extends`.** Variant profiles are standalone
   and `extends` is rejected. Trigger: a third profile, or the same setting must
   change in three files. Until then the duplication is explicit and auditable.
-- **`keel-policy` crate split.** Profile parsing and `RuntimeConfig` remain in
-  `keel-runtime`. Validation depends on the runtime tool registry and context
-  builder, and there is one consumer. Trigger: a second host or middle-layer
-  consumer, or the schema grows enough that the module becomes hard to audit.
-  The M2 roadmap item is treated as functionality, not a crate boundary.
 - **Prompt systemization.** Prompts are minimal placeholders. Trigger: a real
   eval failure caused by missing instructions. Do not write a large persona
   before the first end-to-end run.

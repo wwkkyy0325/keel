@@ -23,6 +23,7 @@ pub enum ErrorCode {
     InvalidTransition,
     InvalidConfig,
     Unsupported,
+    VerificationFailed,
     Internal,
 }
 
@@ -43,6 +44,7 @@ impl ErrorCode {
             Self::InvalidTransition => "invalid_transition",
             Self::InvalidConfig => "invalid_config",
             Self::Unsupported => "unsupported",
+            Self::VerificationFailed => "verification_failed",
             Self::Internal => "internal",
         }
     }
@@ -121,6 +123,8 @@ pub enum KernelError {
     InvalidConfig { message: String },
     #[error("unsupported feature: {feature}")]
     Unsupported { feature: String },
+    #[error("verification failed: {failures:?}")]
+    VerificationFailed { failures: Vec<String> },
     #[error("i/o failure: {message}")]
     Io { message: String },
     #[error("internal failure: {message}")]
@@ -139,6 +143,7 @@ impl KernelError {
             Self::InvalidProfile { .. } => ErrorCode::InvalidProfile,
             Self::InvalidConfig { .. } => ErrorCode::InvalidConfig,
             Self::Unsupported { .. } => ErrorCode::Unsupported,
+            Self::VerificationFailed { .. } => ErrorCode::VerificationFailed,
             Self::Io { .. } => ErrorCode::Io,
             Self::Internal { .. } => ErrorCode::Internal,
         }
@@ -155,6 +160,7 @@ impl KernelError {
             | Self::InvalidProfile { .. }
             | Self::InvalidConfig { .. }
             | Self::Unsupported { .. }
+            | Self::VerificationFailed { .. }
             | Self::Internal { .. } => false,
         }
     }

@@ -227,3 +227,17 @@
   echoed (including an empty string) for thinking-mode providers.
 - Real task-001 stayed at Low, passed 4/4, used 15361 tokens in 10702 ms.
 - Verification: 129 tests; clippy, fmt and `cargo deny check`.
+
+### Acceptance verification and policy split
+
+- The driver now runs host-provided acceptance items at `Verify`. Required
+  failures escalate reasoning, feed evidence back, and reprompt up to a bound;
+  exhausted retries end in `verification_failed`. `VerificationFinished` events
+  and `TurnOutcome.verification` carry the evidence.
+- The CLI accepts `--acceptance FILE` with a TOML checklist; `task-001` has a
+  real command check that imports the workspace `calc.py`.
+- Split profile parsing, `RuntimeConfig` and `TurnLimits` into the new
+  `crates/keel-policy`. Host capability validation stays in `keel-runtime`,
+  which re-exports the policy API.
+- Real task-001: kernel acceptance passed; external hidden tests 4/4.
+- Verification: 131 tests; clippy, fmt and `cargo deny check`.

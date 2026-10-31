@@ -4,9 +4,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use keel_core::{
-    ArgValue, CancelToken, CommitCtx, CommitDecision, ContextRecipe, ErrorCode, Event,
-    MemoryPolicy, ModelError, ModelRole, ModelRoute, PermissionLevel, Policy, ReasoningLevel,
-    SecretKind, ToolArgs, ToolSchema, TurnId, TurnState, VerificationMode,
+    AcceptanceItem, ArgValue, CancelToken, CommitCtx, CommitDecision, ContextRecipe, ErrorCode,
+    Event, MemoryPolicy, ModelError, ModelRole, ModelRoute, PermissionLevel, Policy,
+    ReasoningLevel, SecretKind, ToolArgs, ToolSchema, TurnId, TurnState, VerificationMode,
+    VerifySpec,
 };
 use keel_runtime::{
     DeferAllInteractionPort, EventLog, InteractionBroker, MockModel, MockStep, PermissionEngine,
@@ -405,6 +406,103 @@ async fn non_commit_decision_ends_in_error() {
     assert_eq!(
         outcome.error.as_ref().map(|error| error.code()),
         Some(ErrorCode::Unsupported)
+    );
+}
+
+#[tokio::test]
+async fn acceptance_pass_reaches_done_with_evidence() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&[], 0, PermissionLevel::WorkspaceAuto);
+    let driver = common::build_driver(
+        MockModel::new(vec![MockStep::Text("done".to_owned())]),
+        config,
+        events.clone(),
+        dir.path(),
+        common::test_limits(),
+    )
+    .with_acceptance(
+        vec![AcceptanceItem {
+            id: "sum".to_owned(),
+            description: "2 + 2".to_owned(),
+            required: true,
+            verify: VerifySpec::Compute {
+                expression: "2 + 2".to_owned(),
+                expected: "4".to_owned(),
+            },
+        }],
+        0,
+    );
+
+    let outcome = driver.run("try", CancelToken::new()).await;
+
+    assert!(outcome.is_done());
+    assert!(outcome
+        .verification
+        .as_ref()
+        .is_some_and(|report| report.passed()));
+    assert!(events
+        .for_turn(outcome.turn_id)
+        .into_iter()
+        .any(|record| matches!(
+            record.event,
+            Event::VerificationFinished { passed: true, .. }
+        )));
+}
+
+#[tokio::test]
+async fn acceptance_failure_reprompts_then_ends_in_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&[], 0, PermissionLevel::WorkspaceAuto);
+    let driver = common::build_driver(
+        MockModel::new(vec![
+            MockStep::Text("first".to_owned()),
+            MockStep::Text("second".to_owned()),
+        ]),
+        config,
+        events.clone(),
+        dir.path(),
+        common::test_limits(),
+    )
+    .with_acceptance(
+        vec![AcceptanceItem {
+            id: "wrong".to_owned(),
+            description: "always fails".to_owned(),
+            required: true,
+            verify: VerifySpec::Compute {
+                expression: "1 + 1".to_owned(),
+                expected: "3".to_owned(),
+            },
+        }],
+        1,
+    );
+
+    let outcome = driver.run("try", CancelToken::new()).await;
+
+    assert_eq!(outcome.state, TurnState::Error);
+    assert_eq!(
+        outcome.error.as_ref().map(|error| error.code()),
+        Some(ErrorCode::VerificationFailed)
+    );
+    assert!(outcome
+        .verification
+        .as_ref()
+        .is_some_and(|report| !report.passed()));
+    assert!(events
+        .for_turn(outcome.turn_id)
+        .into_iter()
+        .any(|record| matches!(
+            record.event,
+            Event::ReasoningEscalated { ref reason, .. } if reason == "verification failed"
+        )));
+    assert_eq!(
+        events
+            .for_turn(outcome.turn_id)
+            .into_iter()
+            .filter(|record| matches!(record.event, Event::VerificationFinished { .. }))
+            .count(),
+        2
     );
 }
 

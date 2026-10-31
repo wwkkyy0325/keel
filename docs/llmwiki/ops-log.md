@@ -261,3 +261,18 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 - Real task-001 stayed Low and passed 4/4: 15361 tokens, 10702 ms.
 - Verification: 129 tests; clippy, fmt and `cargo deny check`.
 - Commit: `feat: add adaptive reasoning controller`.
+
+### Acceptance verification and policy split
+
+- Driver runs host acceptance items at `Verify`; required failures escalate
+  reasoning, feed evidence back and reprompt up to the configured bound, then
+  end in `verification_failed`.
+- Added `VerificationFinished` events and `TurnOutcome.verification`.
+- CLI `--acceptance FILE` loads a TOML checklist; `task-001` uses a real
+  `python -c` command check against the workspace.
+- Created `crates/keel-policy` for profile parsing, `RuntimeConfig` and
+  `TurnLimits`; runtime validation stays in `keel-runtime`, which re-exports
+  the policy API.
+- Real task-001: kernel acceptance passed; hidden tests 4/4.
+- Verification: 131 tests; clippy, fmt and `cargo deny check`.
+- Commit: `feat: wire acceptance verification and split keel-policy`.

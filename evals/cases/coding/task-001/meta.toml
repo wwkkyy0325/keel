@@ -4,4 +4,5 @@ kind = "coding"
 timeout_seconds = 300
 profile = "variants/coding/profile.deepseek.toml"
 model = "deepseek-flash"
+acceptance = "acceptance.toml"
 seeds = [1]

@@ -22,6 +22,10 @@ The second run captured usage and latency:
 - wall clock: 5916 ms
 - events: 45
 
+A later run also passed kernel-side acceptance:
+`acceptance.toml` ran `python -c` in the workspace with exit code 0, and the
+turn printed `verification: passed`.
+
 ## Agent behavior
 
 - The model used workspace tools to inspect and write the file.

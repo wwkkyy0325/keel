@@ -19,7 +19,8 @@ immutable `RuntimeConfig`; plugins add optional capabilities.
 | Member | Responsibility |
 |---|---|
 | `crates/keel-core` | IDs, messages, tool protocol, model wire, policy types, events, errors |
-| `crates/keel-runtime` | FSM, turn driver, context builder, dispatch, policy module, permission module, mock model |
+| `crates/keel-policy` | Profile schema, resolution, `RuntimeConfig`, `TurnLimits` |
+| `crates/keel-runtime` | FSM, turn driver, context builder, dispatch, permission module, verifier, mock model |
 | `hosts/keel-cli` | Loads a profile and runs one mock turn |
 
 M1 has no network, no real model, no plugin lifecycle, no memory backend and no

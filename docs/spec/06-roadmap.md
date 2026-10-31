@@ -37,7 +37,7 @@ no network or real model.
 ## M2 — One real provider and coding profile (1-2 weeks)
 
 - [ ] OpenAI-compatible streaming provider.
-- [ ] `keel-policy`: profile schema, resolution, `RuntimeConfig`.
+- [x] `keel-policy`: profile schema, resolution, `RuntimeConfig`.
 - [ ] Coding profile + 6 tools.
 - [ ] One coding case passes `verify.sh`.
 - [ ] Kernel overhead benchmark recorded.

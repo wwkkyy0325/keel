@@ -14,8 +14,8 @@ escalates on real failure signals.
 - [x] 3. Remove fixed `reasoning_effort` from profiles; the provider sends the
       kernel level only when `supports_reasoning` is true — verify: profile and
       provider tests
-- [ ] 4. Wire the required verifier failure into `Verify`; repeated tool failure
-      and no-progress are already wired — verify: driver tests
+- [x] 4. Wire the required verifier failure into `Verify`; repeated tool failure
+      and no-progress are also wired — verify: driver tests
 - [x] 5. Real task-001 comparison: after refining failure signals, the turn
       stayed at Low, used 15361 tokens in 10702 ms, and passed 4/4 — verify:
       eval report

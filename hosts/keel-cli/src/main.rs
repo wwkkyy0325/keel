@@ -1,3 +1,4 @@
+mod acceptance;
 mod terminal;
 
 use std::path::PathBuf;
@@ -50,7 +51,7 @@ async fn main() -> ExitCode {
 
 async fn run() -> Result<(), KernelError> {
     dotenvy::dotenv().ok();
-    let (profile_path, input, workspace) = parse_args()?;
+    let (profile_path, input, workspace, acceptance_path) = parse_args()?;
     let config = load_profile(&profile_path)?;
 
     let permissions = Arc::new(PermissionEngine::new(workspace, config.permission_level)?);
@@ -95,6 +96,10 @@ async fn run() -> Result<(), KernelError> {
         },
     );
 
+    let driver = match acceptance_path {
+        Some(path) => driver.with_acceptance(acceptance::load(&path)?, 2),
+        None => driver,
+    };
     let outcome = driver.run(&input, CancelToken::new()).await;
     println!("profile: {}", config.profile_name);
     println!("turn: {}", outcome.turn_id.get());
@@ -112,6 +117,13 @@ async fn run() -> Result<(), KernelError> {
     );
     println!("duration_ms: {}", outcome.duration_ms);
     println!("reasoning: {}", outcome.reasoning_level.as_str());
+    if let Some(report) = &outcome.verification {
+        println!(
+            "verification: {} required_failed={:?}",
+            if report.passed() { "passed" } else { "failed" },
+            report.required_failed
+        );
+    }
     if let Some(kind) = outcome.secret_warning {
         println!(
             "notice: this turn's input matched a secret pattern ({}); it was not blocked. If it is real, rotate it and keep credentials in .env.",
@@ -163,9 +175,10 @@ fn build_model(config: &RuntimeConfig, input: &str) -> Result<HostModel, KernelE
     }
 }
 
-fn parse_args() -> Result<(PathBuf, String, PathBuf), KernelError> {
+fn parse_args() -> Result<(PathBuf, String, PathBuf, Option<PathBuf>), KernelError> {
     let mut profile = PathBuf::from("variants/coding/profile.toml");
     let mut input = String::from("hello from keel");
+    let mut acceptance = None;
     let mut workspace = std::env::current_dir().map_err(|error| KernelError::Io {
         message: error.to_string(),
     })?;
@@ -190,13 +203,19 @@ fn parse_args() -> Result<(PathBuf, String, PathBuf), KernelError> {
                         .ok_or_else(|| invalid_config("missing value for `--workspace`"))?,
                 );
             }
+            "--acceptance" => {
+                acceptance =
+                    Some(PathBuf::from(args.next().ok_or_else(|| {
+                        invalid_config("missing value for `--acceptance`")
+                    })?));
+            }
             other => {
                 return Err(invalid_config(format!("unknown argument `{other}`")));
             }
         }
     }
 
-    Ok((profile, input, workspace))
+    Ok((profile, input, workspace, acceptance))
 }
 
 fn script_for(config: &RuntimeConfig, input: &str) -> Vec<MockStep> {

@@ -91,7 +91,9 @@ not by the model's own claim.
 - [ ] Interactive terminal run where the agent executes its own tests; the
       non-terminal run defers shell approval, so the external verifier is the
       evidence.
-- [ ] Driver-side acceptance verification is wired into `Verify` (ADR 0004).
-- [x] `keel-policy` crate split waived: profile/policy live in `keel-runtime`
-      while there is one consumer and validation depends on the runtime
-      registry/context. Revisit when a second consumer appears.
+- [x] Driver-side acceptance verification is wired into `Verify` (ADR 0004):
+      required failures escalate reasoning, feed evidence back, and reprompt up
+      to a bound before ending in `verification_failed`.
+- [x] `keel-policy` crate split: profile parsing, `RuntimeConfig` and
+      `TurnLimits` now live in `crates/keel-policy`; host capability validation
+      stays in `keel-runtime`.

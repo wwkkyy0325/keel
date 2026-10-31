@@ -26,6 +26,12 @@ pub enum Event {
         to: String,
         reason: String,
     },
+    VerificationFinished {
+        turn_id: TurnId,
+        passed: bool,
+        required_failed: Vec<String>,
+        required_unverified: Vec<String>,
+    },
     StateChanged {
         turn_id: TurnId,
         from: TurnState,
@@ -96,6 +102,7 @@ impl Event {
             Self::TurnStarted { turn_id, .. }
             | Self::SecretWarning { turn_id, .. }
             | Self::ReasoningEscalated { turn_id, .. }
+            | Self::VerificationFinished { turn_id, .. }
             | Self::StateChanged { turn_id, .. }
             | Self::ContextBuilt { turn_id, .. }
             | Self::ModelStarted { turn_id, .. }
@@ -116,6 +123,7 @@ impl Event {
             Self::TurnStarted { .. } => "turn_started",
             Self::SecretWarning { .. } => "secret_warning",
             Self::ReasoningEscalated { .. } => "reasoning_escalated",
+            Self::VerificationFinished { .. } => "verification_finished",
             Self::StateChanged { .. } => "state_changed",
             Self::ContextBuilt { .. } => "context_built",
             Self::ModelStarted { .. } => "model_started",

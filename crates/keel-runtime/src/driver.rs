@@ -1,12 +1,14 @@
 use std::collections::BTreeSet;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use keel_core::{
-    detect_secret, BuildCtx, CancelToken, CommitCtx, CommitDecision, ErrorCode, Event,
-    InteractionId, InteractionRequest, InteractionResponse, KernelError, Message, ModelChunk,
-    ModelError, ModelProvider, ModelRequest, ModelRole, OnTimeout, Policy, ReasoningLevel,
-    SecretKind, ToolArgs, ToolOutcome, TurnEvent, TurnState, VerificationMode,
+    detect_secret, AcceptanceItem, BuildCtx, CancelToken, CommitCtx, CommitDecision, ErrorCode,
+    Event, InteractionId, InteractionRequest, InteractionResponse, KernelError, Message,
+    ModelChunk, ModelError, ModelProvider, ModelRequest, ModelRole, OnTimeout, Policy,
+    ReasoningLevel, SecretKind, ToolArgs, ToolOutcome, TurnEvent, TurnState, VerificationMode,
+    VerificationReport,
 };
 
 use crate::context::ContextBuilder;
@@ -15,8 +17,9 @@ use crate::event_log::EventLog;
 use crate::fsm::TurnFsm;
 use crate::interaction::InteractionBroker;
 use crate::permission::PermissionEngine;
-use crate::policy::TurnLimits;
 use crate::registry::ToolRegistry;
+use crate::verification::AcceptanceVerifier;
+use crate::TurnLimits;
 
 /// Host configuration that is not one of the seven policy questions.
 pub struct TurnDriverConfig {
@@ -38,6 +41,13 @@ struct TurnStats {
     consecutive_tool_failures: u32,
     empty_rounds: u32,
     previous_failed_call: Option<(String, ToolArgs)>,
+    verification_reprompts: u32,
+    verification: Option<VerificationReport>,
+}
+
+struct AcceptancePlan {
+    items: Vec<AcceptanceItem>,
+    max_reprompts: u32,
 }
 
 /// Terminal result of one turn.
@@ -57,6 +67,8 @@ pub struct TurnOutcome {
     pub duration_ms: u64,
     /// Final kernel-owned reasoning level for this turn.
     pub reasoning_level: ReasoningLevel,
+    /// Last acceptance report, when the host supplied a checklist.
+    pub verification: Option<VerificationReport>,
 }
 
 impl TurnOutcome {
@@ -81,6 +93,8 @@ pub struct TurnDriver<M> {
     system_prompt: String,
     max_output_tokens: u32,
     limits: TurnLimits,
+    workspace_root: PathBuf,
+    acceptance: Option<AcceptancePlan>,
     next_turn: AtomicU64,
 }
 
@@ -110,8 +124,19 @@ impl<M: ModelProvider> TurnDriver<M> {
             system_prompt: config.system_prompt,
             max_output_tokens: config.max_output_tokens,
             limits: config.limits,
+            workspace_root: config.permissions.root().to_path_buf(),
+            acceptance: None,
             next_turn: AtomicU64::new(1),
         }
+    }
+
+    /// Enables host-provided acceptance checks at the `Verify` phase.
+    pub fn with_acceptance(mut self, items: Vec<AcceptanceItem>, max_reprompts: u32) -> Self {
+        self.acceptance = Some(AcceptancePlan {
+            items,
+            max_reprompts,
+        });
+        self
     }
 
     /// Runs one turn. The returned state is always terminal.
@@ -186,6 +211,7 @@ impl<M: ModelProvider> TurnDriver<M> {
             usage: stats.usage,
             duration_ms: started.elapsed().as_millis() as u64,
             reasoning_level: stats.reasoning,
+            verification: stats.verification,
         }
     }
 
@@ -576,14 +602,50 @@ impl<M: ModelProvider> TurnDriver<M> {
             }
 
             self.step(fsm, turn_id, TurnEvent::DoneSignal)?;
-            match self.policy.verification_mode() {
-                VerificationMode::None => {
+            if let Some(plan) = &self.acceptance {
+                let verifier = AcceptanceVerifier::new(&self.workspace_root);
+                let report = verifier.verify(&plan.items).await;
+                let failures: Vec<String> = report
+                    .required_failed
+                    .iter()
+                    .chain(report.required_unverified.iter())
+                    .cloned()
+                    .collect();
+                self.events.append(Event::VerificationFinished {
+                    turn_id,
+                    passed: report.passed(),
+                    required_failed: report.required_failed.clone(),
+                    required_unverified: report.required_unverified.clone(),
+                });
+                stats.verification = Some(report.clone());
+                if report.passed() {
                     self.step(fsm, turn_id, TurnEvent::DoneSignal)?;
+                } else {
+                    self.escalate_reasoning(turn_id, stats, "verification failed");
+                    if stats.verification_reprompts < plan.max_reprompts {
+                        stats.verification_reprompts =
+                            stats.verification_reprompts.saturating_add(1);
+                        self.step(fsm, turn_id, TurnEvent::UnverifiedHard)?;
+                        messages.push(Arc::new(Message::system(format!(
+                            "[verification] required items did not pass: {}. Fix the workspace and report the real result; do not claim a check ran unless it did.",
+                            failures.join(", ")
+                        ))));
+                        self.step(fsm, turn_id, TurnEvent::Ready)?;
+                        continue 'turn;
+                    }
+                    self.step(fsm, turn_id, TurnEvent::UnverifiedHard)?;
+                    return Err(KernelError::VerificationFailed { failures });
                 }
-                other => {
-                    return Err(KernelError::Unsupported {
-                        feature: format!("verification mode {other:?}"),
-                    });
+            } else {
+                match self.policy.verification_mode() {
+                    VerificationMode::None => {
+                        self.step(fsm, turn_id, TurnEvent::DoneSignal)?;
+                    }
+                    other => {
+                        return Err(KernelError::Unsupported {
+                            feature: format!("verification mode {other:?}"),
+                        });
+                    }
                 }
             }
             break 'turn;
