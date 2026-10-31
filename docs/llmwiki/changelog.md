@@ -710,7 +710,13 @@
   array. The same 8k arm had zero summary failures after the fix.
 - The 14B still hallucinated the Marlin config path at every working-set size,
   even when recall supplied it. Model quality, not context, is the limit.
-  Report: `evals/reports/2026-11-03-local-model-context.md`.
+- Follow-up on Gemma 4 26B: 24/24 at 8k and 16k, zero overflow and zero summary
+  failures. At 8k it answered `config/marlin.toml` from recall but missed the
+  paraphrased pasta probe; at 16k both probes were correct because the memo
+  retained `aglio e olio`. A novel chapter through the same endpoint used six
+  model calls, wrote 1,184 CJK characters, updated the state and closed task 1,
+  so domain tools work locally.
+- Report: `evals/reports/2026-11-03-local-model-context.md`.
 - Verification: 234 tests; fmt and clippy clean.
 
 ### Kernel affordances in personas

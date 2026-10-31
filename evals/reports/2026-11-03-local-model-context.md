@@ -70,20 +70,72 @@ when the recall block carried the correct string. More context did not improve
 correctness. This is a model limitation, not a context or kernel result; the
 same probe with DeepSeek answered `config/marlin.toml` from recall.
 
+## Follow-up: Gemma 4 26B
+
+The same host also has `gemma4-26b-heretic-i1-Q3_K_L.gguf`. It was served at
+32k with `-ngl 99 --n-cpu-moe 4 -fa on --jinja -rea off
+--reasoning-format deepseek`.
+
+| Working set | Done | Overflow | Memo revisions | Summary failures | Recall | Input | Output | Ctx max |
+|---|---|---|---|---|---|---|---|---|
+| 8k | 24/24 | 0 | 21 | 0 | 2 | 54,117 | 20,139 | 1,744 |
+| 16k | 24/24 | 0 | 21 | 0 | 2 | 70,202 | 27,971 | 2,640 |
+
+Probe answers:
+
+- 8k: `The configuration file for your Marlin project is located at
+  config/marlin.toml.` (correct, from recall segment 0). The pasta probe
+  said it could not find a recipe: the 804-token memo had dropped
+  `aglio e olio`, and "recipe" does not match the segment terms.
+- 16k: `config/marlin.toml` (correct) and `Aglio e Olio` (correct, from the
+  memo). The larger memo kept the incidental phrase.
+
+This separates model quality from context. The 26B answered the explicit
+recall probe at 8k, where the 14B hallucinated at 8k, 16k and 24k. The 8k/16k
+difference appears only on the paraphrased pasta probe, where recall cannot
+match and the memo has to carry the phrase.
+
+## Novel chapter with tools
+
+One chapter was run on the 26B to exercise domain tools, the task state and the
+output reserve:
+
+- Profile: `profile.local-novel.toml`, 16k working set, 8k output reserve,
+  tools `read_file`, `write_file`, `list_dir`, `code_search`, `todo`.
+- Fifteen seeded tasks. The prompt is the first line of the ablation 15-chapter
+  script.
+- Result: 6 model calls, 18,696 input, 2,251 output, 32.5 seconds. It wrote
+  `chapters/ch-001.md` (1,184 CJK characters), updated
+  `state/continuity.md` to 49 lines, and marked task 1 completed. Assembled
+  context was 1,035 tokens.
+- Tool calls, task state and file writes all worked through the local
+  endpoint. The chapter was 16 characters short of the 1,200 floor; that is
+  model compliance, not a context failure.
+
+## Gemma template note
+
+The first 26B start returned HTTP 500:
+`the model produced output that does not match the expected peg-gemma4 format`.
+With `--jinja` and reasoning on, the model emitted `<|channel>thought` and
+llama.cpp's parser rejected it. `-rea off --reasoning-format deepseek` produced
+clean content. This is a llama.cpp/model-template issue, not a Keel bug.
+
 ## Limits
 
-- One local model, one quantisation, one scripted English workload.
+- Two local models, one quantisation each, one scripted English workload and
+  one Chinese chapter.
 - The server context was fixed at 32k; the arms varied only Keel's working set.
-- The uncensored 14B is not a strong instruction follower; the hallucination
-  result should not be generalised to all local models.
-- The novel/tool workload was not run locally; tool calling and long Chinese
-  output remain untested on this endpoint.
+- The 14B hallucination result is model-specific; the 26B answered the explicit
+  probe at 8k.
+- The 8k pasta miss is a memo-coverage result, not proof that 8k is generally
+  insufficient; 16k retained the phrase.
+- The chapter run is one sample; its 1,184-character length is below the
+  1,200 floor, and no long multi-chapter local run was attempted.
 
 ## Next
 
-- Repeat the 24-turn probe on `gemma4-26b-heretic-i1-Q3_K_L` to separate model
-  quality from the 14B's behaviour.
-- Run one novel chapter through the local endpoint to exercise tool calls and
-  the 8k output reserve.
+- Run the 26B chapter arm at 8k to see whether the 16k advantage is only output
+  verbosity.
+- Repeat the pasta probe at 8k and 16k to separate memo variance from budget.
 - Compare server-reported prompt tokens with Keel's estimate on the same
   request; the local endpoint reports usage directly.
