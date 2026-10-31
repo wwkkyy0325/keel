@@ -52,10 +52,12 @@ Done when: one task is solved end-to-end with a real model.
 
 Done when: the only diff from M2 is profile/plugin data.
 
-Episodic memory is the segment record store plus the three-tier fact store;
-vector recall is deferred. A real 20-turn companion run and a real 20-turn
-coding session both finished 20/20. The only open M3 item is the summarization
-research in `docs/llmwiki/tasks/m3-summarization-research.md`.
+Episodic memory is the segment record store, the rolling session memo, the
+three-tier fact store and deterministic lexical recall; vector recall is
+deferred. Real evidence: companion 20/20 at 8k, coding 20/20 at 16k, and a
+24-turn companion session whose memo rewrites stayed under budget and whose
+recall probes recovered early details
+(`evals/reports/2026-11-03-companion-24-turn-recall.md`). M3 is closed.
 
 ## M4 — Plugins (2-3 weeks)
 

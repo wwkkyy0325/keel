@@ -578,3 +578,75 @@
   provenance. Implementation is deferred to M5.
 - Verification: 208 tests; folding rules, later-summary absorption and the
   driver marker are covered.
+
+### M3 rolling session memo
+
+- Replaced the per-segment model summary with one rolling session memo,
+  rewritten at every seal. `SessionSummary` stores the text, revision,
+  cumulative coverage and the token budget; absorbed records leave the
+  context projection but stay in storage.
+- The update input is the previous memo, the new structured record, the newest
+  transcript clipped at both ends, and unabsorbed records that fit the input
+  budget. The output budget scales with the working set (10%, 256-4096 tokens)
+  and halves at orange or red pressure.
+- Records with open items are never absorbed. A failed update keeps the
+  previous memo and leaves the record block visible for the next attempt.
+- ADR 0006 and ADR 0008 updated for memo revisions, `absorbed_in` and
+  `summary_covers`.
+- Real 5-turn companion smoke at 8k produced three memo revisions (1144, 2185
+  and 2645 characters) under a 677-token budget, with no record block after
+  absorption and correct constraint recall on the last turn.
+- Verification: 216 tests; fmt and clippy clean.
+
+### M3 targeted recall and closeout
+
+- Added deterministic lexical recall for absorbed or folded segments: score by
+  shared terms and artifact paths, return at most two, and attach a clipped,
+  redacted excerpt from the best matching turn. No model and no index.
+- `HistoryStage` emits `[recalled earlier segments]` under a fifth-of-remaining
+  and 400-token cap, before the fallback records; `HistoryRecalled` reports the
+  segment ids and cost.
+- Real 24-turn companion run: 24/24 `Done`, 20 memo revisions (484-2679
+  characters, budget 675-677), context 843-1479 tokens, and recall recovered
+  `config/marlin.toml` and the pasta recipe on the final probes. Report:
+  `evals/reports/2026-11-03-companion-24-turn-recall.md`.
+- M3 is closed. Vector recall stays deferred.
+- Verification: 220 tests; fmt and clippy clean.
+
+### Novel 50-chapter pilot
+
+- Added a novel variant (`profile.deepseek.novel.toml`), per-block allocation
+  fields on `HistoryAssembled`, session `error:` printing, and a host
+  `--max-model-calls` flag.
+- The pilot ran 54 turns in one session but failed: 34 `Done`, 20 `Error`, 14
+  files and 31,464 Chinese characters; 40 turns changed no file. One turn could
+  not read, write a ~3,000-character chapter, update a growing state file and
+  answer within the output/tool budgets, and the model started following its
+  own gap list in the state instead of the prompt.
+- Recall fired on 40 turns at an average of 620 tokens against a nominal 400
+  cap. The cap was bypassed because the first hit was always admitted; that is
+  fixed. The per-block allocation data shows the governor was not the
+  bottleneck.
+- Report: `evals/reports/2026-11-03-novel-50-turn-pilot.md`.
+- Verification: 220 tests; fmt and clippy clean.
+
+### Task state (ADR 0009)
+
+- Added `TodoList` / `TodoItem` to `keel-core`: host and model sources, locked
+  host lists, one `in_progress`, 100 items, 200 characters.
+- Added the `todo` tool (list/add/update/remove) and a pinned `task_state`
+  context stage between memory and history. Task state is never summarized,
+  folded or recalled.
+- The driver shares the list with the tool, snapshots it into `BuildCtx` and
+  emits `TodoUpdated`; the CLI seeds host tasks with `--todo-file` and prints
+  a task summary after every turn.
+- The novel variant now uses `task_state` and `todo`; the project seeds 50
+  chapter tasks and shortens chapters to 1,800-2,200 characters.
+- List lifecycle: `completed` auto-closes on the last item; all-terminal lists
+  with a failure close as `failed`; explicit `close` supports `completed`,
+  `failed` and `abandoned`. Closed lists reject edits and collapse to one
+  summary line; `TodoClosed` and the CLI report the outcome.
+- The driver now bounds live tool results with the same head/tail summary used
+  for history, so a large `read_file` cannot overflow the current turn.
+- Verification: 226+ tests; fmt and clippy clean. The ten-chapter smoke is
+  tracked in `docs/llmwiki/tasks/task-state.md`.

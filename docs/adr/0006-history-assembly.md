@@ -2,9 +2,9 @@
 
 ## Status
 
-Accepted. Summarization is the one open item; it is tracked in
-`docs/llmwiki/tasks/m3-summarization-research.md` and must be decided before
-any compression level calls a model.
+Accepted. The model-written layer is one rolling session summary, rewritten at
+every seal; the decision is recorded in
+`docs/llmwiki/tasks/m3-summarization-research.md`.
 
 ## Context
 
@@ -146,12 +146,14 @@ produced in the current turn, only completed turns and sealed segments.
 
 **Assembly order.** Once the governor has decided, assembly is:
 
-1. pinned input, never compressed;
-2. the detail window, sized in tokens at the current level's share, no turn
+1. facts, emitted by the memory stage before history;
+2. the conversation memo, when one has been written;
+3. absorbed segments recalled by a lexical match with the current input;
+4. sealed segment records not yet absorbed by the memo, newest first, emitted
+   in chronological order;
+5. the detail window, sized in tokens at the current level's share, no turn
    ceiling, two-turn floor;
-3. older turns of the current segment as digests, newest first;
-4. sealed segment records, newest first, emitted in chronological order;
-5. session facts, emitted by the memory stage before history.
+6. older turns of the current segment as digests, newest first.
 
 If the pinned parts alone exceed the budget, the turn ends in `ContextOverflow`;
 the kernel does not silently emit a partial prompt.
@@ -182,9 +184,13 @@ less than a final-answer turn.
 - `L1` tool output truncated at the head and tail, by character count.
 - `L2` turn digest: input, assistant text, tool calls with status, verification
   result.
-- `L3` segment record.
-- `L4` fact folding: a segment record is dropped once its facts are promoted
-  and it has no open items.
+- `L3` segment record: goal, result, changes, open items, verification. Built
+  by the kernel without a model call.
+- `L4` conversation memo: one model-written field per session, rewritten at
+  every seal. Absorbed records leave the context projection but stay in
+  storage.
+- Fact folding stays as a free pre-pass: a record whose changes are covered by
+  artifact facts can leave the projection even when the memo update fails.
 
 Triggers are exactly two: a segment seal, and a governor level of amber or
 above. There is no per-turn background summarization; it would spend tokens on
@@ -192,17 +198,65 @@ every turn to save tokens later. Micro-compaction runs only when its estimated
 savings clear the cost guard, so an edit that saves less than it costs is
 skipped.
 
+**Conversation memo.** A frozen per-segment summary cannot rebalance: once
+written, the only remaining lever is dropping the whole record. One session
+field can be rewritten, so its length and content are re-decided every time.
+
+- One `SessionSummary` per session: text, revision, cumulative `covers`, and
+  the token budget it was written against.
+- Input: the previous memo, the newly sealed record, the newest segment
+  transcript, and any older records not yet absorbed. The transcript is capped
+  by the window and clipped at both ends; older records are included only when
+  they fit.
+- Output: the whole memo, rewritten with fixed sections (goal and state,
+  decisions, artifacts, errors and fixes, open items). Paths, identifiers,
+  commands and error text must remain exact; contradictions replace the old
+  statement.
+- Budget: ten percent of the working set, floor 256 and ceiling 4096 tokens.
+  At orange or red the next update uses half the budget, so pressure tightens
+  the memo instead of dropping a cliff of records.
+- A record with open items is never absorbed: unfinished state stays structured.
+- Failure keeps the previous memo and leaves the new record visible; the next
+  update catches up on every unabsorbed record. Coverage is cumulative, so an
+  absorbed record is never offered twice.
+- The memo is summary-of-summary and can drift. Structured records re-anchor
+  every update, facts stay authoritative and separate, and the revision plus
+  `covers` in storage allow a rebuild or rollback. Raw transcript is never
+  deleted.
+
+**Targeted recall.** The memo is a global view; when the user names a detail
+from an old topic, a deterministic lookup brings that segment back.
+
+- Only segments the projection has already dropped are candidates: absorbed or
+  folded, with no open items. Visible records and the current segment are not
+  duplicated.
+- Matching reuses the segment's existing term signature and its artifact
+  paths. Score is the fraction of input terms the segment contains; naming a
+  changed artifact adds 0.5. A candidate needs at least the threshold, at most
+  two segments are returned, and the most recent wins a tie.
+- Each hit carries the structured record plus the best matching user turn and
+  its answer, clipped to 300 characters per message and redacted. This is what
+  recovers a detail that never reached the memo.
+- The block is capped at a fifth of the remaining history allowance and 400
+  tokens, and it is emitted before the fallback records. `HistoryRecalled`
+  reports the segment ids and cost.
+- No model and no index are involved. Vectors are deferred: lexical recall is
+  deterministic, testable and free at turn time. The known gap is paraphrase
+  and synonymy; it is revisited only if long-run probes show misses.
+
 ### 5. Retention follows facts, not a fixed count
 
 Segment records are not kept to a fixed number:
 
-- a record with open items is pinned and is dropped last;
+- a record absorbed by the memo leaves the projection; the record, its
+  transcript and the memo revision stay in storage;
+- a record with open items is pinned and is never absorbed;
 - a record whose facts are all promoted and whose artifacts are not referenced
   again is droppable first;
-- everything else is dropped oldest-first only under pressure.
+- everything else is absorbed at the next seal.
 
-This makes the number of retained segments a function of what the session
-actually established, which is the stated intent.
+This makes the number of records in the projection a function of what the
+session actually established, and the older-history footprint constant.
 
 ### 6. Sufficiency gate
 

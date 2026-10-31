@@ -46,20 +46,23 @@ survive compression, cost stays bounded, and tests stay deterministic?
 
 ## Outcome
 
-Decided on 2026-11-03, without running the probe experiment: the product owner
-requires model summaries, so the segment level uses one.
+Decided on 2026-11-03: model summaries are required, but they live at the
+session level, not the segment level.
 
 - `L2` turn digests stay structured and model-free; they are per-turn and would
   be too expensive to model-summarize.
-- `L3` segment records keep the kernel's structured fields and gain an optional
-  model summary. The summarizer is called once per sealed segment, only when
-  the transcript is at least 800 estimated tokens.
-- The call uses the same provider, 300 maximum output tokens, a 30-second
-  timeout and the turn's cancellation token. Failure falls back to the
-  structured record; a summary is clipped to 800 characters.
-- The prompt forbids inventing facts, requires paths, identifiers, commands and
-  numbers to stay exact, keeps entity names in their original language, and
-  replies in the transcript's language.
+- `L3` segment records keep only the kernel's structured fields.
+- `L4` is one rolling session memo, rewritten at every seal from the previous
+  memo, the new record, the newest transcript and any unabsorbed records. This
+  replaces the per-segment model summary: two prose layers would double the
+  calls and the drift.
+- The memo budget is ten percent of the working set, floor 256 and ceiling
+  4096 tokens; at orange or red the next update uses half. The call receives
+  `max_output_tokens` and a token-capped input clipped at both ends.
+- The prompt fixes the sections, forbids invented facts, requires paths,
+  identifiers, commands and numbers to stay exact, keeps entity names in their
+  original language, and makes contradictions replace the old statement.
+- Records with open items are never absorbed. Failure keeps the previous memo
+  and leaves the records visible; the next update catches up.
 - Summary usage is folded into the turn's reported token usage.
-- The probe experiment remains available if quality needs to be compared later;
-  it is no longer a blocking decision.
+- The probe experiment remains available if quality needs to be compared later.

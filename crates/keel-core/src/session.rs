@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::context::is_cjk;
+use crate::secret::redact_secrets;
 
 use crate::message::{Message, MessageRole};
 
@@ -9,6 +10,12 @@ use crate::message::{Message, MessageRole};
 pub const SEGMENT_TURN_CAP: u32 = 12;
 /// Input-to-segment term overlap below this is a topic change.
 pub const TOPIC_OVERLAP_FLOOR: f32 = 0.2;
+/// Input-to-segment overlap needed to recall an absorbed segment.
+pub const RECALL_MIN_SCORE: f32 = 0.34;
+/// Segments recalled per turn.
+pub const RECALL_LIMIT: usize = 2;
+/// Characters kept from each message in a recall excerpt.
+pub const RECALL_EXCERPT_CHARS: usize = 300;
 
 /// Words ignored when comparing a new input with a segment.
 const STOPWORDS: &[&str] = &[
@@ -115,16 +122,35 @@ pub struct SegmentRecord {
     pub pending: Vec<String>,
     pub verified: bool,
     pub turns: u32,
-    /// Model-written summary, when a summarizer is configured and the segment
-    /// was large enough. The structured fields stay authoritative.
-    pub summary: Option<String>,
-    /// Segment ids whose stored content this summary includes.
-    pub covers: Vec<u32>,
     /// Excluded from the context projection because facts cover its changes.
     /// The record and its transcript stay in storage.
     pub folded: bool,
-    /// Set on a folded record after a later summary absorbed its content.
-    pub absorbed_by: Option<u32>,
+    /// Summary revision whose text includes this record.
+    pub absorbed_in: Option<u32>,
+}
+
+/// Rolling model-written summary of the whole session.
+///
+/// One field, rewritten at every segment seal. The structured records and the
+/// transcript stay in storage; this is the only compressed view of the older
+/// history that enters the context.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionSummary {
+    pub text: String,
+    pub revision: u32,
+    /// Segment ids included in this revision or an earlier one.
+    pub covers: Vec<u32>,
+    /// Token budget the text was written against.
+    pub budget_tokens: u32,
+}
+
+/// An absorbed segment pulled back by a lexical match.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecalledSegment {
+    pub segment_id: u32,
+    pub record: SegmentRecord,
+    /// Best matching user and assistant exchange, clipped and redacted.
+    pub excerpt: Option<String>,
 }
 
 /// A topic span of a session.
@@ -191,6 +217,9 @@ pub struct Session {
     workspace_facts: Vec<Fact>,
     global_facts: Vec<Fact>,
     candidates: BTreeMap<String, Candidate>,
+    summary: Option<SessionSummary>,
+    next_summary_revision: u32,
+    summary_missing: bool,
 }
 
 impl Session {
@@ -366,7 +395,11 @@ impl Session {
             let Some(record) = segment.record.as_mut() else {
                 continue;
             };
-            if record.folded || !record.pending.is_empty() || record.changes.is_empty() {
+            if record.folded
+                || record.absorbed_in.is_some()
+                || !record.pending.is_empty()
+                || record.changes.is_empty()
+            {
                 continue;
             }
             if record.changes.iter().all(|path| covered.contains(path)) {
@@ -596,52 +629,85 @@ impl Session {
         )
     }
 
-    /// Attaches a model summary to an existing record and marks the folded
-    /// records whose content it absorbed.
-    pub fn set_record_summary(&mut self, segment_id: u32, summary: &str, covers: &[u32]) {
-        let text = summary.trim();
-        if text.is_empty() {
-            return;
-        }
-        let clipped: String = text.chars().take(800).collect();
-        if let Some(segment) = self
-            .segments
-            .iter_mut()
-            .find(|segment| segment.id == segment_id)
-        {
-            if let Some(record) = segment.record.as_mut() {
-                record.summary = Some(clipped);
-                record.covers = covers.to_vec();
-            }
-        }
-        for segment in &mut self.segments {
-            let absorbed = segment
-                .record
-                .as_ref()
-                .map(|record| record.folded && covers.contains(&segment.id))
-                .unwrap_or(false);
-            if absorbed {
-                if let Some(record) = segment.record.as_mut() {
-                    record.absorbed_by = Some(segment_id);
-                }
-            }
-        }
+    /// The current rolling summary, if one has been written.
+    pub fn summary(&self) -> Option<&SessionSummary> {
+        self.summary.as_ref()
     }
 
-    /// Folded records whose content no later summary has absorbed.
-    pub fn folded_for_summary(&self, exclude: u32) -> Vec<(u32, SegmentRecord)> {
+    /// True when the last summary update failed; records stay visible.
+    pub fn summary_missing(&self) -> bool {
+        self.summary_missing
+    }
+
+    /// Record of one segment, cloned for use outside the session lock.
+    pub fn record(&self, segment_id: u32) -> Option<SegmentRecord> {
         self.segments
             .iter()
-            .filter(|segment| segment.id != exclude)
-            .filter_map(|segment| {
-                let record = segment.record.as_ref()?;
-                if record.folded && record.summary.is_none() && record.absorbed_by.is_none() {
-                    Some((segment.id, record.clone()))
-                } else {
-                    None
-                }
-            })
+            .find(|segment| segment.id == segment_id)
+            .and_then(|segment| segment.record.clone())
+    }
+
+    /// Records not yet represented in the summary and safe to absorb.
+    ///
+    /// The newest segment stays in detail, and records with open items stay
+    /// structured: unfinished state is never handed to the model to rewrite.
+    pub fn absorbable_records(&self, exclude: Option<u32>) -> Vec<(u32, SegmentRecord)> {
+        let newest = self
+            .segments
+            .iter()
+            .rposition(|segment| !segment.entries.is_empty());
+        self.segments
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| Some(*index) != newest)
+            .filter(|(_, segment)| Some(segment.id) != exclude)
+            .filter_map(|(_, segment)| segment.record.as_ref().map(|record| (segment.id, record)))
+            .filter(|(_, record)| record.absorbed_in.is_none() && record.pending.is_empty())
+            .map(|(id, record)| (id, record.clone()))
             .collect()
+    }
+
+    /// Stores a rewritten summary and marks the records it absorbed.
+    ///
+    /// Coverage is cumulative: a later revision keeps every segment an earlier
+    /// one covered. Returns the new revision, or `None` for empty text.
+    pub fn set_summary(&mut self, text: &str, covers: &[u32], budget_tokens: u32) -> Option<u32> {
+        let text = text.trim();
+        if text.is_empty() {
+            return None;
+        }
+        let revision = self.next_summary_revision.saturating_add(1);
+        self.next_summary_revision = revision;
+        let mut merged = self
+            .summary
+            .as_ref()
+            .map(|summary| summary.covers.clone())
+            .unwrap_or_default();
+        for id in covers {
+            if !merged.contains(id) {
+                merged.push(*id);
+            }
+        }
+        self.summary = Some(SessionSummary {
+            text: text.to_owned(),
+            revision,
+            covers: merged,
+            budget_tokens,
+        });
+        self.summary_missing = false;
+        for segment in &mut self.segments {
+            if covers.contains(&segment.id) {
+                if let Some(record) = segment.record.as_mut() {
+                    record.absorbed_in = Some(revision);
+                }
+            }
+        }
+        Some(revision)
+    }
+
+    /// Marks that the latest update failed; the previous summary stays valid.
+    pub fn mark_summary_missing(&mut self) {
+        self.summary_missing = true;
     }
 
     /// Records of sealed segments that are no longer the newest content.
@@ -655,9 +721,133 @@ impl Session {
             .enumerate()
             .filter(|(index, _)| Some(*index) != newest)
             .filter_map(|(_, segment)| segment.record.clone())
-            .filter(|record| !record.folded)
+            .filter(|record| !record.folded && record.absorbed_in.is_none())
             .collect()
     }
+
+    /// Absorbed segments that match the current input lexically.
+    ///
+    /// This is deterministic recall, not a model or an index. It reuses the
+    /// segment's term signature and artifact paths, and adds a short excerpt
+    /// from the best matching turn so a detail that never reached the memo can
+    /// still come back into view.
+    pub fn recall(&self, input: &str) -> Vec<RecalledSegment> {
+        let input_terms = terms(input);
+        let newest = self
+            .segments
+            .iter()
+            .rposition(|segment| !segment.entries.is_empty());
+        let mut scored: Vec<(f32, usize, RecalledSegment)> = Vec::new();
+        for (index, segment) in self.segments.iter().enumerate() {
+            if Some(index) == newest {
+                continue;
+            }
+            let Some(record) = segment.record.as_ref() else {
+                continue;
+            };
+            // Only segments the projection has already dropped need recall.
+            if record.absorbed_in.is_none() && !record.folded {
+                continue;
+            }
+            // Open items stay visible through the record block.
+            if !record.pending.is_empty() {
+                continue;
+            }
+            let hits = input_terms
+                .iter()
+                .filter(|term| segment.terms.contains(*term))
+                .count();
+            let mut score = if input_terms.is_empty() {
+                0.0
+            } else {
+                hits as f32 / input_terms.len() as f32
+            };
+            let artifact_hit = record
+                .changes
+                .iter()
+                .any(|path| input.contains(path.as_str()));
+            if artifact_hit {
+                score += 0.5;
+            }
+            if score < RECALL_MIN_SCORE || (hits == 0 && !artifact_hit) {
+                continue;
+            }
+            scored.push((
+                score,
+                index,
+                RecalledSegment {
+                    segment_id: segment.id,
+                    record: record.clone(),
+                    excerpt: recall_excerpt(segment, &input_terms),
+                },
+            ));
+        }
+        scored.sort_by(|left, right| {
+            right
+                .0
+                .partial_cmp(&left.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| right.1.cmp(&left.1))
+        });
+        scored
+            .into_iter()
+            .take(RECALL_LIMIT)
+            .map(|(_, _, recalled)| recalled)
+            .collect()
+    }
+}
+
+/// Best matching user turn and its answer, clipped for recall.
+fn recall_excerpt(segment: &Segment, input_terms: &BTreeSet<String>) -> Option<String> {
+    let mut best: Option<(usize, usize)> = None;
+    for (index, entry) in segment.entries.iter().enumerate() {
+        if entry.message.role != MessageRole::User {
+            continue;
+        }
+        let entry_terms = terms(&entry.message.content);
+        let hits = entry_terms
+            .iter()
+            .filter(|term| input_terms.contains(*term))
+            .count();
+        if hits == 0 {
+            continue;
+        }
+        let better = match best {
+            Some((best_hits, _)) => hits > best_hits,
+            None => true,
+        };
+        if better {
+            best = Some((hits, index));
+        }
+    }
+    let (_, index) = best?;
+    let user = clip_chars(
+        &redact_secrets(&segment.entries[index].message.content),
+        RECALL_EXCERPT_CHARS,
+    );
+    let assistant = segment.entries[index + 1..]
+        .iter()
+        .find(|entry| entry.message.role == MessageRole::Assistant)
+        .map(|entry| {
+            clip_chars(
+                &redact_secrets(&entry.message.content),
+                RECALL_EXCERPT_CHARS,
+            )
+        });
+    Some(match assistant {
+        Some(text) => format!("user: {user}\nassistant: {text}"),
+        None => format!("user: {user}"),
+    })
+}
+
+fn clip_chars(text: &str, max: usize) -> String {
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= max {
+        return flat;
+    }
+    let mut clipped: String = flat.chars().take(max).collect();
+    clipped.push_str("...");
+    clipped
 }
 
 /// Matches a marker on word boundaries for ASCII text, by substring for CJK.
@@ -1007,10 +1197,8 @@ fn build_record(segment: &Segment) -> Result<SegmentRecord, Vec<String>> {
         pending: segment.pending.clone(),
         verified: segment.verified,
         turns: segment.turns,
-        summary: None,
-        covers: Vec::new(),
         folded: false,
-        absorbed_by: None,
+        absorbed_in: None,
     })
 }
 
@@ -1564,7 +1752,7 @@ mod folding_tests {
     }
 
     #[test]
-    fn a_covered_record_is_folded_and_kept_for_summary() {
+    fn a_covered_record_is_folded_and_still_absorbable() {
         let mut session = Session::new();
         let artifacts = vec!["a.py".to_owned()];
         record(&mut session, "write a.py", &artifacts, &[]);
@@ -1575,14 +1763,52 @@ mod folding_tests {
 
         assert_eq!(change.folded, vec![0]);
         assert!(session.records().is_empty(), "folded records leave context");
-        let folded = session.folded_for_summary(change.sealed.unwrap());
-        assert_eq!(folded.len(), 1);
-        assert_eq!(folded[0].0, 0);
+        let absorbable = session.absorbable_records(change.sealed);
+        assert_eq!(absorbable.len(), 1);
+        assert_eq!(absorbable[0].0, 0);
 
-        session.set_record_summary(change.sealed.unwrap(), "summary", &[0]);
-        assert!(session
-            .folded_for_summary(change.sealed.unwrap())
-            .is_empty());
+        let revision = session.set_summary("summary", &[0], 512);
+        assert_eq!(revision, Some(1));
+        assert!(session.absorbable_records(change.sealed).is_empty());
+        assert_eq!(session.summary().unwrap().covers, vec![0]);
+    }
+
+    #[test]
+    fn a_record_with_pending_is_not_absorbable() {
+        let mut session = Session::new();
+        let artifacts = vec!["a.py".to_owned()];
+        let pending = vec!["blocked on review".to_owned()];
+        record(&mut session, "write a.py", &artifacts, &pending);
+        session.begin_turn("alpha beta");
+
+        record(&mut session, "gamma delta", &[], &[]);
+        session.begin_turn("epsilon zeta");
+
+        assert!(session.absorbable_records(None).is_empty());
+    }
+
+    #[test]
+    fn a_new_summary_keeps_earlier_coverage() {
+        let mut session = Session::new();
+        assert_eq!(session.set_summary("one", &[0], 256), Some(1));
+        assert_eq!(session.set_summary("two", &[1], 256), Some(2));
+
+        let summary = session.summary().expect("summary");
+        assert_eq!(summary.revision, 2);
+        assert_eq!(summary.covers, vec![0, 1]);
+    }
+
+    #[test]
+    fn an_absorbed_record_leaves_the_context() {
+        let mut session = Session::new();
+        record(&mut session, "first", &[], &[]);
+        session.begin_turn("alpha beta");
+        record(&mut session, "second", &[], &[]);
+        session.begin_turn("gamma delta");
+
+        assert_eq!(session.records().len(), 1);
+        session.set_summary("summary", &[0], 256);
+        assert!(session.records().is_empty());
     }
 
     #[test]
@@ -1610,5 +1836,62 @@ mod folding_tests {
         let change = session.begin_turn("epsilon zeta");
 
         assert!(change.folded.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod recall_tests {
+    use super::*;
+
+    fn record(session: &mut Session, input: &str) {
+        session.record_turn(TurnRecord {
+            input,
+            text: "done",
+            tools: &[],
+            artifacts: &[],
+            pending: &[],
+            verified: false,
+        });
+    }
+
+    fn absorbed_session() -> Session {
+        let mut session = Session::new();
+        record(&mut session, "plan the marlin config");
+        session.begin_turn("alpha beta");
+        record(&mut session, "alpha beta");
+        session.begin_turn("gamma delta");
+        session.set_summary("summary", &[0], 256);
+        session
+    }
+
+    #[test]
+    fn an_absorbed_topic_is_recalled_by_its_terms() {
+        let session = absorbed_session();
+        let recalled = session.recall("where is the marlin config");
+
+        assert_eq!(recalled.len(), 1);
+        assert_eq!(recalled[0].segment_id, 0);
+        assert!(recalled[0].record.goal.contains("marlin"));
+        assert!(recalled[0]
+            .excerpt
+            .as_deref()
+            .unwrap_or_default()
+            .contains("plan the marlin config"));
+    }
+
+    #[test]
+    fn unrelated_input_recalls_nothing() {
+        let session = absorbed_session();
+        assert!(session.recall("what is the weather").is_empty());
+    }
+
+    #[test]
+    fn a_record_still_in_the_projection_is_not_recalled() {
+        let mut session = Session::new();
+        record(&mut session, "plan the marlin config");
+        session.begin_turn("alpha beta");
+        record(&mut session, "alpha beta");
+
+        assert!(session.recall("where is the marlin config").is_empty());
     }
 }

@@ -5,7 +5,8 @@ use async_trait::async_trait;
 use crate::event::EventSink;
 use crate::ids::TurnId;
 use crate::message::{Message, MessageRole};
-use crate::session::{Fact, SegmentRecord};
+use crate::session::{Fact, RecalledSegment, SegmentRecord, SessionSummary};
+use crate::todo::TodoList;
 
 /// Inputs available to context stages.
 pub struct BuildCtx<'a> {
@@ -14,6 +15,12 @@ pub struct BuildCtx<'a> {
     pub history: &'a [Arc<Message>],
     /// Compressed records of sealed segments, oldest first.
     pub records: &'a [SegmentRecord],
+    /// Rolling summary of the older history, when one has been written.
+    pub summary: Option<&'a SessionSummary>,
+    /// Absorbed segments pulled back by a lexical match with the input.
+    pub recalled: &'a [RecalledSegment],
+    /// Kernel-owned task list, when the host configured one.
+    pub todos: Option<&'a TodoList>,
     /// Global facts first, then session facts.
     pub facts: &'a [Fact],
     pub system_prompt: &'a str,
@@ -33,6 +40,9 @@ impl<'a> BuildCtx<'a> {
             input: self.input,
             history: self.history,
             records: self.records,
+            summary: self.summary,
+            recalled: self.recalled,
+            todos: self.todos,
             facts: self.facts,
             system_prompt: self.system_prompt,
             budget_tokens,

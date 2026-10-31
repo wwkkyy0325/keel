@@ -1,0 +1,30 @@
+[profile]
+name = "novel-deepseek"
+
+[model]
+provider = "openai-compatible"
+model = "deepseek-flash"
+base_url = "https://api.deepseek.com"
+api_key_env = "DEEPSEEK_API_KEY"
+supports_reasoning = true
+thinking_budget = 0
+max_output_tokens = 8192
+context_window = 128000
+
+[context]
+stages = ["system", "task_state", "memory", "history", "latest"]
+budget_tokens = 16000
+
+[tools]
+visible = ["read_file", "write_file", "list_dir", "code_search", "todo"]
+budget = 24
+plan_mode = false
+
+[verification]
+mode = "none"
+
+[permission]
+level = "workspace_auto"
+
+[persona]
+system = "prompts/novel.md"

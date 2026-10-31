@@ -58,8 +58,36 @@ pub enum Event {
         detail_turns: u32,
         digest_turns: u32,
         dropped_turns: u32,
+        summary_tokens: u32,
+        recall_candidates: u32,
+        recall_segments: u32,
+        recall_tokens: u32,
+        record_candidates: u32,
         record_segments: u32,
+        record_tokens: u32,
+        detail_tokens: u32,
+        digest_tokens: u32,
         tokens: u32,
+    },
+    HistoryRecalled {
+        turn_id: TurnId,
+        candidates: u32,
+        segments: Vec<u32>,
+        tokens: u32,
+    },
+    TodoUpdated {
+        turn_id: TurnId,
+        revision: u32,
+        items: u32,
+        in_progress: Option<u32>,
+        state: String,
+    },
+    TodoClosed {
+        turn_id: TurnId,
+        outcome: String,
+        completed: u32,
+        failed: u32,
+        total: u32,
     },
     WrapUpInjected {
         turn_id: TurnId,
@@ -79,10 +107,16 @@ pub enum Event {
         segment_id: u32,
         reason: String,
     },
-    SegmentSummarized {
+    SummaryUpdated {
         turn_id: TurnId,
-        segment_id: u32,
+        revision: u32,
+        covers: Vec<u32>,
         chars: u32,
+        budget: u32,
+    },
+    SummaryFailed {
+        turn_id: TurnId,
+        reason: String,
     },
     SegmentFolded {
         turn_id: TurnId,
@@ -169,11 +203,15 @@ impl Event {
             | Self::ContextBuilt { turn_id, .. }
             | Self::ContextPressure { turn_id, .. }
             | Self::HistoryAssembled { turn_id, .. }
+            | Self::HistoryRecalled { turn_id, .. }
+            | Self::TodoUpdated { turn_id, .. }
+            | Self::TodoClosed { turn_id, .. }
             | Self::WrapUpInjected { turn_id, .. }
             | Self::FinalCallForced { turn_id, .. }
             | Self::SegmentOpened { turn_id, .. }
             | Self::SegmentSealed { turn_id, .. }
-            | Self::SegmentSummarized { turn_id, .. }
+            | Self::SummaryUpdated { turn_id, .. }
+            | Self::SummaryFailed { turn_id, .. }
             | Self::SegmentFolded { turn_id, .. }
             | Self::CompressionSkipped { turn_id, .. }
             | Self::FactPromoted { turn_id, .. }
@@ -201,11 +239,15 @@ impl Event {
             Self::ContextBuilt { .. } => "context_built",
             Self::ContextPressure { .. } => "context_pressure",
             Self::HistoryAssembled { .. } => "history_assembled",
+            Self::HistoryRecalled { .. } => "history_recalled",
+            Self::TodoUpdated { .. } => "todo_updated",
+            Self::TodoClosed { .. } => "todo_closed",
             Self::WrapUpInjected { .. } => "wrap_up_injected",
             Self::FinalCallForced { .. } => "final_call_forced",
             Self::SegmentOpened { .. } => "segment_opened",
             Self::SegmentSealed { .. } => "segment_sealed",
-            Self::SegmentSummarized { .. } => "segment_summarized",
+            Self::SummaryUpdated { .. } => "summary_updated",
+            Self::SummaryFailed { .. } => "summary_failed",
             Self::SegmentFolded { .. } => "segment_folded",
             Self::CompressionSkipped { .. } => "compression_skipped",
             Self::FactPromoted { .. } => "fact_promoted",

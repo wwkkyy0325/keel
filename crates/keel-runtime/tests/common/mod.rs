@@ -144,6 +144,7 @@ pub fn build_driver_with_port<M: ModelProvider>(
             max_output_tokens,
             context_window,
             limits,
+            todos: None,
         },
     )
 }

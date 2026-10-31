@@ -203,6 +203,46 @@ impl ContextStage for LatestStage {
     }
 }
 
+/// Produces the pinned task list.
+///
+/// Task state is not history: it is not summarized, recalled or folded. It
+/// stays visible until the host or the model changes it.
+pub struct TaskStateStage;
+
+impl TaskStateStage {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for TaskStateStage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl ContextStage for TaskStateStage {
+    fn name(&self) -> &'static str {
+        "task_state"
+    }
+
+    fn priority(&self) -> i32 {
+        6
+    }
+
+    async fn build(&self, ctx: &BuildCtx<'_>) -> Option<Vec<Fragment>> {
+        let todos = ctx.todos?;
+        if todos.items.is_empty() {
+            return None;
+        }
+        Some(vec![Fragment {
+            role: MessageRole::System,
+            text: todos.render(),
+        }])
+    }
+}
+
 /// Emits recorded history, keeping the newest messages that fit.
 ///
 /// History runs before `latest`, so it leaves room for the current input.
@@ -233,7 +273,11 @@ impl ContextStage for HistoryStage {
     }
 
     async fn build(&self, ctx: &BuildCtx<'_>) -> Option<Vec<Fragment>> {
-        if ctx.history.is_empty() && ctx.records.is_empty() {
+        if ctx.history.is_empty()
+            && ctx.records.is_empty()
+            && ctx.summary.is_none()
+            && ctx.recalled.is_empty()
+        {
             return None;
         }
         // Never spend the room the current input needs.
@@ -242,23 +286,67 @@ impl ContextStage for HistoryStage {
             return None;
         }
 
-        // Sealed segments are already compressed. They get at most a quarter
-        // of the allowance; older records are dropped past that.
-        let record_cap = (available / 4).max(1);
+        let mut fragments = Vec::new();
+        let mut summary_tokens = 0u32;
+        if let Some(summary) = ctx.summary {
+            let text = format!(
+                "[conversation summary, revision {}]\n{}",
+                summary.revision, summary.text
+            );
+            summary_tokens = estimate_tokens(&text);
+            fragments.push(Fragment {
+                role: MessageRole::System,
+                text,
+            });
+        }
+
+        // Absorbed segments matched by the input. Small, optional, and capped:
+        // they never displace the current segment.
+        let remaining = available.saturating_sub(summary_tokens);
+        let recall_cap = (remaining / 5).clamp(1, 400);
+        let mut recall_lines: Vec<String> = Vec::new();
+        let mut recall_tokens = 0u32;
+        for recalled in ctx.recalled {
+            let line = render_recalled(recalled);
+            let tokens = estimate_tokens(&line);
+            // A single oversized hit must not bypass the cap; try the next
+            // hit instead.
+            if recall_tokens.saturating_add(tokens) > recall_cap {
+                continue;
+            }
+            recall_tokens = recall_tokens.saturating_add(tokens);
+            recall_lines.push(line);
+        }
+        if !recall_lines.is_empty() {
+            let mut text = String::from("[recalled earlier segments]\n");
+            for line in &recall_lines {
+                text.push_str(line);
+                text.push('\n');
+            }
+            fragments.push(Fragment {
+                role: MessageRole::System,
+                text,
+            });
+        }
+
+        // Records not yet in the summary are a fallback, not the main view.
+        // They get at most a quarter of what remains; older ones are dropped.
+        let record_cap = (remaining.saturating_sub(recall_tokens) / 4).max(1);
         let mut record_lines: Vec<String> = Vec::new();
         let mut record_tokens = 0u32;
-        for record in ctx.records.iter().rev() {
-            let line = render_record(record);
-            let tokens = estimate_tokens(&line);
-            if record_tokens.saturating_add(tokens) > record_cap && !record_lines.is_empty() {
-                break;
+        if remaining > recall_tokens {
+            for record in ctx.records.iter().rev() {
+                let line = render_record(record);
+                let tokens = estimate_tokens(&line);
+                if record_tokens.saturating_add(tokens) > record_cap && !record_lines.is_empty() {
+                    break;
+                }
+                record_tokens = record_tokens.saturating_add(tokens);
+                record_lines.push(line);
             }
-            record_tokens = record_tokens.saturating_add(tokens);
-            record_lines.push(line);
         }
         record_lines.reverse();
 
-        let mut fragments = Vec::new();
         if !record_lines.is_empty() {
             let mut text = String::from("[earlier segments]\n");
             for line in &record_lines {
@@ -272,11 +360,15 @@ impl ContextStage for HistoryStage {
         }
 
         let share = ctx.detail_share.clamp(0.0, 1.0);
-        let budget = available.saturating_sub(record_tokens);
+        let budget = remaining
+            .saturating_sub(recall_tokens)
+            .saturating_sub(record_tokens);
         let mut detail_turns = 0u32;
         let mut digest_turns = 0u32;
         let mut dropped = 0u32;
         let mut message_tokens = 0u32;
+        let mut message_detail_tokens = 0u32;
+        let mut message_digest_tokens = 0u32;
         if !ctx.history.is_empty() && budget > 0 {
             if let Some(assembly) = assemble(ctx.history, budget, share) {
                 if !assembly.digests.is_empty() {
@@ -294,6 +386,8 @@ impl ContextStage for HistoryStage {
                 digest_turns = assembly.digest_turns;
                 dropped = assembly.dropped;
                 message_tokens = assembly.tokens;
+                message_detail_tokens = assembly.detail_tokens;
+                message_digest_tokens = assembly.digest_tokens;
             }
         }
 
@@ -302,14 +396,38 @@ impl ContextStage for HistoryStage {
         }
 
         if let Some(events) = ctx.events {
+            if !recall_lines.is_empty() {
+                events.emit(keel_core::Event::HistoryRecalled {
+                    turn_id: ctx.turn_id,
+                    candidates: ctx.recalled.len() as u32,
+                    segments: ctx
+                        .recalled
+                        .iter()
+                        .take(recall_lines.len())
+                        .map(|recalled| recalled.segment_id)
+                        .collect(),
+                    tokens: recall_tokens,
+                });
+            }
             events.emit(keel_core::Event::HistoryAssembled {
                 turn_id: ctx.turn_id,
                 detail_percent: (share * 100.0).round() as u32,
                 detail_turns,
                 digest_turns,
                 dropped_turns: dropped,
+                summary_tokens,
+                recall_candidates: ctx.recalled.len() as u32,
+                recall_segments: recall_lines.len() as u32,
+                recall_tokens,
+                record_candidates: ctx.records.len() as u32,
                 record_segments: record_lines.len() as u32,
-                tokens: record_tokens.saturating_add(message_tokens),
+                record_tokens,
+                detail_tokens: message_detail_tokens,
+                digest_tokens: message_digest_tokens,
+                tokens: summary_tokens
+                    .saturating_add(recall_tokens)
+                    .saturating_add(record_tokens)
+                    .saturating_add(message_tokens),
             });
         }
 
@@ -323,6 +441,8 @@ struct Assembly {
     detail_turns: u32,
     digest_turns: u32,
     dropped: u32,
+    detail_tokens: u32,
+    digest_tokens: u32,
     tokens: u32,
 }
 
@@ -406,15 +526,14 @@ fn assemble(history: &[Arc<Message>], budget: u32, share: f32) -> Option<Assembl
         detail_turns: detail.len() as u32,
         digest_turns,
         dropped,
+        detail_tokens,
+        digest_tokens,
         tokens: detail_tokens.saturating_add(digest_tokens),
     })
 }
 
 fn render_record(record: &keel_core::SegmentRecord) -> String {
-    let body = match &record.summary {
-        Some(summary) => summary.split_whitespace().collect::<Vec<_>>().join(" "),
-        None => record.result.clone(),
-    };
+    let body = record.result.clone();
     let mut line = format!("- \"{}\" ({} turns): {}", record.goal, record.turns, body);
     if !record.changes.is_empty() {
         line.push_str("; changed: ");
@@ -425,6 +544,15 @@ fn render_record(record: &keel_core::SegmentRecord) -> String {
     }
     if !record.pending.is_empty() {
         line.push_str(&format!("; pending: {}", record.pending.len()));
+    }
+    line
+}
+
+fn render_recalled(recalled: &keel_core::RecalledSegment) -> String {
+    let mut line = render_record(&recalled.record);
+    if let Some(excerpt) = &recalled.excerpt {
+        line.push_str("\n  excerpt: ");
+        line.push_str(&excerpt.replace('\n', "\n  "));
     }
     line
 }

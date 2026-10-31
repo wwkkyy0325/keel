@@ -402,6 +402,7 @@ async fn non_commit_decision_ends_in_error() {
             max_output_tokens: config.max_output_tokens,
             context_window: config.context_window,
             limits: common::test_limits(),
+            todos: None,
         },
     );
     let outcome = driver.run("hi", CancelToken::new()).await;
@@ -989,21 +990,33 @@ async fn reported_usage_calibrates_the_next_budget() {
     assert_eq!(budgets.last(), Some(&(4096 - 500)));
 }
 
-struct CaptureSummarizer {
+struct FlakySummarizer {
     inputs: Arc<Mutex<Vec<String>>>,
+    calls: Arc<Mutex<u32>>,
 }
 
 #[async_trait]
-impl keel_runtime::Summarizer for CaptureSummarizer {
+impl keel_runtime::Summarizer for FlakySummarizer {
     async fn summarize(
         &self,
-        transcript: &str,
+        input: &str,
+        _max_tokens: u32,
         _cancel: &CancelToken,
     ) -> Result<keel_runtime::Summarized, ModelError> {
+        let mut calls = self
+            .calls
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let call = *calls;
+        *calls = calls.saturating_add(1);
+        drop(calls);
         self.inputs
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .push(transcript.to_owned());
+            .push(input.to_owned());
+        if call == 0 {
+            return Err(ModelError::internal("first summary fails"));
+        }
         Ok(keel_runtime::Summarized {
             text: "summary".to_owned(),
             usage: TokenUsage::default(),
@@ -1038,8 +1051,9 @@ async fn folded_work_is_included_in_a_later_summary() {
         MockStep::Text("ok".to_owned()),
     ]);
     let inputs = Arc::new(Mutex::new(Vec::new()));
-    let summarizer = CaptureSummarizer {
+    let summarizer = FlakySummarizer {
         inputs: inputs.clone(),
+        calls: Arc::new(Mutex::new(0)),
     };
     let driver = common::build_driver(
         model,
@@ -1065,8 +1079,8 @@ async fn folded_work_is_included_in_a_later_summary() {
     assert!(folded, "the covered segment was not folded");
 
     let inputs = inputs.lock().unwrap();
-    assert!(!inputs.is_empty(), "no catch-up summary was made");
+    assert!(inputs.len() >= 2, "no catch-up summary was made");
     let last = inputs.last().unwrap();
-    assert!(last.contains("[folded earlier work]"), "{last}");
+    assert!(last.contains("[older finished segments]"), "{last}");
     assert!(last.contains("[segment 0]"), "{last}");
 }

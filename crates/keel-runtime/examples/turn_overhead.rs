@@ -85,6 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tool_timeout: Duration::from_secs(1),
                 turn_timeout: Duration::from_secs(5),
             },
+            todos: None,
         },
     );
 

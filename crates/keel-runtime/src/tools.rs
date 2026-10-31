@@ -1,11 +1,12 @@
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use keel_core::{
-    resolve_path, AccessKind, ParamKind, ParamSpec, PermissionRequest, RiskLevel, Tool, ToolArgs,
-    ToolCtx, ToolError, ToolResult, ToolSchema,
+    resolve_path, AccessKind, ArgValue, ParamKind, ParamSpec, PermissionRequest, RiskLevel,
+    TodoError, TodoList, TodoState, TodoStatus, Tool, ToolArgs, ToolCtx, ToolError, ToolResult,
+    ToolSchema,
 };
 
 use crate::command::{self, CommandSpec};
@@ -700,5 +701,222 @@ fn io_error(error: &std::io::Error) -> ToolError {
         std::io::ErrorKind::NotFound => ToolError::not_found(error.to_string()),
         std::io::ErrorKind::PermissionDenied => ToolError::permission_denied(error.to_string()),
         _ => ToolError::io(error.to_string()),
+    }
+}
+
+/// Kernel-owned task list exposed to the model.
+///
+/// The tool is the only editing surface. The list itself lives in kernel state
+/// and is rendered by the `task_state` context stage, so it cannot drift into
+/// a prose file.
+pub struct TodoTool {
+    todos: Arc<Mutex<TodoList>>,
+}
+
+impl TodoTool {
+    pub fn new(todos: Arc<Mutex<TodoList>>) -> Self {
+        Self { todos }
+    }
+
+    fn apply(&self, args: &ToolArgs) -> Result<String, ToolError> {
+        let op = args.require_str("op")?;
+        let mut todos = self
+            .todos
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match op {
+            "add" => {
+                let text = args.require_str("text")?;
+                todos.add_model(text).map_err(todo_error)?;
+            }
+            "update" => {
+                let id = require_todo_id(args)?;
+                let status = require_todo_status(args)?;
+                todos.update_status(id, status).map_err(todo_error)?;
+            }
+            "remove" => {
+                let id = require_todo_id(args)?;
+                todos.remove(id).map_err(todo_error)?;
+            }
+            "close" => {
+                let outcome = args.require_str("outcome")?;
+                let state = match outcome {
+                    "completed" => TodoState::Completed,
+                    "failed" => TodoState::Failed,
+                    "abandoned" => TodoState::Abandoned,
+                    _ => {
+                        return Err(ToolError::invalid_arguments(
+                            "todo outcome must be completed, failed or abandoned",
+                        ));
+                    }
+                };
+                todos.close(state).map_err(todo_error)?;
+            }
+            "list" => {}
+            other => {
+                return Err(ToolError::invalid_arguments(format!(
+                    "unknown todo op `{other}`"
+                )));
+            }
+        }
+        Ok(todos.render())
+    }
+}
+
+fn require_todo_id(args: &ToolArgs) -> Result<u32, ToolError> {
+    match args.get("id") {
+        Some(ArgValue::Integer(value)) if *value >= 0 && *value <= i64::from(u32::MAX) => {
+            Ok(*value as u32)
+        }
+        Some(ArgValue::Integer(_)) => Err(ToolError::invalid_arguments(
+            "todo id must be a positive integer",
+        )),
+        Some(other) => Err(ToolError::invalid_arguments(format!(
+            "argument `id` must be integer, got {}",
+            other.kind().as_str()
+        ))),
+        None => Err(ToolError::invalid_arguments(
+            "missing required argument `id`",
+        )),
+    }
+}
+
+fn require_todo_status(args: &ToolArgs) -> Result<TodoStatus, ToolError> {
+    let value = args.require_str("status")?;
+    TodoStatus::parse(value).ok_or_else(|| {
+        ToolError::invalid_arguments(
+            "todo status must be pending, in_progress, completed or failed",
+        )
+    })
+}
+
+fn todo_error(error: TodoError) -> ToolError {
+    ToolError::invalid_arguments(error.to_string())
+}
+
+#[async_trait]
+impl Tool for TodoTool {
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "todo".to_owned(),
+            description: "Read or update the session task list. Ops: list; add with text; \
+                          update with id and status (pending, in_progress, completed, \
+                          failed); remove with id; close with outcome (completed, failed, \
+                          abandoned)."
+                .to_owned(),
+            risk: RiskLevel::ReadOnly,
+            params: vec![
+                ParamSpec {
+                    name: "op".to_owned(),
+                    kind: ParamKind::String,
+                    required: true,
+                },
+                ParamSpec {
+                    name: "id".to_owned(),
+                    kind: ParamKind::Integer,
+                    required: false,
+                },
+                ParamSpec {
+                    name: "status".to_owned(),
+                    kind: ParamKind::String,
+                    required: false,
+                },
+                ParamSpec {
+                    name: "text".to_owned(),
+                    kind: ParamKind::String,
+                    required: false,
+                },
+                ParamSpec {
+                    name: "outcome".to_owned(),
+                    kind: ParamKind::String,
+                    required: false,
+                },
+            ],
+        }
+    }
+
+    fn permission_requests(&self, _args: &ToolArgs) -> Result<Vec<PermissionRequest>, ToolError> {
+        Ok(Vec::new())
+    }
+
+    async fn call(&self, args: ToolArgs, ctx: &ToolCtx) -> ToolResult {
+        if ctx.cancel.is_cancelled() {
+            return ToolResult::failure(ctx.call_id, "todo", ToolError::cancelled());
+        }
+        match self.apply(&args) {
+            Ok(content) => ToolResult::success(ctx.call_id, "todo", content),
+            Err(error) => ToolResult::failure(ctx.call_id, "todo", error),
+        }
+    }
+}
+
+#[cfg(test)]
+mod todo_tool_tests {
+    use super::*;
+    use keel_core::{CancelToken, ToolCallId, TurnId};
+
+    fn ctx() -> ToolCtx {
+        ToolCtx {
+            turn_id: TurnId::new(1),
+            call_id: ToolCallId::new(1),
+            workspace_root: PathBuf::from("."),
+            cancel: CancelToken::new(),
+        }
+    }
+
+    fn content(result: &ToolResult) -> &str {
+        match &result.outcome {
+            keel_core::ToolOutcome::Success { content } => content,
+            keel_core::ToolOutcome::Failure { error } => panic!("tool failed: {error}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn update_moves_a_host_task_and_add_is_locked() {
+        let todos = Arc::new(Mutex::new(TodoList::new()));
+        let id = todos
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .add_host("chapter 1")
+            .unwrap();
+        todos
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .lock();
+        let tool = TodoTool::new(todos);
+
+        let mut update = ToolArgs::new();
+        update.insert("op", ArgValue::String("update".to_owned()));
+        update.insert("id", ArgValue::Integer(id as i64));
+        update.insert("status", ArgValue::String("in_progress".to_owned()));
+        let result = tool.call(update, &ctx()).await;
+        assert!(content(&result).contains("#1 [>] chapter 1"));
+
+        let mut add = ToolArgs::new();
+        add.insert("op", ArgValue::String("add".to_owned()));
+        add.insert("text", ArgValue::String("gap task".to_owned()));
+        let result = tool.call(add, &ctx()).await;
+        assert!(result.error().is_some());
+    }
+
+    #[tokio::test]
+    async fn completing_the_last_item_closes_the_list() {
+        let todos = Arc::new(Mutex::new(TodoList::new()));
+        let id = todos
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .add_host("chapter 1")
+            .unwrap();
+        let tool = TodoTool::new(todos);
+
+        let mut update = ToolArgs::new();
+        update.insert("op", ArgValue::String("update".to_owned()));
+        update.insert("id", ArgValue::Integer(id as i64));
+        update.insert("status", ArgValue::String("completed".to_owned()));
+        let result = tool.call(update.clone(), &ctx()).await;
+        assert!(content(&result).contains("[tasks] completed: 1/1"));
+
+        let result = tool.call(update, &ctx()).await;
+        assert!(result.error().is_some(), "closed lists reject updates");
     }
 }

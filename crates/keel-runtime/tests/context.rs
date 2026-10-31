@@ -4,9 +4,9 @@ use std::time::Duration;
 use async_trait::async_trait;
 use keel_core::{
     BuildCtx, CancelToken, CompactionStep, ContextRecipe, ContextStage, Fact, FactScope, Fragment,
-    KernelError, MessageRole, TurnId,
+    KernelError, MessageRole, TodoList, TodoStatus, TurnId,
 };
-use keel_runtime::ContextBuilder;
+use keel_runtime::{ContextBuilder, TaskStateStage};
 
 struct StaticStage {
     name: &'static str,
@@ -67,6 +67,9 @@ fn build_ctx<'a>(input: &'a str, system_prompt: &'a str) -> BuildCtx<'a> {
         input,
         history: &[],
         records: &[],
+        summary: None,
+        recalled: &[],
+        todos: None,
         facts: &[],
         system_prompt,
         budget_tokens: 4096,
@@ -355,6 +358,9 @@ async fn facts_are_emitted_as_a_memory_block() {
         input: "input",
         history: &[],
         records: &[],
+        summary: None,
+        recalled: &[],
+        todos: None,
         facts: &facts,
         system_prompt: "system",
         budget_tokens: 4096,
@@ -374,4 +380,29 @@ async fn facts_are_emitted_as_a_memory_block() {
     assert!(built.fragments[0]
         .text
         .contains("always use tabs in this repo (workspace)"));
+}
+
+#[tokio::test]
+async fn task_state_is_pinned_with_ids_and_statuses() {
+    let mut todos = TodoList::new();
+    let first = todos.add_host("chapter 1").unwrap();
+    todos.update_status(first, TodoStatus::InProgress).unwrap();
+    let ctx = BuildCtx {
+        turn_id: TurnId::new(1),
+        input: "",
+        history: &[],
+        records: &[],
+        summary: None,
+        recalled: &[],
+        todos: Some(&todos),
+        facts: &[],
+        system_prompt: "",
+        budget_tokens: 4096,
+        detail_share: 0.8,
+        events: None,
+    };
+    let built = TaskStateStage::new().build(&ctx).await.expect("tasks");
+    assert_eq!(built.len(), 1);
+    assert!(built[0].text.starts_with("[tasks]"));
+    assert!(built[0].text.contains("#1 [>] chapter 1"));
 }

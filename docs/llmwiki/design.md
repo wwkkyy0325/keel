@@ -24,14 +24,15 @@ immutable `RuntimeConfig`; plugins add optional capabilities.
 | `crates/keel-runtime` | FSM, turn driver, context builder, dispatch, permission module, verifier, tools, mock model |
 | `hosts/keel-cli` | Loads a profile, runs one turn, terminal interactions |
 
-Status: M3 complete except for the summarization research. Sessions,
-budget-driven history assembly, the context governor, tool summaries, segment
-records, L4 folding, three-tier facts, model segment summaries and the turn
-`Answer` artifact are implemented; ADR 0008 fixes the persistence layout. A
-real 20-turn DeepSeek companion run at an 8k window finished 20/20, and a
-20-turn coding session with four tools at 16k finished 20/20. 208 tests
-pass; the self-authored suite is 10/10 and the public baseline is HumanEval+
-20/20 and MBPP+ 19/20.
+Status: M3 closed. Sessions, budget-driven history assembly, the context
+governor, tool summaries, segment records, fact folding, a rolling session
+memo, deterministic lexical recall, three-tier facts, kernel-owned task state
+and the turn `Answer` artifact are implemented; ADR 0008 fixes the persistence
+layout and ADR 0009 defines task state. Real runs: a 20-turn DeepSeek companion
+at 8k finished 20/20, a 20-turn coding session with four tools at 16k finished
+20/20, and a 24-turn companion run exercised memo rewrites and recall probes.
+226 tests pass; the self-authored suite is 10/10 and the public baseline is
+HumanEval+ 20/20 and MBPP+ 19/20.
 
 ## Permission and interaction model
 

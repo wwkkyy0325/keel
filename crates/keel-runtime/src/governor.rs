@@ -5,7 +5,7 @@
 //! compacts earlier in absolute tokens and a slow chat runs longer.
 
 /// How close the context is to the working-set ceiling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PressureLevel {
     Green,
     Amber,

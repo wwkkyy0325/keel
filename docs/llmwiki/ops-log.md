@@ -605,3 +605,91 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 - Added `SegmentFolded` and the `SegmentChange.folded` list.
 - Wrote ADR 0008 with the SQLite layout, invariants and frontend queries.
 - Verification: 208 tests; fmt and clippy clean.
+
+### M3 rolling session memo
+
+- `Session` now holds `SessionSummary { text, revision, covers,
+  budget_tokens }`, `next_summary_revision` and `summary_missing`.
+  `SegmentRecord` lost its per-segment summary fields and gained
+  `absorbed_in`.
+- `set_summary` merges coverage cumulatively and marks each covered record with
+  the revision. `absorbable_records` skips the newest segment, absorbed
+  records and records with open items.
+- The driver rewrites the memo at every seal: previous memo, new record,
+  transcript clipped at both ends, and older records that fit. The budget is
+  `clamp(working_set / 10, 256, 4096)` and halves when the previous turn was
+  orange or red. Model errors and timeouts mark the memo missing without
+  failing the turn.
+- `HistoryStage` emits `[conversation summary, revision N]` first, then only
+  unabsorbed records, then the detail window. The summarizer prompt fixes the
+  sections and forbids invented facts; output is trimmed at a sentence
+  boundary.
+- Events: `SummaryUpdated { revision, covers, chars, budget }` and
+  `SummaryFailed { reason }` replaced `SegmentSummarized`; the CLI prints both.
+- Real 5-turn companion smoke at 8k: three memo revisions of 1144, 2185 and
+  2645 characters against a 677-token budget; context stayed between 663 and
+  1098 tokens, no record block appeared after absorption, and the final turn
+  recalled the "use tabs" constraint.
+- Verification: 216 tests; fmt and clippy clean.
+
+### M3 targeted recall and closeout
+
+- `Session::recall` scores absorbed or folded records by the fraction of input
+  terms in the segment signature; an artifact path named verbatim adds 0.5.
+  It skips the newest segment, visible records and records with open items,
+  sorts by score then recency, and returns at most `RECALL_LIMIT`.
+- `RecalledSegment` carries the record and an excerpt built from the best
+  matching user turn and the following assistant turn, clipped to 300
+  characters and redacted.
+- `HistoryStage` renders `[recalled earlier segments]` before fallback records,
+  capped at `remaining / 5` and 400 tokens; `HistoryRecalled` reports ids and
+  cost, and the CLI prints `recall: segments=... tokens=...`.
+- Real 24-turn companion run: 24/24 `Done`; 20 memo revisions from 484 to 2679
+  characters; context 843-1479 tokens; final probes recalled segments 0 and 4
+  and answered `config/marlin.toml` and `aglio e olio`.
+- M3 closed; vector recall deferred.
+- Verification: 220 tests; fmt and clippy clean.
+
+### Novel 50-chapter pilot
+
+- Built `D:\workspace-new\wwkkyy0325\ascent-novel`: bible, 50-beat outline,
+  continuity state, prompt generator, deterministic validator. Added
+  `variants/coding/profile.deepseek.novel.toml` (128k window, 16k working set,
+  8k output, 24 tools) and a host `--max-model-calls` flag.
+- `HistoryAssembled` now carries the per-block split (memo, recall, records,
+  detail, digest) plus candidates and included counts. Session turns print the
+  error code instead of hiding it.
+- The 54-turn pilot failed: 34 `Done`, 20 `Error`, 14 files, 31,464 Chinese
+  characters, 40 turns with no file change, 1.05M input and 107k output. The
+  model's own gap list in the state file displaced the prompt's chapter number;
+  long `write_file` calls hit the output limit, and the remaining turns reported
+  status instead of writing.
+- Recall fired on 40 turns at 620 tokens on average. The first hit could
+  bypass the 400-token cap; the stage now skips oversized hits. The pilot
+  showed the task protocol, not the context governor, is the binding limit.
+- Report: `evals/reports/2026-11-03-novel-50-turn-pilot.md`.
+- Verification: 220 tests; fmt and clippy clean.
+
+### Task state (ADR 0009)
+
+- `crates/keel-core/src/todo.rs`: `TodoList` with id allocation, host/model
+  source, `locked`, status updates, removal rules and a rendered `[tasks]`
+  block. Host items cannot be removed; locked lists reject model add/remove.
+- `TodoTool` shares an `Arc<Mutex<TodoList>>`; `TurnDriverConfig.todos` passes
+  the same handle to the driver. `BuildCtx.todos` carries a snapshot for the
+  new `TaskStateStage` (priority 6).
+- The driver compares the list revision before and after each dispatch and
+  emits `TodoUpdated`. The CLI adds `--todo-file` (host seed, locked) and
+  prints `tasks: done=… current=…#id total=…`.
+- The novel profile adds `task_state` and `todo`; `make_prompts.py` writes
+  `prompts/todos.txt` and shortens chapters to 1,800-2,200 characters.
+- A two-task CLI smoke marked a host task completed and wrote the file. The
+  ten-chapter pilot is the remaining verification.
+- Added the list lifecycle: `completed` auto-closes on the last item, a
+  terminal list with a failure closes as `failed`, and `todo op=close` accepts
+  `completed`, `failed` or `abandoned`. Closed lists reject edits and render
+  one summary line; `TodoClosed` reports the outcome.
+- Live tool results now use the same head/tail summary as history; the first
+  ten-chapter smoke overflowed because full `read_file` output entered the
+  current turn.
+- Verification: 226+ tests; fmt and clippy clean.

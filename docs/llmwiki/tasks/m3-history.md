@@ -79,12 +79,22 @@ one at a time. Summarization is blocked on
       `write_file` could not create a missing parent directory; the tool now
       does.
 
-## Model segment summaries
+## Conversation memo
 
-- [x] One model call per large sealed segment, with the structured record as
-      fallback — verify: a large segment gets the model summary in the next
-      record block; a short segment makes zero calls; the summary usage is
-      counted; failure falls back
+- [x] Replace the per-segment model summary with one rolling session memo,
+      rewritten at every seal from the previous memo, the new record and the
+      newest transcript; scale the output budget with the working set and
+      shrink it under pressure — verify: the second update sees the first
+      summary, a short segment still updates, and the memo appears in the next
+      request
+- [x] Cap the summarizer input by the window, clip the transcript at both ends,
+      trim the output at a sentence boundary, and share the prompt sections —
+      verify: long messages keep head and tail; the budget has a floor and a
+      ceiling
+- [x] Absorb only records without open items, keep coverage cumulative, and
+      leave the previous memo in place when the call fails — verify: pending
+      records stay structured, absorbed records leave the projection, and a
+      failed update leaves the record block visible
 
 ## Answer artifact (ADR 0007)
 
@@ -99,13 +109,31 @@ one at a time. Summarization is blocked on
       no pending items; keep it in storage and drop it from the context
       projection — verify: covered records fold, records with pending items or
       missing facts do not
-- [x] Append folded records without a summary to the next segment summary,
-      marked `[segment N]`; the new record lists them in `covers` and each one
-      gets `absorbed_by` — verify: the summarizer input contains the marker and
-      the absorbed record leaves the catch-up set
+- [x] Append unabsorbed records, including folded ones, to the next memo
+      update, marked `[segment N]`; the new revision lists them in `covers` and
+      each record gets `absorbed_in` — verify: the summarizer input contains the
+      marker and the absorbed record leaves the catch-up set
 - [x] Storage layout for the audit, transcript, derived-context and memory
       planes in ADR 0008 — verify: every in-memory field maps to a column;
       implementation deferred to M5
+
+## Targeted recall
+
+- [x] Recall absorbed segments by lexical overlap with the input; reuse the
+      segment term signature and artifact paths, require a score threshold,
+      return at most two, and attach a clipped, redacted excerpt from the best
+      matching turn — verify: a distinctive early term recalls the segment,
+      unrelated input recalls nothing, and a record still in the projection is
+      not duplicated
+- [x] Cap recall at a fifth of the remaining history allowance and 400 tokens;
+      emit `HistoryRecalled` and print it from the CLI — verify: the block
+      appears before the fallback records and the event reports segment ids and
+      cost
+- [x] Real 24-turn companion run with two probes after many topic switches —
+      verify: 24/24 `Done`, 20 memo revisions with a max of 2679 characters,
+      context 843–1479 tokens, recall fired for segments 0 and 4, and the
+      answers were `config/marlin.toml` and `aglio e olio`. Report:
+      `evals/reports/2026-11-03-companion-24-turn-recall.md`.
 
 ## Verification commands
 

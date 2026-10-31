@@ -98,6 +98,7 @@ fn harness_with(
             max_output_tokens: config.max_output_tokens,
             context_window: config.context_window,
             limits: common::test_limits(),
+            todos: None,
         },
     );
 
@@ -369,6 +370,7 @@ async fn a_constraint_reaches_the_next_request() {
 
 struct FixedSummarizer {
     calls: Arc<AtomicU32>,
+    inputs: Arc<Mutex<Vec<String>>>,
     text: String,
 }
 
@@ -376,10 +378,15 @@ struct FixedSummarizer {
 impl Summarizer for FixedSummarizer {
     async fn summarize(
         &self,
-        _transcript: &str,
+        input: &str,
+        _max_tokens: u32,
         _cancel: &CancelToken,
     ) -> Result<Summarized, ModelError> {
         self.calls.fetch_add(1, Ordering::Relaxed);
+        self.inputs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(input.to_owned());
         Ok(Summarized {
             text: self.text.clone(),
             usage: TokenUsage::default(),
@@ -387,11 +394,27 @@ impl Summarizer for FixedSummarizer {
     }
 }
 
+struct FailingSummarizer;
+
+#[async_trait]
+impl Summarizer for FailingSummarizer {
+    async fn summarize(
+        &self,
+        _input: &str,
+        _max_tokens: u32,
+        _cancel: &CancelToken,
+    ) -> Result<Summarized, ModelError> {
+        Err(ModelError::internal("summary failed"))
+    }
+}
+
 #[tokio::test]
-async fn a_large_segment_gets_a_model_summary() {
+async fn a_sealed_segment_updates_the_session_summary() {
     let calls = Arc::new(AtomicU32::new(0));
+    let inputs = Arc::new(Mutex::new(Vec::new()));
     let summarizer = Arc::new(FixedSummarizer {
         calls: calls.clone(),
+        inputs: inputs.clone(),
         text: "MODEL SUMMARY".to_owned(),
     });
     let harness = harness_with(4096, &"x".repeat(4000), Some(summarizer));
@@ -412,22 +435,30 @@ async fn a_large_segment_gets_a_model_summary() {
         .await;
     assert!(third.is_done());
 
-    assert!(calls.load(Ordering::Relaxed) >= 1);
+    assert!(calls.load(Ordering::Relaxed) >= 2);
     let requests = harness.requests.lock().unwrap();
-    let record = requests[2]
+    let summary = requests[2]
         .iter()
         .find(|message| {
-            message.role == MessageRole::System && message.content.starts_with("[earlier segments]")
+            message.role == MessageRole::System
+                && message.content.starts_with("[conversation summary")
         })
-        .expect("record block");
-    assert!(record.content.contains("MODEL SUMMARY"));
+        .expect("summary block");
+    assert!(summary.content.contains("MODEL SUMMARY"));
+
+    let inputs = inputs.lock().unwrap();
+    assert!(inputs.len() >= 2);
+    assert!(inputs[1].contains("[previous summary]"));
+    assert!(inputs[1].contains("MODEL SUMMARY"));
 }
 
 #[tokio::test]
-async fn a_short_segment_is_not_summarized() {
+async fn a_short_segment_still_updates_the_summary() {
     let calls = Arc::new(AtomicU32::new(0));
+    let inputs = Arc::new(Mutex::new(Vec::new()));
     let summarizer = Arc::new(FixedSummarizer {
         calls: calls.clone(),
+        inputs,
         text: "MODEL SUMMARY".to_owned(),
     });
     let harness = harness_with(4096, "ack", Some(summarizer));
@@ -443,5 +474,91 @@ async fn a_short_segment_is_not_summarized() {
         .await
         .is_done());
 
-    assert_eq!(calls.load(Ordering::Relaxed), 0);
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+    let requests = harness.requests.lock().unwrap();
+    assert!(requests[1].iter().any(|message| {
+        message.role == MessageRole::System && message.content.starts_with("[conversation summary")
+    }));
+}
+
+#[tokio::test]
+async fn an_absorbed_topic_is_recalled_by_its_terms() {
+    let calls = Arc::new(AtomicU32::new(0));
+    let inputs = Arc::new(Mutex::new(Vec::new()));
+    let summarizer = Arc::new(FixedSummarizer {
+        calls,
+        inputs,
+        text: "MODEL SUMMARY".to_owned(),
+    });
+    let harness = harness_with(4096, "ack", Some(summarizer));
+
+    for input in [
+        "plan the marlin config",
+        "write a haiku about the sea",
+        "what is the weather today",
+        "where is the marlin config",
+    ] {
+        assert!(
+            harness
+                .driver
+                .run(input, CancelToken::new())
+                .await
+                .is_done(),
+            "{input}"
+        );
+    }
+
+    let requests = harness.requests.lock().unwrap();
+    // The memo is the only older-history view and does not carry the term;
+    // recall is what restores it.
+    let summary = requests[3]
+        .iter()
+        .find(|message| {
+            message.role == MessageRole::System
+                && message.content.starts_with("[conversation summary")
+        })
+        .expect("summary block");
+    assert!(!summary.content.contains("marlin"), "{}", summary.content);
+    let recalled = requests[3]
+        .iter()
+        .find(|message| {
+            message.role == MessageRole::System
+                && message.content.starts_with("[recalled earlier segments]")
+        })
+        .expect("recall block");
+    assert!(recalled.content.contains("marlin"), "{}", recalled.content);
+}
+
+#[tokio::test]
+async fn a_summary_failure_keeps_records_in_context() {
+    let summarizer: Arc<dyn Summarizer> = Arc::new(FailingSummarizer);
+    let harness = harness_with(4096, "ack", Some(summarizer));
+
+    assert!(harness
+        .driver
+        .run("fix the parser bug", CancelToken::new())
+        .await
+        .is_done());
+    assert!(harness
+        .driver
+        .run("write a haiku about the sea", CancelToken::new())
+        .await
+        .is_done());
+    assert!(harness
+        .driver
+        .run("what is the weather today", CancelToken::new())
+        .await
+        .is_done());
+
+    let requests = harness.requests.lock().unwrap();
+    assert!(!requests[2].iter().any(|message| {
+        message.role == MessageRole::System && message.content.starts_with("[conversation summary")
+    }));
+    let record = requests[2]
+        .iter()
+        .find(|message| {
+            message.role == MessageRole::System && message.content.starts_with("[earlier segments]")
+        })
+        .expect("record fallback");
+    assert!(record.content.contains("fix the parser bug"));
 }

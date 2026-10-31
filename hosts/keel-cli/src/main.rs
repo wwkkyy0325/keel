@@ -3,20 +3,20 @@ mod terminal;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use keel_core::{
     ArgValue, CancelToken, Event, KernelError, ModelError, ModelProvider, ModelRequest,
-    ModelStream, Policy, ToolArgs,
+    ModelStream, Policy, TodoList, ToolArgs,
 };
 use keel_model_openai::{OpenAiConfig, OpenAiProvider};
 use keel_runtime::{
     load_profile, validate_config, CodeSearchTool, ContextBuilder, EchoTool, EventLog,
     HistoryStage, InteractionBroker, LatestStage, ListDirTool, LocalTrashStore, MemoryStage,
     MockModel, MockStep, PermissionEngine, ProviderSummarizer, ReadFileTool, RuntimeConfig,
-    ShellTool, Summarizer, SystemStage, ToolRegistry, TurnDriver, TurnDriverConfig, TurnOutcome,
-    WriteFileTool,
+    ShellTool, Summarizer, SystemStage, TaskStateStage, TodoTool, ToolRegistry, TurnDriver,
+    TurnDriverConfig, TurnOutcome, WriteFileTool,
 };
 use terminal::TerminalInteractionPort;
 
@@ -60,6 +60,25 @@ async fn run() -> Result<(), KernelError> {
         config.permission_level,
     )?);
 
+    let todos = Arc::new(Mutex::new(TodoList::new()));
+    if let Some(path) = &args.todo_file {
+        let text = std::fs::read_to_string(path).map_err(|error| KernelError::Io {
+            message: format!("{}: {error}", path.display()),
+        })?;
+        let mut list = todos
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            list.add_host(line)
+                .map_err(|error| invalid_config(error.to_string()))?;
+        }
+        list.lock();
+    }
+
     let mut registry = ToolRegistry::new();
     registry.register(Arc::new(EchoTool::new()))?;
     registry.register(Arc::new(ReadFileTool::new()))?;
@@ -69,10 +88,12 @@ async fn run() -> Result<(), KernelError> {
     registry.register(Arc::new(WriteFileTool::new(Arc::new(
         LocalTrashStore::new(permissions.root().to_path_buf()),
     ))))?;
+    registry.register(Arc::new(TodoTool::new(todos.clone())))?;
     let registry = Arc::new(registry);
 
     let context = ContextBuilder::new(vec![
         Arc::new(SystemStage::new()),
+        Arc::new(TaskStateStage::new()),
         Arc::new(MemoryStage::new()),
         Arc::new(HistoryStage::new()),
         Arc::new(LatestStage::new()),
@@ -87,6 +108,10 @@ async fn run() -> Result<(), KernelError> {
     ));
     let model = build_model(&config, &args.input, args.session)?;
     let policy: Arc<dyn Policy> = Arc::new(config.clone());
+    let mut limits = config.limits();
+    if let Some(calls) = args.max_model_calls {
+        limits.max_model_calls = calls;
+    }
     let driver = TurnDriver::new(
         model,
         registry,
@@ -99,7 +124,8 @@ async fn run() -> Result<(), KernelError> {
             system_prompt: config.system_prompt.clone(),
             max_output_tokens: config.max_output_tokens,
             context_window: config.context_window,
-            limits: config.limits(),
+            limits,
+            todos: Some(todos.clone()),
         },
     );
 
@@ -113,11 +139,12 @@ async fn run() -> Result<(), KernelError> {
     };
 
     if args.session {
-        return run_session(&driver, &config, &events).await;
+        return run_session(&driver, &config, &events, &todos).await;
     }
 
     let outcome = driver.run(&args.input, CancelToken::new()).await;
     print_outcome(&config, &events, &outcome);
+    print_todos(&todos);
     done_or_error(outcome)
 }
 
@@ -126,6 +153,7 @@ async fn run_session(
     driver: &TurnDriver<HostModel>,
     config: &RuntimeConfig,
     events: &Arc<EventLog>,
+    todos: &Arc<Mutex<TodoList>>,
 ) -> Result<(), KernelError> {
     use std::io::{BufRead, IsTerminal, Write};
 
@@ -153,6 +181,7 @@ async fn run_session(
         }
         let outcome = driver.run(input, CancelToken::new()).await;
         print_outcome(config, events, &outcome);
+        print_todos(todos);
         if outcome.is_cancelled() {
             break;
         }
@@ -160,10 +189,42 @@ async fn run_session(
     Ok(())
 }
 
+fn print_todos(todos: &Arc<Mutex<TodoList>>) {
+    let list = todos
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if list.items.is_empty() {
+        return;
+    }
+    if list.state.is_closed() {
+        println!(
+            "tasks: closed={} completed={} failed={} total={}",
+            list.state.as_str(),
+            list.completed(),
+            list.failed(),
+            list.items.len()
+        );
+        return;
+    }
+    let current = list
+        .in_progress()
+        .map(|item| format!("#{}", item.id))
+        .unwrap_or_else(|| "-".to_owned());
+    println!(
+        "tasks: done={} current={} total={}",
+        list.completed(),
+        current,
+        list.items.len()
+    );
+}
+
 fn print_outcome(config: &RuntimeConfig, events: &EventLog, outcome: &TurnOutcome) {
     println!("profile: {}", config.profile_name);
     println!("turn: {}", outcome.turn_id.get());
     println!("state: {}", outcome.state);
+    if let Some(error) = &outcome.error {
+        println!("error: {error} ({})", error.code().as_str());
+    }
     if let Some((estimate, budget)) =
         events
             .for_turn(outcome.turn_id)
@@ -176,36 +237,94 @@ fn print_outcome(config: &RuntimeConfig, events: &EventLog, outcome: &TurnOutcom
     {
         println!("context: estimate={estimate} budget={budget}");
     }
-    if let Some((detail, digest, records)) =
-        events
-            .for_turn(outcome.turn_id)
-            .iter()
-            .rev()
-            .find_map(|record| match &record.event {
-                Event::HistoryAssembled {
-                    detail_turns,
-                    digest_turns,
-                    record_segments,
-                    ..
-                } => Some((*detail_turns, *digest_turns, *record_segments)),
-                _ => None,
-            })
+    if let Some((detail, digest, records, summary)) = events
+        .for_turn(outcome.turn_id)
+        .iter()
+        .rev()
+        .find_map(|record| match &record.event {
+            Event::HistoryAssembled {
+                detail_turns,
+                digest_turns,
+                record_segments,
+                summary_tokens,
+                ..
+            } => Some((
+                *detail_turns,
+                *digest_turns,
+                *record_segments,
+                *summary_tokens,
+            )),
+            _ => None,
+        })
     {
-        println!("history: detail={detail} digest={digest} records={records}");
+        println!("history: detail={detail} digest={digest} records={records} summary={summary}");
     }
-    if let Some((segment_id, chars)) =
+    if let Some(allocation) = events
+        .for_turn(outcome.turn_id)
+        .iter()
+        .rev()
+        .find_map(|record| match &record.event {
+            Event::HistoryAssembled {
+                recall_tokens,
+                recall_segments,
+                recall_candidates,
+                record_tokens,
+                record_segments,
+                record_candidates,
+                detail_tokens,
+                digest_tokens,
+                ..
+            } => Some(format!(
+                "recall={recall_tokens}({recall_segments}/{recall_candidates}) \
+                     records={record_tokens}({record_segments}/{record_candidates}) \
+                     detail={detail_tokens} digest={digest_tokens}"
+            )),
+            _ => None,
+        })
+    {
+        println!("alloc: {allocation}");
+    }
+    if let Some((segments, tokens)) =
         events
             .for_turn(outcome.turn_id)
             .iter()
             .rev()
             .find_map(|record| match &record.event {
-                Event::SegmentSummarized {
-                    segment_id, chars, ..
-                } => Some((*segment_id, *chars)),
+                Event::HistoryRecalled {
+                    segments, tokens, ..
+                } => Some((segments.clone(), *tokens)),
                 _ => None,
             })
     {
-        println!("summary: segment={segment_id} chars={chars}");
+        println!("recall: segments={segments:?} tokens={tokens}");
+    }
+    if let Some((revision, covers, chars, budget)) = events
+        .for_turn(outcome.turn_id)
+        .iter()
+        .rev()
+        .find_map(|record| match &record.event {
+            Event::SummaryUpdated {
+                revision,
+                covers,
+                chars,
+                budget,
+                ..
+            } => Some((*revision, covers.len(), *chars, *budget)),
+            _ => None,
+        })
+    {
+        println!("summary: revision={revision} covers={covers} chars={chars} budget={budget}");
+    }
+    if let Some(reason) = events
+        .for_turn(outcome.turn_id)
+        .iter()
+        .rev()
+        .find_map(|record| match &record.event {
+            Event::SummaryFailed { reason, .. } => Some(reason.clone()),
+            _ => None,
+        })
+    {
+        println!("summary: update failed: {reason}");
     }
     println!("answer: {}", outcome.answer.body);
     if outcome.answer.missing {
@@ -293,7 +412,7 @@ fn build_summarizer(config: &RuntimeConfig) -> Result<Option<Arc<dyn Summarizer>
     match config.model_route.provider.as_str() {
         "openai" | "openai-compatible" => {
             let provider = build_openai_provider(config, 1)?;
-            Ok(Some(Arc::new(ProviderSummarizer::new(provider, 300))))
+            Ok(Some(Arc::new(ProviderSummarizer::new(provider))))
         }
         _ => Ok(None),
     }
@@ -327,6 +446,8 @@ struct Args {
     workspace: PathBuf,
     acceptance: Option<PathBuf>,
     session: bool,
+    max_model_calls: Option<u32>,
+    todo_file: Option<PathBuf>,
 }
 
 fn parse_args() -> Result<Args, KernelError> {
@@ -334,6 +455,8 @@ fn parse_args() -> Result<Args, KernelError> {
     let mut input = String::from("hello from keel");
     let mut acceptance = None;
     let mut session = false;
+    let mut max_model_calls = None;
+    let mut todo_file = None;
     let mut workspace = std::env::current_dir().map_err(|error| KernelError::Io {
         message: error.to_string(),
     })?;
@@ -367,6 +490,26 @@ fn parse_args() -> Result<Args, KernelError> {
             "--session" => {
                 session = true;
             }
+            "--max-model-calls" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| invalid_config("missing value for `--max-model-calls`"))?;
+                let calls = value.parse::<u32>().map_err(|_| {
+                    invalid_config("`--max-model-calls` must be a positive integer")
+                })?;
+                if calls == 0 {
+                    return Err(invalid_config(
+                        "`--max-model-calls` must be a positive integer",
+                    ));
+                }
+                max_model_calls = Some(calls);
+            }
+            "--todo-file" => {
+                todo_file =
+                    Some(PathBuf::from(args.next().ok_or_else(|| {
+                        invalid_config("missing value for `--todo-file`")
+                    })?));
+            }
             other => {
                 return Err(invalid_config(format!("unknown argument `{other}`")));
             }
@@ -379,6 +522,8 @@ fn parse_args() -> Result<Args, KernelError> {
         workspace,
         acceptance,
         session,
+        max_model_calls,
+        todo_file,
     })
 }
 

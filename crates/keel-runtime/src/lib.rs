@@ -23,6 +23,7 @@ pub mod verification;
 
 pub use context::{
     BuiltContext, ContextBuilder, HistoryStage, LatestStage, MemoryStage, SystemStage,
+    TaskStateStage,
 };
 pub use dispatch::ToolDispatcher;
 pub use driver::{TurnDriver, TurnDriverConfig, TurnOutcome};
@@ -36,8 +37,11 @@ pub use permission::PermissionEngine;
 pub use profile::{from_profile_str, load_profile, validate_config};
 pub use registry::ToolRegistry;
 pub use summarizer::{
-    transcript_text, ProviderSummarizer, Summarized, Summarizer, SUMMARY_MIN_TOKENS,
+    clip_to_tokens, memo_budget, transcript_text, ProviderSummarizer, Summarized, Summarizer,
+    MEMO_BUDGET_CEILING, MEMO_BUDGET_FLOOR, SUMMARY_INPUT_MARGIN,
 };
-pub use tools::{CodeSearchTool, EchoTool, ListDirTool, ReadFileTool, ShellTool, WriteFileTool};
+pub use tools::{
+    CodeSearchTool, EchoTool, ListDirTool, ReadFileTool, ShellTool, TodoTool, WriteFileTool,
+};
 pub use trash::{LocalTrashStore, TrashEntry, TrashStore};
 pub use verification::AcceptanceVerifier;

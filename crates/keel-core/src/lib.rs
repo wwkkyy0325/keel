@@ -18,6 +18,7 @@ pub mod policy;
 pub mod secret;
 pub mod session;
 pub mod state;
+pub mod todo;
 pub mod tool;
 pub mod verification;
 
@@ -45,10 +46,14 @@ pub use policy::{
 };
 pub use secret::{detect_secret, redact_secrets, SecretKind};
 pub use session::{
-    CompressionSkip, Entry, Fact, FactScope, Segment, SegmentChange, SegmentRecord, SegmentState,
-    Session, ToolSummary, TurnRecord,
+    CompressionSkip, Entry, Fact, FactScope, RecalledSegment, Segment, SegmentChange,
+    SegmentRecord, SegmentState, Session, SessionSummary, ToolSummary, TurnRecord,
 };
 pub use state::{TurnEvent, TurnState};
+pub use todo::{
+    TodoError, TodoItem, TodoList, TodoSource, TodoState, TodoStatus, TODO_MAX_ITEMS,
+    TODO_MAX_TEXT_CHARS,
+};
 pub use tool::{
     ArgValue, ParamKind, ParamSpec, RiskLevel, Tool, ToolArgs, ToolCtx, ToolOutcome, ToolResult,
     ToolSchema,

@@ -85,6 +85,20 @@ Persona prompts follow one structure:
 - Entity names, identifiers, file paths and user-provided text keep the
   entity's own language and spelling; do not translate or transliterate them.
 
+## Task state
+
+- `task_state` is a pinned context stage; `todo` is the only tool that edits
+  the list. The list is kernel-owned and never lives in a model-authored file.
+- Host-seeded items are immutable and may lock the list; the model can still
+  move statuses. Unlocked lists allow model items.
+- At most one item is `in_progress`; limits are 100 items and 200 characters.
+- The list has a terminal state: `completed` when every item is done,
+  `failed` when all items are terminal and one failed, or an explicit
+  `failed`/`abandoned` close. A closed list rejects edits and renders as one
+  summary line.
+- Task state is not summarized, folded or recalled. It is small enough to stay
+  visible every turn.
+
 ## Permissions, sandbox and interactions
 
 - `workspace_auto` is the logical sandbox. Inside the workspace, normal reads
