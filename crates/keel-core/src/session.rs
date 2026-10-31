@@ -117,10 +117,15 @@ const RECALL_MARKERS: &[&str] = &[
     "before",
     "again",
     "记得",
-    "之前",
+    "之前说",
+    "之前提",
+    "之前那",
+    "之前我们",
+    "之前你",
     "刚才",
     "上次",
-    "前面",
+    "前面说",
+    "前面提",
     "提过",
     "说过",
     "回忆",
@@ -2116,7 +2121,7 @@ mod recall_tests {
         session.begin_turn("gamma delta");
         session.set_summary("summary", &[0], 256);
 
-        let brief = "继续写第2章。先读状态，写章节，更新状态，不要提问，不要跳章。".repeat(8);
+        let brief = "继续写第2章。写之前用 todo 标记 in_progress，先读状态，写章节，更新状态，不要提问，不要跳章。".repeat(8);
 
         assert!(session.recall(&brief).is_empty());
     }
