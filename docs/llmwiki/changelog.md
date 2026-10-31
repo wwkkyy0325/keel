@@ -696,6 +696,21 @@
   wrote 14/15 with similar input. Probes or a state-less workload are needed.
 - Missing chapters in no-memo and no-todo are single-run model variance.
 
+### Recall A/B and memo sufficiency
+
+- A 24-turn scripted companion run now has a `--no-recall` counterfactual:
+  both arms reached 24/24 `Done` with no overflow and 21 memo revisions. On the
+  turn 23 probe, the full arm named `config/marlin.toml` from recalled segment
+  0; the no-recall arm said there was no Marlin project. Recall is load-bearing
+  for an absorbed early detail.
+- The turn 24 "pasta recipe" probe missed recall because the segment contains
+  `aglio e olio` but not the word `recipe`; the score fell below the 0.34
+  floor. This is the measured cost of lexical-only recall, not a kernel defect.
+- A secondary 12-setting probe with the 1,170-token memo budget answered
+  correctly with and without recall: the memo already carried the details.
+  Memo budget relative to the sealed segment decides whether recall is needed.
+- Report: `evals/reports/2026-11-03-recall-probe.md`.
+
 ### Derived current task and model-call telemetry
 
 - `TodoList::current` derives the current task from the explicit in-progress

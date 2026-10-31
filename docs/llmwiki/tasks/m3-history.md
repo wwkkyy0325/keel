@@ -134,6 +134,12 @@ one at a time. Summarization is blocked on
       context 843–1479 tokens, recall fired for segments 0 and 4, and the
       answers were `config/marlin.toml` and `aglio e olio`. Report:
       `evals/reports/2026-11-03-companion-24-turn-recall.md`.
+- [x] Model-level recall A/B: the same 24 scripted turns with and without
+      recall — verify: both arms 24/24 `Done`, 21 memo revisions, 0 overflow;
+      the full arm answered `config/marlin.toml` from segment 0 and the
+      no-recall arm denied the project existed; the "pasta recipe" probe missed
+      because the segment lacks the word `recipe`. Report:
+      `evals/reports/2026-11-03-recall-probe.md`.
 
 ## Verification commands
 

@@ -72,7 +72,13 @@ See `evals/reports/2026-11-03-kernel-ablation.md`. The short version:
       directly. Verify: `text_only_turn_reaches_done` asserts one call.
 - [ ] Probe the short memo: the derived arm wrote a 126-character memo and the
       kernel still absorbed the covered segment.
-- [ ] Recall and memo probes with early details removed from the state.
+- [x] Recall probe with a disabled arm: 24 scripted companion turns with and
+      without recall. Both 24/24 `Done`, 21 memo revisions, 0 overflow; the
+      full arm answered `config/marlin.toml` from segment 0, the no-recall arm
+      denied the project. A "pasta recipe" probe missed because the segment
+      lacks `recipe`. Report: `evals/reports/2026-11-03-recall-probe.md`.
+- [ ] Memo probe with a short absorbed segment and early details removed from
+      the state, to test the 126-character memo case.
 
 ## Metrics
 

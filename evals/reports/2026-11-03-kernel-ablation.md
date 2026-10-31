@@ -112,8 +112,9 @@ to a mechanism. The validator caught them, which is the intended behavior.
 
 ## Next
 
-1. Add recall probes after sealing, with early details removed from the state,
-   so no-recall can actually lose something.
+1. Done: `2026-11-03-recall-probe.md` adds the recall counterfactual. With
+   recall the model named `config/marlin.toml`; without it the model denied the
+   project existed.
 2. Probe the short-memo case: a 126-character memo absorbed a segment; remove
    an early detail from the state and ask for it after the seal.
 3. Repeat `full`, `no-todo`, `full-derived` and `unbounded` once with `calls=`

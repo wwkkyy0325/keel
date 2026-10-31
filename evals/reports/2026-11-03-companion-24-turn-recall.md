@@ -56,8 +56,9 @@ and whether recall can bring it back when the memo has dropped it.
 
 ## Limits
 
-- One provider, one run, scripted topics; no model-level A/B with recall
-  disabled.
+- One provider, one run, scripted topics. The model-level A/B with recall
+  disabled is now in `2026-11-03-recall-probe.md`: without recall the model
+  denied that the early project existed.
 - Lexical recall needs a shared term. Paraphrase and synonymy will miss; that is
   the known cost of not having vectors.
 - The run measures mechanism and a few probe answers, not general answer
