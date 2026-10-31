@@ -13,25 +13,33 @@ one at a time. Summarization is blocked on
       with a multi-message stage and an unchanged single-message stage
 - [ ] 3. CLI session loop — verify: 20-turn mock session reaches `Done` each
       turn and keeps history across turns
-- [ ] 4. Budget-driven assembly: detail window sized in tokens (70% share,
-      two-turn floor, no turn ceiling), digests for older turns, records for
-      sealed segments — verify: fixture sessions at small, medium and large
-      budgets produce the expected composition, a short-turn chat keeps many
-      turns verbatim, a tool-heavy turn is digested sooner, and
-      `HistoryAssembled` reports the composition
-- [ ] 5. Tool summaries: head and tail by character count, spill file under
+- [ ] 4. Budget-driven assembly: detail window sized in tokens (two-turn
+      floor, no turn ceiling), digests for older turns, records for sealed
+      segments — verify: fixture sessions at small, medium and large budgets
+      produce the expected composition, a short-turn chat keeps many turns
+      verbatim, a tool-heavy turn is digested sooner, and `HistoryAssembled`
+      reports the composition
+- [ ] 5. Context governor: gauge, watermarks, level-dependent detail share,
+      cheap-first actions — verify: a fixture drives each level; amber
+      micro-compaction saves tokens with no model call; orange shrinks the
+      share; red injects the wrap-up exactly once per crossing; critical ends
+      in `ContextOverflow`; `ContextPressure` reports every decision
+- [ ] 6. Turn-budget wrap-up: reserve one model call for the final answer and
+      forbid new tool calls on it — verify: a turn that reaches the call limit
+      ends with an answer instead of `TurnsExhausted`
+- [ ] 7. Tool summaries: head and tail by character count, spill file under
       `.keel/outputs/`, marker carries the path — verify: a 200 kB output
       truncates, spills once, and is readable through `read_file`
-- [ ] 6. Kernel segmentation heuristic — verify: transcript fixtures seal on
+- [ ] 8. Kernel segmentation heuristic — verify: transcript fixtures seal on
       topic change, verified completion, and size cap, and do not seal on a
       follow-up that references the same artifact
-- [ ] 7. L2 turn digest and L3 segment record with the sufficiency gate —
+- [ ] 9. L2 turn digest and L3 segment record with the sufficiency gate —
       verify: a record missing a required field keeps raw entries and emits
       `CompressionSkipped`; a complete record replaces them
-- [ ] 8. Facts: extraction from structured signals, session and global scope,
+- [ ] 10. Facts: extraction from structured signals, session and global scope,
       strict promotion, contradiction handling — verify: a verified constraint
       is promoted; a transient path is not; a contradiction demotes
-- [ ] 9. Companion profile and 20-turn real run — verify: profile-only diff
+- [ ] 11. Companion profile and 20-turn real run — verify: profile-only diff
       from M2, no tools, no kernel branch; transcript and metrics recorded
 
 ## Verification commands

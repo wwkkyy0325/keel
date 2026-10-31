@@ -67,36 +67,81 @@ budget where possible, so a larger window keeps more detail without a code
 change. Defaults are chosen to under-segment: a wrong seal costs detail, not
 correctness.
 
-### 3. Assembly is budget-driven
+### 3. A context governor, not a fixed allocation
 
-Assembly runs per model call, after the pinned stages, with the budget
-remaining at the history stage:
+A fixed share is a quota, not a control loop. The kernel runs a governor that
+measures pressure before every model call and decides what to do about it.
 
-1. the current input is pinned and never compressed;
-2. the detail window is sized in tokens, not turns. It keeps the largest
-   number of whole turns that fits within the detail share, which defaults to
-   70% of the budget remaining at the history stage. There is no turn ceiling;
-   the floor is two turns;
-3. if two whole turns do not fit the detail share, they still take precedence
-   over sealed records; if they do not fit the whole history budget, the older
-   one is degraded to a digest rather than cut mid-sentence;
-3b. the turn count therefore falls out of the budget: a short-turn conversation
-   keeps dozens of turns verbatim, while a tool-heavy coding turn is digested
-   sooner. A profile that cares more about input cost than continuity lowers
-   `budget_tokens`; there is no separate turn-count knob;
-4. spend what remains on older turns of the current segment as digests, newest
-   first;
-5. then on sealed segment records, newest first, emitted in chronological
-   order;
-6. then on session facts, which are emitted by the memory stage before
-   history.
+**Gauge.** Before each call:
 
-If the pinned parts alone exceed the budget the turn ends in
-`ContextOverflow`; the kernel does not silently emit a partial prompt.
+```
+effective_window = model_window - output_reserve
+used             = estimated input + tool schemas + system + persona
+ratio            = used / effective_window
+```
 
-Nothing is fixed at compile time: the detail window is the largest number of
-whole turns that fits the token share, above a two-turn floor and with no
-ceiling.
+The estimate is the same cheap estimate used elsewhere; after a call the
+adapter's reported usage replaces it when it is larger. Ratios, not token
+constants, so a larger window needs no code change.
+
+**Watermarks and actions.** Each level does the cheapest thing that can work,
+and a higher level runs only when the cheaper one was not enough:
+
+| Level | Ratio | Action |
+|---|---|---|
+| green | below 50% | proceed |
+| amber | 50 to 70% | micro-compaction: truncate or drop old tool results, drop promoted records; no model call |
+| orange | 70 to 85% | seal the segment and build `L2`/`L3` structured records; shrink the detail share |
+| red | above 85% | inject a wrap-up instruction, then compact; if no call fits, compact directly |
+| critical | still over budget after compaction | `ContextOverflow` with the composition in the error |
+
+**The detail share is a function of the level**, not a constant: 80% at green,
+60% at amber, 40% at orange, 20% at red, always with the two-turn floor. This
+is the dynamic behavior the fixed 70% share lacked.
+
+**Wrap-up.** At red the kernel injects one instruction before the model call:
+do not start new work, finish the step in flight, then report goal, done,
+pending, artifacts and decisions. That report seeds the segment record. The
+injection happens once per threshold crossing, and is skipped when there is
+nothing worth compacting.
+
+**Two budgets, one wrap-up path.** The context window is not the only budget.
+The turn also has a model-call limit and a wall-clock limit. When one model
+call remains, the kernel forbids new tool calls and asks for the final answer;
+the wrap-up report and the final answer share the same reserved call. An abrupt
+`TurnsExhausted` is the fallback only when even that call does not fit.
+
+**Safe points.** Every action runs at the top of the model-call loop, after
+tool results are appended and before messages are built. Never during a stream,
+an interaction wait, or verification. Compaction never touches messages
+produced in the current turn, only completed turns and sealed segments.
+
+**Coordination rules.**
+
+- hysteresis: after a compaction, do not compact again until the ratio falls
+  back below amber; at most two compactions per turn;
+- circuit breaker: three consecutive compaction failures end the turn with a
+  typed error instead of looping;
+- boundary marker: compaction inserts a `HistoryBoundary` message so the model
+  can tell summarized history from verbatim history;
+- re-inject after compaction: current task, open items, artifacts and the
+  latest wrap-up report are pinned again;
+- cost guard: skip an action whose estimated savings are below a floor, so a
+  compaction cannot cost more than it saves;
+- determinism: given the same session and budget, the governor takes the same
+  decisions.
+
+**Assembly order.** Once the governor has decided, assembly is:
+
+1. pinned input, never compressed;
+2. the detail window, sized in tokens at the current level's share, no turn
+   ceiling, two-turn floor;
+3. older turns of the current segment as digests, newest first;
+4. sealed segment records, newest first, emitted in chronological order;
+5. session facts, emitted by the memory stage before history.
+
+If the pinned parts alone exceed the budget, the turn ends in `ContextOverflow`;
+the kernel does not silently emit a partial prompt.
 
 ### 4. Compression ladder and triggers
 
@@ -108,9 +153,11 @@ ceiling.
 - `L4` fact folding: a segment record is dropped once its facts are promoted
   and it has no open items.
 
-Triggers are exactly two: a segment seal, and budget pressure during assembly.
-There is no per-turn background summarization; it would spend tokens on every
-turn to save tokens later.
+Triggers are exactly two: a segment seal, and a governor level of amber or
+above. There is no per-turn background summarization; it would spend tokens on
+every turn to save tokens later. Micro-compaction runs only when its estimated
+savings clear the cost guard, so an edit that saves less than it costs is
+skipped.
 
 ### 5. Retention follows facts, not a fixed count
 
@@ -177,6 +224,13 @@ host into that stage at session start.
 - Given the same session and budget, assembly is deterministic.
 - Assembly emits `HistoryAssembled` with levels used, verbatim turns, records,
   dropped counts, and tokens, so the composition is observable in every run.
+- The governor never drops messages of the turn in progress. If pressure
+  remains after compaction it fails with `ContextOverflow` instead of sending
+  a prompt it knows is incomplete.
+- One model call is reserved for wrap-up and the final answer when the turn
+  budget is nearly exhausted.
+- Every governor decision emits `ContextPressure` with the ratio, level,
+  action and estimated savings.
 
 ### 10. Summarization is an open research item
 
@@ -195,8 +249,12 @@ without changing assembly.
   sequence of user and assistant turns rather than one text block.
 - The companion profile can run 20 turns with no kernel branch; it only sets
   the memory and context configuration.
-- Compression quality is measurable: `CompressionSkipped`, `HistoryAssembled`
-  and probe questions in the eval harness give evidence instead of intuition.
+- Compression quality is measurable: `CompressionSkipped`, `HistoryAssembled`,
+  `ContextPressure` and probe questions in the eval harness give evidence
+  instead of intuition.
+- The driver gains governor state (level, compactions this turn, consecutive
+  failures) and one reserved model call, so turn-budget tests must account for
+  the wrap-up path.
 - Facts have provenance, so a wrong memory can be traced to the turn that
   produced it.
 

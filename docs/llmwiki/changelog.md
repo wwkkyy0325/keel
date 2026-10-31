@@ -309,3 +309,15 @@
 - `L2` and `L3` stay model-free until that research note has a result.
 - Updated the design summary, the backlog and the profile spec pointer.
 - No code changed.
+
+### M3 context governor
+
+- Replaced the fixed detail share with a governor: a per-call gauge over the
+  effective window, watermarks (green, amber, orange, red, critical), a detail
+  share that varies by level, and cheap-first actions.
+- Added the wrap-up injection at red, a reserved model call for wrap-up and the
+  final answer when the turn budget is nearly exhausted, hysteresis, a
+  compaction circuit breaker, a boundary marker, re-injection after compaction
+  and a cost guard.
+- Added a provenance entry for the public context-editing documentation used as
+  a design reference; no code was copied.

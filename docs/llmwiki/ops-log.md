@@ -344,3 +344,19 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
   experiment and a 200k-token budget.
 - Added `tasks/m3-history.md` with nine implementation steps.
 - No code changed.
+
+### M3 context governor
+
+- Replaced the static share with a governor consulted before every model call:
+  gauge over the effective window, watermarks at 50/70/85%, cheap-first
+  actions, and a detail share of 80/60/40/20% by level.
+- Red injects a one-shot wrap-up instruction that produces the segment record;
+  one model call is reserved for wrap-up and the final answer when the turn
+  call limit is nearly reached.
+- Coordination: safe points only at the top of the model-call loop, no
+  compaction during streaming, interactions or verification, hysteresis,
+  two compactions per turn, a three-failure circuit breaker, a boundary
+  marker, re-injection of task state, and a savings floor.
+- Added `ContextPressure` to the event list and a provenance row for the
+  public context-editing documentation.
+- No code changed.

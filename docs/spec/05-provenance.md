@@ -22,6 +22,7 @@ the evidence trail for the clean-room claim.
 | 2026-11-02 | HumanEval+ / MBPP+ (EvalPlus) | Apache-2.0 | Planned code-correctness smoke cases | Downloaded locally, not vendored |
 | 2026-11-02 | BigCodeBench | Apache-2.0 | Planned library-usage cases | Downloaded locally, not vendored |
 | 2026-11-02 | SWE-bench harness | MIT; each repository keeps its license | Planned later repo-level cases | Run in isolated workspaces; no code copied |
+| 2026-11-02 | Anthropic context-editing documentation | Public documentation | Design reference for threshold-triggered tool-result clearing and summarization | No code copied; thresholds re-derived for Keel (ADR 0006) |
 
 ## Excluded materials
 
