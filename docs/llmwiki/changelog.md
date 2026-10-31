@@ -48,3 +48,11 @@
 - Verification: 86 tests; clippy clean; mock overhead p50 2 us, p99 9 us.
 - Installed `cargo-deny v0.20.2`; `cargo deny check` passes. Pinned path
   workspace dependencies to `0.1.0` to satisfy the wildcard ban.
+
+## 2026-11-02 — M2 OpenAI-compatible provider
+
+- Added `keel-model-openai` with typed request/message/tool mapping, streamed
+  tool-call accumulation and the reserved `keel_interact` control tool.
+- Added a streaming HTTP provider with SSE parsing, usage, error mapping,
+  stream-cut detection and cancellation; tested against a local HTTP server.
+- Host provider selection is still pending.

@@ -53,6 +53,7 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 
 - `feat: implement M1 kernel with permissions and interactions`
 - `feat: add OpenAI-compatible wire mapping`
+- `feat: add streaming OpenAI-compatible provider`
 
 ### M2 — OpenAI-compatible wire mapping
 
@@ -64,4 +65,14 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 - Model-initiated interactions are limited to clarify, choice and plan
   approval; permission approval and escalation remain kernel-initiated.
 - Verification: `cargo test -p keel-model-openai` (7 tests), workspace clippy,
+  `cargo deny check`.
+
+### M2 — Streaming OpenAI-compatible provider
+
+- Added `OpenAiProvider` with a reqwest client, SSE parsing, text/reasoning
+  deltas, accumulated tool calls, control-tool interactions, usage collection,
+  HTTP error mapping, stream-cut detection and cancellation.
+- Added local TCP HTTP server tests for text, tool calls, interactions, HTTP
+  500, stream cut and cancellation.
+- Verification: 13 tests in `keel-model-openai`, workspace clippy and
   `cargo deny check`.

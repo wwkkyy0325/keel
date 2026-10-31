@@ -3,7 +3,7 @@
 ## Steps
 
 - [x] 1. Wire mapping: request JSON, message/tool mapping, tool-call accumulator, interaction control tool — verify: `cargo test -p keel-model-openai`
-- [ ] 2. Streaming HTTP provider: SSE parsing, error mapping, cancellation — verify: local HTTP server tests
+- [x] 2. Streaming HTTP provider: SSE parsing, error mapping, cancellation — verify: local HTTP server tests
 - [ ] 3. Host wiring: profile selects mock or OpenAI-compatible provider — verify: CLI smoke test
 - [ ] 4. Commit each step separately
 
@@ -21,3 +21,11 @@
 - SSE requires `[DONE]` or a finish reason; an abrupt body end is a stream cut.
 - Tool arguments are typed at the kernel boundary and parsed once at the wire
   edge.
+
+## Result
+
+- 13 tests in `keel-model-openai`: 7 wire + 6 local-server streaming tests.
+- Workspace tests, clippy and `cargo deny check` pass.
+- The provider handles text deltas, reasoning deltas, accumulated tool calls,
+  control-tool interactions, usage, HTTP errors, stream cuts and cancellation.
+- Host wiring is still pending: the CLI always uses the mock provider.

@@ -102,6 +102,12 @@ pub struct ModelStream {
     rx: mpsc::Receiver<Result<ModelChunk, ModelError>>,
 }
 
+impl fmt::Debug for ModelStream {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ModelStream").finish_non_exhaustive()
+    }
+}
+
 impl ModelStream {
     pub fn new(rx: mpsc::Receiver<Result<ModelChunk, ModelError>>) -> Self {
         Self { rx }
