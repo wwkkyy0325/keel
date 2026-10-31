@@ -44,8 +44,15 @@ host is shared, so the run uses the remote DeepSeek endpoint.
       Verify: `a_long_task_brief_does_not_recall`.
 - [x] Rebuild the CLI with the summary floor and the fixes. Verify: 242 tests,
       fmt and clippy clean.
-- [ ] Run a 15-turn slice with the 24k profile and per-turn acceptance. The
-      slice is `fusion-run/slice`; results pending.
+- [x] Run a 15-turn slice with the 24k profile and per-turn acceptance.
+      Verify: 15/15 Done, 0 overflow, 14/14 chapters, 14/14 tasks closed,
+      15/15 acceptance passes. Recall still fired on 12 turns because `之前`
+      matched `写之前`; fixed by narrowing the markers.
+- [x] Run a 3-turn micro-slice after the marker fix. Verify: 3/3 Done, 0
+      overflow, 2/2 chapters, 2/2 tasks closed, no recall on chapter turns,
+      probe answered correctly.
+- [ ] Run the full 50-turn rerun with the 24k profile, per-turn acceptance,
+      narrowed markers and `--stop-on-error`. The slices are not a substitute.
 
 ## Verify criteria
 

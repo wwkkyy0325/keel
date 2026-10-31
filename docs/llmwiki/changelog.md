@@ -709,8 +709,15 @@
 - The CLI has `--turn-input` (write the current input for an external checker)
   and `--stop-on-error` (a long-run host does not advance after an error).
   Added a 24k novel profile for long tool-heavy workloads.
-- Verification: 242 tests; fmt and clippy clean. A 15-turn slice is running
-  with the per-turn checker; results pending.
+- Verification: 242 tests; fmt and clippy clean.
+- 15-turn slice (24k, per-turn checker, stop-on-error): 15/15 Done, 0
+  overflow, 14/14 chapters, 14/14 tasks closed, 15/15 acceptance passes,
+  context peak 13,305/23,846. Recall fired on 12 turns because `之前` matched
+  the instruction `写之前`; the markers now require phrases such as
+  `之前说`/`之前提` instead of bare `之前`/`前面`.
+- 3-turn micro-slice after the marker fix: 3/3 Done, 0 overflow, 2/2 chapters,
+  2/2 tasks closed, no recall on chapter turns, the probe answered correctly.
+  The full 50-turn rerun is still pending.
 
 ### Fusion run: negative result at 16k
 

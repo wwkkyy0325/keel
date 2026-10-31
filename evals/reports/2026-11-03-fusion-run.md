@@ -139,6 +139,35 @@ fallback is safer but adds records to an already tight context.
 6. Rebuild the CLI so the summary floor is active; rerun a 15–20 turn slice
    before the full 50.
 
+## Fix validation
+
+### 15-turn slice (before the recall-marker narrowing)
+
+- 15/15 `Done`, 0 overflow, 14/14 chapters, 14/14 tasks closed, 15/15
+  acceptance passes.
+- Context peak 13,305 against 23,846; the 24k profile removed the overflow that
+  the 16k run hit.
+- Sequential task updates worked: done advanced 1→14 and the list closed; no
+  out-of-order completion.
+- The per-turn checker checked the requested chapter, all earlier chapters and
+  the state; it passed every turn.
+- Recall still fired on 12 of 15 turns at score 0.90 with 140–146/171–180
+  hits. The cause was the marker `之前` matching the instruction `写之前` in
+  every chapter prompt. That is a marker-specificity bug, not a budget issue.
+- Three summary calls fell back (`too little text`); the floor and the
+  structured fallback worked.
+
+### 3-turn micro-slice (after narrowing the marker)
+
+- Two chapter turns and one probe: 3/3 `Done`, 0 overflow, 2/2 chapters, 2/2
+  tasks closed, 3/3 acceptance passes.
+- No recall on the chapter prompts; the probe answered the chapter-1 detail
+  correctly from the memo/current context.
+- One summary fallback; no failure path broke the turn.
+
+The fixes are validated on the slices. The full 50-turn rerun is still
+pending; the slices are not a substitute for it.
+
 ## Verdict
 
 The kernel mechanisms work individually and in smaller runs, but the 57-turn

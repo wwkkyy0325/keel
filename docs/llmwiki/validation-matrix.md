@@ -35,7 +35,10 @@ claim of failure.
 | 24-turn companion `full` / `no-recall` | memo, recall, provider | 24/24 both; recall A/B answered Marlin vs denied it |
 | Local 26B 24-turn 8k / 16k | provider, memo, recall | 24/24; 8k explicit recall correct, 16k pasta correct |
 | Local 26B chapter | tools, todo, persona, provider | 1 chapter, 1,184 CJK, state updated, task closed |
-| 57-turn fusion run | tools, todo, memo, recall, elision, acceptance, probes | **Failed fusion at 16k**: 49/57 Done, 28/50 chapters, 8 overflow, acceptance missed 16 silent skips; fixes pending |
+| 57-turn fusion run | tools, todo, memo, recall, elision, acceptance, probes | **Failed at 16k**: 49/57 Done, 28/50 chapters, 8 overflow, acceptance missed 16 silent skips |
+| 15-turn fusion slice | tools, sequential todo, 24k, per-turn acceptance, memo, recall | 15/15 Done, 0 overflow, 14/14 chapters, 14/14 tasks closed, acceptance 15/15; recall marker noise fixed afterwards |
+| 3-turn micro-slice | same, narrowed recall markers | 3/3 Done, 0 overflow, 2/2 chapters, 2/2 tasks closed, no recall on chapter turns |
+| Full 50-turn rerun | same as the slice | Pending |
 
 ## Memory abilities
 
