@@ -306,6 +306,23 @@ fn print_outcome(config: &RuntimeConfig, events: &EventLog, outcome: &TurnOutcom
     {
         println!("alloc: {allocation}");
     }
+    if let Some((messages, before, after)) =
+        events
+            .for_turn(outcome.turn_id)
+            .iter()
+            .rev()
+            .find_map(|record| match &record.event {
+                Event::ContextElided {
+                    messages,
+                    before,
+                    after,
+                    ..
+                } => Some((*messages, *before, *after)),
+                _ => None,
+            })
+    {
+        println!("elided: messages={messages} tokens {before}->{after}");
+    }
     if let Some((segments, tokens)) =
         events
             .for_turn(outcome.turn_id)

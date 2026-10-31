@@ -7,10 +7,10 @@ use std::time::Duration;
 use keel_core::{
     detect_secret, estimate_tokens, redact_secrets, AcceptanceItem, Answer, ArgValue, BuildCtx,
     CancelToken, CommitCtx, CommitDecision, ErrorCode, Event, EventSink, InteractionId,
-    InteractionRequest, InteractionResponse, KernelError, Message, ModelChunk, ModelError,
-    ModelProvider, ModelRequest, ModelRole, OnTimeout, Policy, ReasoningLevel, SecretKind,
-    SegmentRecord, Session, TodoList, TodoState, ToolArgs, ToolOutcome, TurnEvent, TurnRecord,
-    TurnState, VerificationMode, VerificationReport,
+    InteractionRequest, InteractionResponse, KernelError, Message, MessageRole, ModelChunk,
+    ModelError, ModelProvider, ModelRequest, ModelRole, OnTimeout, Policy, ReasoningLevel,
+    SecretKind, SegmentRecord, Session, TodoList, TodoState, ToolArgs, ToolCallId, ToolOutcome,
+    TurnEvent, TurnRecord, TurnState, VerificationMode, VerificationReport,
 };
 
 use crate::context::ContextBuilder;
@@ -738,6 +738,21 @@ impl<M: ModelProvider> TurnDriver<M> {
                 continue 'turn;
             }
             if estimated_tokens > recipe.budget_tokens {
+                let before = estimated_tokens;
+                let elided = elide_old_tool_results(&mut messages);
+                if elided > 0 {
+                    estimated_tokens = messages.iter().fold(0u32, |total, message| {
+                        total.saturating_add(message.estimated_tokens())
+                    });
+                    self.events.append(Event::ContextElided {
+                        turn_id,
+                        messages: elided,
+                        before,
+                        after: estimated_tokens,
+                    });
+                }
+            }
+            if estimated_tokens > recipe.budget_tokens {
                 self.step(fsm, turn_id, TurnEvent::Overflow)?;
                 return Err(KernelError::ContextOverflow {
                     used: estimated_tokens,
@@ -1289,6 +1304,36 @@ fn verification_failures(report: &VerificationReport) -> Vec<String> {
         .chain(report.required_unverified.iter())
         .cloned()
         .collect()
+}
+
+/// Replaces old tool-result bodies with a short marker, keeping the latest
+/// tool-call round intact. Returns how many messages were elided.
+fn elide_old_tool_results(messages: &mut [Arc<Message>]) -> u32 {
+    let Some(last_calls) = messages.iter().rposition(|message| {
+        message.role == MessageRole::Assistant && !message.tool_calls.is_empty()
+    }) else {
+        return 0;
+    };
+    let mut elided = 0;
+    for message in messages[..last_calls].iter_mut() {
+        if message.role != MessageRole::Tool {
+            continue;
+        }
+        if message.content.contains("earlier tool result elided") {
+            continue;
+        }
+        if message.content.chars().count() <= 64 {
+            continue;
+        }
+        let call_id = message.tool_call_id.unwrap_or_else(|| ToolCallId::new(0));
+        *message = Arc::new(Message::tool_result(
+            call_id,
+            "elided",
+            "[earlier tool result elided to save context]",
+        ));
+        elided += 1;
+    }
+    elided
 }
 
 /// One structured line for the summary input. The model sees exact outcomes

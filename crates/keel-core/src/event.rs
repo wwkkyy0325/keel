@@ -60,6 +60,7 @@ pub enum Event {
         dropped_turns: u32,
         summary_tokens: u32,
         recall_candidates: u32,
+        recall_candidate_tokens: u32,
         recall_segments: u32,
         recall_tokens: u32,
         record_candidates: u32,
@@ -74,6 +75,12 @@ pub enum Event {
         candidates: u32,
         segments: Vec<u32>,
         tokens: u32,
+    },
+    ContextElided {
+        turn_id: TurnId,
+        messages: u32,
+        before: u32,
+        after: u32,
     },
     TodoUpdated {
         turn_id: TurnId,
@@ -204,6 +211,7 @@ impl Event {
             | Self::ContextPressure { turn_id, .. }
             | Self::HistoryAssembled { turn_id, .. }
             | Self::HistoryRecalled { turn_id, .. }
+            | Self::ContextElided { turn_id, .. }
             | Self::TodoUpdated { turn_id, .. }
             | Self::TodoClosed { turn_id, .. }
             | Self::WrapUpInjected { turn_id, .. }
@@ -240,6 +248,7 @@ impl Event {
             Self::ContextPressure { .. } => "context_pressure",
             Self::HistoryAssembled { .. } => "history_assembled",
             Self::HistoryRecalled { .. } => "history_recalled",
+            Self::ContextElided { .. } => "context_elided",
             Self::TodoUpdated { .. } => "todo_updated",
             Self::TodoClosed { .. } => "todo_closed",
             Self::WrapUpInjected { .. } => "wrap_up_injected",

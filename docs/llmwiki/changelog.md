@@ -662,3 +662,15 @@
   chapter-only prompt, ten host tasks, one arm per mechanism removed.
 - Verification: 230 tests; fmt and clippy clean. Arm results are tracked in
   `docs/llmwiki/tasks/ablation.md`.
+
+### Recall budget and mid-turn compaction
+
+- Recall now takes a quarter of the remaining history allowance (minimum 400
+  tokens) instead of a fixed 400-token ceiling. The full-15 pilot showed a
+  chapter-sized hit being dropped with `recall=0(0/1)`; the hit now fits.
+  `HistoryAssembled` reports the candidate token count.
+- Before a context overflow, the driver elides old tool-result bodies, keeping
+  the latest tool-call round. `ContextElided` reports how many messages were
+  shortened and the token delta. This covers growth inside a turn, which the
+  turn-start governor cannot see.
+- Verification: 232 tests; fmt and clippy clean.

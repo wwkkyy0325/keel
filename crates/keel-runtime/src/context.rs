@@ -300,14 +300,18 @@ impl ContextStage for HistoryStage {
             });
         }
 
-        // Absorbed segments matched by the input. Small, optional, and capped:
-        // they never displace the current segment.
+        // Absorbed segments matched by the input. The budget scales with the
+        // remaining space; a fixed 400-token cap silently dropped chapter-sized
+        // hits. Two hits are bounded by their excerpts, so no ceiling is needed.
         let remaining = available.saturating_sub(summary_tokens);
-        let recall_cap = (remaining / 5).clamp(1, 400);
+        let recall_cap = (remaining / 4).max(400);
+        let recall_candidates: Vec<String> = ctx.recalled.iter().map(render_recalled).collect();
+        let recall_candidate_tokens: u32 = recall_candidates.iter().fold(0u32, |total, line| {
+            total.saturating_add(estimate_tokens(line))
+        });
         let mut recall_lines: Vec<String> = Vec::new();
         let mut recall_tokens = 0u32;
-        for recalled in ctx.recalled {
-            let line = render_recalled(recalled);
+        for line in recall_candidates {
             let tokens = estimate_tokens(&line);
             // A single oversized hit must not bypass the cap; try the next
             // hit instead.
@@ -417,6 +421,7 @@ impl ContextStage for HistoryStage {
                 dropped_turns: dropped,
                 summary_tokens,
                 recall_candidates: ctx.recalled.len() as u32,
+                recall_candidate_tokens,
                 recall_segments: recall_lines.len() as u32,
                 recall_tokens,
                 record_candidates: ctx.records.len() as u32,

@@ -693,3 +693,14 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
   ten-chapter smoke overflowed because full `read_file` output entered the
   current turn.
 - Verification: 226+ tests; fmt and clippy clean.
+
+### Recall budget and mid-turn compaction
+
+- `HistoryStage` now uses `(remaining / 4).max(400)` for recall and reports the
+  candidate token count. The fixed 400-token ceiling was dropping chapter-sized
+  hits; the full-15 log showed `recall=0(0/1)`.
+- The driver calls `elide_old_tool_results` before returning `ContextOverflow`:
+  tool-result bodies before the latest tool-call round become a short marker.
+  `ContextElided` carries the message count and the token delta. This is the
+  mid-turn compaction the turn-start governor cannot do.
+- Verification: 232 tests; fmt and clippy clean.

@@ -23,6 +23,21 @@ removed at a time.
   chapters.
 - Ten host tasks, so a completed arm also exercises the terminal list state.
 
+## Findings so far
+
+- The ten-chapter full arm wrote 10/10 with no overflow and the task list
+  closed. It did not trigger memo or recall: ten turns never reached the
+  twelve-turn segment cap, so the whole arm was one open segment.
+- The fifteen-chapter full arm triggered one memo revision and one recall
+  candidate, but the fixed 400-token cap dropped the hit (`recall=0(0/1)`).
+  It also hit four `ContextOverflow`s from tool results added after the
+  context was built. Both are kernel allocation problems, now fixed:
+  recall takes a quarter of the remaining allowance, and old tool results are
+  elided before overflow.
+- The 15-chapter arm wrote 14/15 chapters; chapter 5 was skipped and the task
+  list stopped at `done=14`. That part is protocol/model behavior, not the
+  kernel.
+
 ## Arms
 
 - [ ] `full`: memo + recall + todo + bounded tools
