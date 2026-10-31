@@ -234,12 +234,21 @@ already has: verification outcomes, tool outcomes, changed artifacts, and
 user-stated constraints. Candidate facts carry a statement, scope,
 confidence, and provenance (segment and turn).
 
-Promotion is strict:
+Promotion is strict and never decided by a keyword alone:
 
-- a fact becomes global only when it is durable, does not reference a
-  transient task, and was confirmed by a verifier or stated by the user;
-- everything else stays session-scoped and is discarded at session end;
-- a later contradiction demotes or drops the earlier fact.
+- only a sentence-initial imperative counts as a constraint; questions,
+  first-person narration, cues in the middle of a sentence, and phrasing tied
+  to the current task are rejected;
+- a durable cue (`always`, `never`, `from now on`, `以后`, `永远`) makes the
+  sentence a *candidate*, not a global fact;
+- a candidate becomes global only after the same statement repeats in a second
+  segment; until then it stays session-scoped;
+- a different statement for the same key resets the count and demotes the
+  earlier fact;
+- everything else stays session-scoped and is discarded at session end.
+
+The kernel never infers "global" from wording alone, because the same words can
+describe a habit, a question, this task, or this workspace.
 
 Session facts are emitted by the memory stage; global facts are loaded by the
 host into that stage at session start.

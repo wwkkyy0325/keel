@@ -49,13 +49,15 @@ one at a time. Summarization is blocked on
       the missing field. The gate currently requires goal and result; error
       tracking is not recorded per turn yet, so errors are not a gate field.
 - [x] 10. Facts: extraction from structured signals, session and global scope,
-      strict promotion, contradiction handling — verify: a durable constraint
-      ("always/never/以后/永远…") is promoted to global; an artifact path and a
-      verified outcome stay session-scoped; a later statement with the same
-      key replaces the earlier fact even across scopes. A `MemoryStage` emits
-      facts as one block and all profiles include it. Limits: cue matching is
-      heuristic (no model), and global facts live in-process until persistence
-      lands in M5.
+      strict promotion, contradiction handling — verify: only sentence-initial
+      imperative constraints count (questions, first-person narration,
+      mid-sentence cues and scoped phrasing are rejected); a durable constraint
+      must repeat in a **second segment** before it becomes global; an artifact
+      path and a verified outcome stay session-scoped; a different statement
+      for the same key resets the count and demotes the fact. A `MemoryStage`
+      emits facts as one block and all profiles include it. Limits: cue
+      matching is heuristic (no model), and global facts live in-process until
+      persistence lands in M5.
 - [ ] 11. Window matrix: 8k, 16k, 32k, 64k, 128k and 1M with scripted growth,
       companion and coding, mock model — verify: success rate, overflow rate,
       compactions, wrap-ups and tokens per window are recorded, and the

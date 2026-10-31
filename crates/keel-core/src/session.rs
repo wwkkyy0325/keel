@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::message::{Message, MessageRole};
@@ -62,6 +62,22 @@ impl ToolSummary {
 pub enum FactScope {
     Session,
     Global,
+}
+
+/// One extracted statement before its scope is decided.
+struct FactCandidate {
+    key: String,
+    statement: String,
+    durable: bool,
+    confirmed: bool,
+    segment_id: u32,
+}
+
+/// How often a durable constraint has been stated and how.
+#[derive(Debug, Clone)]
+struct Candidate {
+    statement: String,
+    segments: u32,
 }
 
 /// One durable statement extracted from a sealed segment.
@@ -143,6 +159,7 @@ pub struct Session {
     last_verified: bool,
     facts: Vec<Fact>,
     global_facts: Vec<Fact>,
+    candidates: BTreeMap<String, Candidate>,
 }
 
 impl Session {
@@ -311,15 +328,48 @@ impl Session {
         None
     }
 
-    fn apply_facts(&mut self, facts: Vec<Fact>) -> Vec<String> {
+    fn apply_facts(&mut self, candidates: Vec<FactCandidate>) -> Vec<String> {
         let mut promoted = Vec::new();
-        for fact in facts {
+        for candidate in candidates {
+            // A durable constraint is only a candidate: it must repeat in a
+            // second segment before it becomes global. A different statement
+            // for the same key resets the count and demotes it.
+            let scope = if candidate.durable {
+                let entry = self
+                    .candidates
+                    .entry(candidate.key.clone())
+                    .or_insert_with(|| Candidate {
+                        statement: candidate.statement.clone(),
+                        segments: 0,
+                    });
+                if entry.statement == candidate.statement {
+                    entry.segments = entry.segments.saturating_add(1);
+                } else {
+                    entry.statement = candidate.statement.clone();
+                    entry.segments = 1;
+                }
+                if entry.segments >= 2 {
+                    FactScope::Global
+                } else {
+                    FactScope::Session
+                }
+            } else {
+                FactScope::Session
+            };
+
+            let fact = Fact {
+                key: candidate.key,
+                statement: candidate.statement,
+                scope,
+                confirmed: candidate.confirmed,
+                segment_id: candidate.segment_id,
+            };
             // A newer statement for the same key replaces the old one, even
             // when it moves scope.
             self.facts.retain(|existing| existing.key != fact.key);
             self.global_facts
                 .retain(|existing| existing.key != fact.key);
-            if fact.scope == FactScope::Global {
+            if scope == FactScope::Global {
                 promoted.push(fact.key.clone());
                 self.global_facts.push(fact);
             } else {
@@ -439,10 +489,24 @@ const DURABLE_CUES: &[&str] = &[
     "始终",
 ];
 
+/// Markers that tie a sentence to this task, so it is never durable.
+const SCOPING_MARKERS: &[&str] = &[
+    "this task",
+    "this time",
+    "for now",
+    "here",
+    "本次",
+    "这次",
+    "这里",
+    "暂时",
+    "当前",
+    "这个任务",
+];
+
 /// Extracts facts from structure the kernel already has: user constraints,
 /// changed artifacts and verified segments.
-fn extract_facts(segment: &Segment) -> Vec<Fact> {
-    let mut facts: Vec<Fact> = Vec::new();
+fn extract_facts(segment: &Segment) -> Vec<FactCandidate> {
+    let mut candidates: Vec<FactCandidate> = Vec::new();
 
     for entry in &segment.entries {
         if entry.message.role != MessageRole::User {
@@ -450,17 +514,13 @@ fn extract_facts(segment: &Segment) -> Vec<Fact> {
         }
         for sentence in sentences(&entry.message.content) {
             if let Some((key, durable)) = parse_constraint(&sentence) {
-                upsert_fact(
-                    &mut facts,
-                    Fact {
+                upsert_candidate(
+                    &mut candidates,
+                    FactCandidate {
                         key: format!("constraint:{key}"),
                         statement: clip_statement(&sentence),
-                        scope: if durable {
-                            FactScope::Global
-                        } else {
-                            FactScope::Session
-                        },
-                        confirmed: true,
+                        durable,
+                        confirmed: false,
                         segment_id: segment.id,
                     },
                 );
@@ -469,12 +529,12 @@ fn extract_facts(segment: &Segment) -> Vec<Fact> {
     }
 
     for path in &segment.artifacts {
-        upsert_fact(
-            &mut facts,
-            Fact {
+        upsert_candidate(
+            &mut candidates,
+            FactCandidate {
                 key: format!("artifact:{path}"),
                 statement: format!("modified {path}"),
-                scope: FactScope::Session,
+                durable: false,
                 confirmed: true,
                 segment_id: segment.id,
             },
@@ -482,24 +542,24 @@ fn extract_facts(segment: &Segment) -> Vec<Fact> {
     }
 
     if segment.verified {
-        upsert_fact(
-            &mut facts,
-            Fact {
+        upsert_candidate(
+            &mut candidates,
+            FactCandidate {
                 key: format!("verified:{}", segment.topic),
                 statement: format!("verified: {}", segment.topic),
-                scope: FactScope::Session,
+                durable: false,
                 confirmed: true,
                 segment_id: segment.id,
             },
         );
     }
 
-    facts
+    candidates
 }
 
-fn upsert_fact(facts: &mut Vec<Fact>, fact: Fact) {
-    facts.retain(|existing| existing.key != fact.key);
-    facts.push(fact);
+fn upsert_candidate(candidates: &mut Vec<FactCandidate>, candidate: FactCandidate) {
+    candidates.retain(|existing| existing.key != candidate.key);
+    candidates.push(candidate);
 }
 
 fn sentences(text: &str) -> Vec<String> {
@@ -520,10 +580,31 @@ fn sentences(text: &str) -> Vec<String> {
 /// The cue is removed, so "always use tabs" and "never use tabs" share a key
 /// and the newer statement replaces the older one.
 fn parse_constraint(sentence: &str) -> Option<(String, bool)> {
-    let lower = sentence.to_lowercase();
-    let cue = CONSTRAINT_CUES.iter().find(|cue| lower.contains(**cue))?;
-    let durable = DURABLE_CUES.contains(cue);
-    let rest = lower.replace(cue, " ");
+    let trimmed = sentence.trim();
+    // Questions are never instructions.
+    if trimmed.ends_with('?') || trimmed.ends_with('？') {
+        return None;
+    }
+    let lower = trimmed.to_lowercase();
+    // "In this task" / "for now" ties the sentence to the current work.
+    if SCOPING_MARKERS.iter().any(|marker| lower.contains(marker)) {
+        return None;
+    }
+    // First-person narration ("I always use tabs") is a description.
+    if lower.starts_with("i ") || lower.starts_with("we ") || lower.starts_with('我') {
+        return None;
+    }
+    let lower = lower.strip_prefix("please ").unwrap_or(&lower).trim_start();
+
+    // The cue must open the sentence; a cue in the middle is commentary.
+    if !CONSTRAINT_CUES.iter().any(|cue| lower.starts_with(*cue)) {
+        return None;
+    }
+    let durable = DURABLE_CUES.iter().any(|cue| lower.starts_with(*cue));
+    let mut rest = lower.to_owned();
+    for cue in CONSTRAINT_CUES {
+        rest = rest.replace(cue, " ");
+    }
     let key = rest
         .split(|character: char| !character.is_alphanumeric())
         .filter(|token| !token.is_empty())
@@ -885,18 +966,65 @@ mod fact_tests {
     }
 
     #[test]
-    fn a_durable_constraint_is_promoted_to_global() {
+    fn a_durable_constraint_needs_two_segments() {
         let mut session = Session::new();
         record(&mut session, "always use tabs", &[]);
 
-        let change = session.begin_turn("write a haiku about the sea");
+        let first = session.begin_turn("write a haiku about the sea");
+        assert!(first.promoted.is_empty());
+        assert!(session.global_facts().is_empty());
+        assert_eq!(session.facts().len(), 1);
+        assert_eq!(session.facts()[0].scope, FactScope::Session);
 
-        assert_eq!(change.promoted, vec!["constraint:use tabs".to_owned()]);
+        record(&mut session, "always use tabs", &[]);
+        let second = session.begin_turn("another topic entirely");
+
+        assert_eq!(second.promoted, vec!["constraint:use tabs".to_owned()]);
         assert_eq!(session.global_facts().len(), 1);
         assert_eq!(session.global_facts()[0].scope, FactScope::Global);
         assert!(session.global_facts()[0]
             .statement
             .contains("always use tabs"));
+        assert!(!session
+            .facts()
+            .iter()
+            .any(|fact| fact.key == "constraint:use tabs"));
+    }
+
+    #[test]
+    fn a_question_is_not_a_constraint() {
+        let mut session = Session::new();
+        record(&mut session, "do you always use tabs?", &[]);
+        session.begin_turn("write a haiku about the sea");
+
+        assert!(session.facts().is_empty());
+        assert!(session.global_facts().is_empty());
+    }
+
+    #[test]
+    fn a_scoped_sentence_is_not_a_constraint() {
+        let mut session = Session::new();
+        record(&mut session, "always use tabs in this task", &[]);
+        session.begin_turn("write a haiku about the sea");
+
+        assert!(session.facts().is_empty());
+    }
+
+    #[test]
+    fn a_mid_sentence_cue_is_not_a_constraint() {
+        let mut session = Session::new();
+        record(&mut session, "the linter always runs on save", &[]);
+        session.begin_turn("write a haiku about the sea");
+
+        assert!(session.facts().is_empty());
+    }
+
+    #[test]
+    fn first_person_narration_is_not_a_constraint() {
+        let mut session = Session::new();
+        record(&mut session, "I always use tabs", &[]);
+        session.begin_turn("write a haiku about the sea");
+
         assert!(session.facts().is_empty());
     }
 
@@ -928,19 +1056,21 @@ mod fact_tests {
     }
 
     #[test]
-    fn a_contradiction_replaces_the_promoted_fact() {
+    fn a_contradiction_demotes_the_promoted_fact() {
         let mut session = Session::new();
         record(&mut session, "always use tabs", &[]);
         session.begin_turn("write a haiku about the sea");
+        record(&mut session, "always use tabs", &[]);
+        session.begin_turn("another topic entirely");
         assert_eq!(session.global_facts().len(), 1);
 
         record(&mut session, "never use tabs", &[]);
-        let change = session.begin_turn("another topic entirely");
+        session.begin_turn("what is the weather today");
 
-        assert_eq!(change.promoted, vec!["constraint:use tabs".to_owned()]);
-        assert_eq!(session.global_facts().len(), 1);
-        assert!(session.global_facts()[0]
-            .statement
-            .contains("never use tabs"));
+        assert!(session.global_facts().is_empty());
+        assert!(session
+            .facts()
+            .iter()
+            .any(|fact| fact.statement.contains("never use tabs")));
     }
 }

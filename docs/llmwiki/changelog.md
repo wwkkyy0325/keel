@@ -466,3 +466,17 @@
 - `FactPromoted` reports each promotion.
 - Verification: 182 tests; promotion, transient artifacts, non-durable
   constraints and contradiction replacement are covered.
+
+### M3 conservative fact promotion
+
+- Constraint extraction no longer accepts any sentence containing a cue. Only
+  sentence-initial imperative sentences count; questions, first-person
+  narration, mid-sentence cues and phrases scoped to the current task are
+  rejected.
+- A durable cue marks a candidate, not a global fact. A candidate is promoted
+  only after the same statement appears in a second segment; a different
+  statement for the same key resets the count and demotes it.
+- This replaces the previous keyword-to-global rule, which could promote
+  habits, questions or task-local instructions.
+- Verification: 186 tests; the new rejection cases and the two-segment
+  promotion and demotion paths are covered.

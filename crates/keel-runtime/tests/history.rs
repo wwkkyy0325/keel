@@ -306,7 +306,7 @@ async fn a_topic_change_seals_the_segment() {
 }
 
 #[tokio::test]
-async fn a_durable_constraint_reaches_the_next_request() {
+async fn a_constraint_reaches_the_next_request() {
     let harness = harness(4096);
     let first = harness
         .driver
@@ -320,14 +320,13 @@ async fn a_durable_constraint_reaches_the_next_request() {
         .await;
     assert!(second.is_done());
 
+    // One statement is a session fact; promotion needs a second segment.
     let promoted = harness
         .events
         .for_turn(second.turn_id)
         .iter()
-        .any(|record| {
-            matches!(&record.event, Event::FactPromoted { key, .. } if key == "constraint:use tabs")
-        });
-    assert!(promoted, "the constraint was not promoted");
+        .any(|record| matches!(record.event, Event::FactPromoted { .. }));
+    assert!(!promoted);
 
     let requests = harness.requests.lock().unwrap();
     let memory = requests[1]
@@ -336,5 +335,5 @@ async fn a_durable_constraint_reaches_the_next_request() {
             message.role == MessageRole::System && message.content.starts_with("[memory]")
         })
         .expect("memory block");
-    assert!(memory.content.contains("always use tabs (global)"));
+    assert!(memory.content.contains("always use tabs (session)"));
 }

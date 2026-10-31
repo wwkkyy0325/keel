@@ -506,3 +506,16 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 - The driver passes `session.all_facts()` into `BuildCtx` and emits
   `FactPromoted`.
 - Verification: 182 tests; fmt and clippy clean.
+
+### M3 conservative fact promotion
+
+- `parse_constraint` now requires the cue at the start of the sentence, rejects
+  questions (`?`, `？`), first-person starts (`I`, `we`, `我`), and sentences
+  containing scoping markers (`this task`, `here`, `这次`, `暂时`, ...).
+- Added a candidate counter keyed by fact key and statement. A durable
+  constraint is promoted only on its second distinct segment; a different
+  statement resets the count to one and demotes the fact.
+- Updated the fact tests: two-segment promotion, contradiction demotion, and
+  four rejection cases. The driver integration now asserts a single statement
+  stays session-scoped.
+- Verification: 186 tests; fmt and clippy clean.
