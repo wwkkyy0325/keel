@@ -42,9 +42,12 @@ one at a time. Summarization is blocked on
       follow-up shares terms or names a recorded artifact. The driver emits
       `SegmentOpened` and `SegmentSealed` with the reason; history still spans
       sealed segments until records land in step 9.
-- [ ] 9. L2 turn digest and L3 segment record with the sufficiency gate —
-      verify: a record missing a required field keeps raw entries and emits
-      `CompressionSkipped`; a complete record replaces them
+- [x] 9. L2 turn digest and L3 segment record with the sufficiency gate —
+      verify: a sealed segment with a goal and a result becomes a record that
+      replaces its raw entries in history; a segment whose last turn has no
+      assistant text keeps its raw entries and emits `CompressionSkipped` with
+      the missing field. The gate currently requires goal and result; error
+      tracking is not recorded per turn yet, so errors are not a gate field.
 - [ ] 10. Facts: extraction from structured signals, session and global scope,
       strict promotion, contradiction handling — verify: a verified constraint
       is promoted; a transient path is not; a contradiction demotes

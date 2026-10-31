@@ -436,3 +436,18 @@
   `begin_turn` may have opened an empty one.
 - Verification: 173 tests; topic change, follow-up, artifact reference,
   verified completion and the cap are covered in unit and integration tests.
+
+### M3 segment records
+
+- Sealed segments now become `SegmentRecord`s: goal, result, changes, pending,
+  verification flag and turn count. The result excludes the `[tools]` block.
+- The sufficiency gate requires a goal and a result. A segment that fails it
+  keeps its raw entries, gets no record, and reports `CompressionSkipped` with
+  the missing fields.
+- History now shows sealed records as one `[earlier segments]` block; their raw
+  entries are no longer replayed. Records get at most a quarter of the history
+  allowance; older records are dropped first.
+- `HistoryAssembled` reports `record_segments`.
+- Verification: 176 tests; a topic change replaces the old raw turn with a
+  record line, and an unanswered segment keeps its entries and reports the
+  gate failure.

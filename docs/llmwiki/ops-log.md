@@ -477,3 +477,18 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
   `SegmentOpened` / `SegmentSealed`.
 - Fixed `last_turn_tokens` to skip the empty segment opened by `begin_turn`.
 - Verification: 173 tests; fmt and clippy clean.
+
+### M3 segment records
+
+- Added `SegmentRecord` and `CompressionSkip` to `keel-core`. `seal_and_record`
+  builds the record when a segment seals; `build_record` requires goal and
+  result, and the result is the last assistant text without the `[tools]`
+  block, clipped to 400 characters.
+- `Session::history` now returns entries only from segments without a record;
+  `Session::records` returns sealed records in order.
+- `BuildCtx` carries `records`; `HistoryStage` renders them into one
+  `[earlier segments]` system block with a quarter-of-budget cap, then spends
+  the rest on detail and digests.
+- The driver emits `SegmentSealed`, `CompressionSkipped` and `HistoryAssembled`
+  with the record count.
+- Verification: 176 tests; fmt and clippy clean.

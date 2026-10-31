@@ -890,7 +890,12 @@ async fn a_large_tool_result_is_summarized_and_spilled() {
     let driver = common::build_driver(model, config, events, dir.path(), common::test_limits());
 
     assert!(driver.run("first", CancelToken::new()).await.is_done());
-    assert!(driver.run("second", CancelToken::new()).await.is_done());
+    // A follow-up on the same topic keeps the segment open, so the raw tool
+    // summary is still part of history.
+    assert!(driver
+        .run("first again", CancelToken::new())
+        .await
+        .is_done());
 
     {
         let seen = seen.lock().unwrap();

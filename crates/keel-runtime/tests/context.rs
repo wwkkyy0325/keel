@@ -66,6 +66,7 @@ fn build_ctx<'a>(input: &'a str, system_prompt: &'a str) -> BuildCtx<'a> {
         turn_id: TurnId::new(1),
         input,
         history: &[],
+        records: &[],
         system_prompt,
         budget_tokens: 4096,
         detail_share: 0.8,

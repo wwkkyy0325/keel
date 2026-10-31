@@ -5,12 +5,15 @@ use async_trait::async_trait;
 use crate::event::EventSink;
 use crate::ids::TurnId;
 use crate::message::{Message, MessageRole};
+use crate::session::SegmentRecord;
 
 /// Inputs available to context stages.
 pub struct BuildCtx<'a> {
     pub turn_id: TurnId,
     pub input: &'a str,
     pub history: &'a [Arc<Message>],
+    /// Compressed records of sealed segments, oldest first.
+    pub records: &'a [SegmentRecord],
     pub system_prompt: &'a str,
     /// Tokens left for this stage after higher-priority stages.
     pub budget_tokens: u32,
@@ -27,6 +30,7 @@ impl<'a> BuildCtx<'a> {
             turn_id: self.turn_id,
             input: self.input,
             history: self.history,
+            records: self.records,
             system_prompt: self.system_prompt,
             budget_tokens,
             detail_share: self.detail_share,

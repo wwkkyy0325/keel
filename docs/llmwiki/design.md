@@ -28,8 +28,9 @@ Status: M3 in progress. ADR 0006 is accepted. Sessions, budget-driven history
 assembly and the context governor are implemented: recent turns stay verbatim,
 older turns become one digest block, and pressure is measured in calls of
 headroom, and the turn has a separate `Answer` artifact (ADR 0007). Tool
-results enter history as bounded summaries, and the kernel seals topic segments
-on its own. 173 tests pass; the self-authored suite is 10/10 and the public
+results enter history as bounded summaries, and sealed segments become compact
+records behind a sufficiency gate. 176 tests pass; the self-authored suite is
+10/10 and the public
 baseline is HumanEval+ 20/20 and MBPP+ 19/20. Next M3 steps: tool summaries,
 segmentation, segment records and facts.
 

@@ -57,6 +57,17 @@ impl ToolSummary {
     }
 }
 
+/// Compressed form of a sealed segment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SegmentRecord {
+    pub goal: String,
+    pub result: String,
+    pub changes: Vec<String>,
+    pub pending: Vec<String>,
+    pub verified: bool,
+    pub turns: u32,
+}
+
 /// A topic span of a session.
 ///
 /// Segmentation is decided by the kernel; this type only holds the result. A
@@ -70,6 +81,17 @@ pub struct Segment {
     pub turns: u32,
     pub terms: BTreeSet<String>,
     pub artifacts: BTreeSet<String>,
+    pub pending: Vec<String>,
+    pub verified: bool,
+    /// Present only when the sufficiency gate passed.
+    pub record: Option<SegmentRecord>,
+}
+
+/// A segment that could not be compressed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompressionSkip {
+    pub segment_id: u32,
+    pub missing: Vec<String>,
 }
 
 /// What `begin_turn` did to the segment list.
@@ -78,6 +100,7 @@ pub struct SegmentChange {
     pub sealed: Option<u32>,
     pub opened: Option<u32>,
     pub reason: Option<String>,
+    pub skipped: Option<CompressionSkip>,
 }
 
 /// Everything one finished turn contributes to the session.
@@ -86,6 +109,7 @@ pub struct TurnRecord<'a> {
     pub text: &'a str,
     pub tools: &'a [ToolSummary],
     pub artifacts: &'a [String],
+    pub pending: &'a [String],
     pub verified: bool,
 }
 
@@ -135,14 +159,13 @@ impl Session {
             return SegmentChange::default();
         };
         let sealed = open_id;
-        if let Some(segment) = self.segments.last_mut() {
-            segment.state = SegmentState::Sealed;
-        }
+        let skipped = self.seal_and_record();
         let opened = self.open_segment(input);
         SegmentChange {
             sealed: Some(sealed),
             opened: Some(opened),
             reason: Some(reason),
+            skipped,
         }
     }
 
@@ -165,6 +188,8 @@ impl Session {
         segment.turns = segment.turns.saturating_add(1);
         segment.terms.extend(terms(turn.input));
         segment.artifacts.extend(turn.artifacts.iter().cloned());
+        segment.pending.extend(turn.pending.iter().cloned());
+        segment.verified = turn.verified;
         self.last_verified = turn.verified;
 
         let input = turn.input;
@@ -204,8 +229,29 @@ impl Session {
             turns: 0,
             terms: terms(input),
             artifacts: BTreeSet::new(),
+            pending: Vec::new(),
+            verified: false,
+            record: None,
         });
         id
+    }
+
+    /// Seals the open segment and builds its record when the gate passes.
+    fn seal_and_record(&mut self) -> Option<CompressionSkip> {
+        let segment = self.segments.last_mut()?;
+        segment.state = SegmentState::Sealed;
+        let id = segment.id;
+        let outcome = build_record(segment);
+        match outcome {
+            Ok(record) => {
+                segment.record = Some(record);
+                None
+            }
+            Err(missing) => Some(CompressionSkip {
+                segment_id: id,
+                missing,
+            }),
+        }
     }
 
     fn seal_reason(&mut self, input: &str) -> Option<String> {
@@ -237,13 +283,13 @@ impl Session {
 
     /// Seals the open segment. Returns whether one was sealed.
     pub fn seal_current(&mut self) -> bool {
-        let Some(segment) = self.segments.last_mut() else {
+        let Some(segment) = self.segments.last() else {
             return false;
         };
         if segment.state == SegmentState::Sealed {
             return false;
         }
-        segment.state = SegmentState::Sealed;
+        let _ = self.seal_and_record();
         true
     }
 
@@ -278,6 +324,7 @@ impl Session {
     pub fn history(&self) -> Vec<Arc<Message>> {
         self.segments
             .iter()
+            .filter(|segment| segment.record.is_none())
             .flat_map(|segment| segment.entries.iter())
             .filter(|entry| {
                 matches!(
@@ -288,6 +335,58 @@ impl Session {
             .map(|entry| entry.message.clone())
             .collect()
     }
+
+    /// Records of sealed segments, oldest first.
+    pub fn records(&self) -> Vec<SegmentRecord> {
+        self.segments
+            .iter()
+            .filter_map(|segment| segment.record.clone())
+            .collect()
+    }
+}
+
+/// Builds the compressed record, or reports the fields the gate requires.
+fn build_record(segment: &Segment) -> Result<SegmentRecord, Vec<String>> {
+    let mut missing = Vec::new();
+    let goal = segment.topic.trim().to_owned();
+    if goal.is_empty() {
+        missing.push("goal".to_owned());
+    }
+
+    let result = segment
+        .entries
+        .iter()
+        .rev()
+        .find(|entry| entry.message.role == MessageRole::Assistant)
+        .map(|entry| result_text(&entry.message.content))
+        .unwrap_or_default();
+    if result.is_empty() {
+        missing.push("result".to_owned());
+    }
+
+    if !missing.is_empty() {
+        return Err(missing);
+    }
+    Ok(SegmentRecord {
+        goal,
+        result,
+        changes: segment.artifacts.iter().cloned().collect(),
+        pending: segment.pending.clone(),
+        verified: segment.verified,
+        turns: segment.turns,
+    })
+}
+
+/// The assistant text without the `[tools]` block, flattened and bounded.
+fn result_text(content: &str) -> String {
+    let body = content.split("\n\n[tools]").next().unwrap_or(content);
+    let flat = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= 400 {
+        return flat;
+    }
+    let mut clipped: String = flat.chars().take(400).collect();
+    clipped.push_str("...");
+    clipped
 }
 
 fn topic_of(input: &str) -> String {
@@ -328,6 +427,7 @@ mod tests {
             text,
             tools: &[],
             artifacts: &[],
+            pending: &[],
             verified: false,
         });
     }
@@ -362,7 +462,10 @@ mod tests {
         assert_eq!(session.segments().len(), 2);
         assert_eq!(session.segments()[0].state, SegmentState::Sealed);
         assert_eq!(session.segments()[1].topic, "second topic");
-        assert_eq!(session.history().len(), 4);
+        // The sealed segment is now a record, not raw entries.
+        assert_eq!(session.history().len(), 2);
+        assert_eq!(session.records().len(), 1);
+        assert_eq!(session.records()[0].goal, "first topic");
     }
 
     #[test]
@@ -406,6 +509,7 @@ mod tool_summary_tests {
             text: "it parses",
             tools: &[summary],
             artifacts: &[],
+            pending: &[],
             verified: false,
         });
 
@@ -430,6 +534,7 @@ mod segmentation_tests {
             text: "done",
             tools: &[],
             artifacts: &[],
+            pending: &[],
             verified: false,
         });
     }
@@ -467,6 +572,7 @@ mod segmentation_tests {
             text: "done",
             tools: &[],
             artifacts: &["src/widget.rs".to_owned()],
+            pending: &[],
             verified: false,
         });
 
@@ -484,6 +590,7 @@ mod segmentation_tests {
             text: "done",
             tools: &[],
             artifacts: &[],
+            pending: &[],
             verified: true,
         });
 
@@ -505,5 +612,59 @@ mod segmentation_tests {
 
         assert_eq!(change.reason.as_deref(), Some("size"));
         assert_eq!(change.sealed, Some(0));
+    }
+}
+
+#[cfg(test)]
+mod record_tests {
+    use super::*;
+
+    fn turn<'a>(input: &'a str, text: &'a str, artifacts: &'a [String]) -> TurnRecord<'a> {
+        TurnRecord {
+            input,
+            text,
+            tools: &[],
+            artifacts,
+            pending: &[],
+            verified: false,
+        }
+    }
+
+    #[test]
+    fn a_sealed_segment_becomes_a_record() {
+        let mut session = Session::new();
+        let artifacts = vec!["src/parser.rs".to_owned()];
+        session.record_turn(turn("fix the parser bug", "fixed it", &artifacts));
+        assert!(session.seal_current());
+
+        let record = &session.records()[0];
+        assert_eq!(record.goal, "fix the parser bug");
+        assert_eq!(record.result, "fixed it");
+        assert_eq!(record.changes, artifacts);
+        assert!(session.history().is_empty());
+    }
+
+    #[test]
+    fn a_segment_without_a_result_is_not_compressed() {
+        let mut session = Session::new();
+        session.record_turn(turn("unanswered question", "", &[]));
+
+        let change = session.begin_turn("something else entirely");
+
+        assert!(change.sealed.is_some());
+        assert_eq!(
+            change.skipped.as_ref().map(|skip| skip.missing.clone()),
+            Some(vec!["result".to_owned()])
+        );
+        assert!(session.records().is_empty());
+        assert_eq!(session.history().len(), 1);
+    }
+
+    #[test]
+    fn the_record_result_drops_the_tool_block() {
+        assert_eq!(
+            result_text("fixed it\n\n[tools]\n- read_file path=a.rs -> ok"),
+            "fixed it"
+        );
     }
 }

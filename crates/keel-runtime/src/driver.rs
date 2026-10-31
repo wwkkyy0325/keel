@@ -257,6 +257,12 @@ impl<M: ModelProvider> TurnDriver<M> {
                 .iter()
                 .map(|change| change.path.clone())
                 .collect();
+            let pending: Vec<String> = stats
+                .answer
+                .pending
+                .iter()
+                .map(|item| item.description.clone())
+                .collect();
             let verified = stats
                 .verification
                 .as_ref()
@@ -270,6 +276,7 @@ impl<M: ModelProvider> TurnDriver<M> {
                     text: &stats.answer.body,
                     tools: &stats.tool_summaries,
                     artifacts: &artifacts,
+                    pending: &pending,
                     verified,
                 });
         }
@@ -326,7 +333,7 @@ impl<M: ModelProvider> TurnDriver<M> {
         }
 
         let recipe = self.policy.context_recipe();
-        let (history, session_growth) = {
+        let (history, records, session_growth) = {
             let mut session = self
                 .session
                 .lock()
@@ -337,6 +344,13 @@ impl<M: ModelProvider> TurnDriver<M> {
                     turn_id,
                     segment_id,
                     reason: change.reason.unwrap_or_default(),
+                });
+            }
+            if let Some(skip) = change.skipped {
+                self.events.append(Event::CompressionSkipped {
+                    turn_id,
+                    segment_id: skip.segment_id,
+                    missing: skip.missing,
                 });
             }
             if let Some(segment_id) = change.opened {
@@ -351,7 +365,11 @@ impl<M: ModelProvider> TurnDriver<M> {
                     topic,
                 });
             }
-            (session.history(), session.last_turn_tokens())
+            (
+                session.history(),
+                session.records(),
+                session.last_turn_tokens(),
+            )
         };
         let used = estimate_tokens(&self.system_prompt)
             .saturating_add(history.iter().fold(0u32, |total, message| {
@@ -374,6 +392,7 @@ impl<M: ModelProvider> TurnDriver<M> {
             turn_id,
             input,
             history: &history,
+            records: &records,
             system_prompt: &self.system_prompt,
             budget_tokens: recipe.budget_tokens,
             detail_share: pressure.level.detail_share(),

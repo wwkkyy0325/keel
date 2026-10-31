@@ -290,7 +290,15 @@ async fn a_topic_change_seals_the_segment() {
     assert!(opened);
 
     let requests = harness.requests.lock().unwrap();
-    assert!(requests[1].iter().any(
+    let record = requests[1]
+        .iter()
+        .find(|message| {
+            message.role == MessageRole::System && message.content.starts_with("[earlier segments]")
+        })
+        .expect("record block in the next request");
+    assert!(record.content.contains("fix the parser bug"));
+    assert!(record.content.contains("ack"));
+    assert!(!requests[1].iter().any(
         |message| message.role == MessageRole::User && message.content == "fix the parser bug"
     ));
 }

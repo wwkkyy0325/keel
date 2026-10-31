@@ -58,6 +58,7 @@ pub enum Event {
         detail_turns: u32,
         digest_turns: u32,
         dropped_turns: u32,
+        record_segments: u32,
         tokens: u32,
     },
     WrapUpInjected {
@@ -77,6 +78,11 @@ pub enum Event {
         turn_id: TurnId,
         segment_id: u32,
         reason: String,
+    },
+    CompressionSkipped {
+        turn_id: TurnId,
+        segment_id: u32,
+        missing: Vec<String>,
     },
     ModelStarted {
         turn_id: TurnId,
@@ -150,6 +156,7 @@ impl Event {
             | Self::FinalCallForced { turn_id, .. }
             | Self::SegmentOpened { turn_id, .. }
             | Self::SegmentSealed { turn_id, .. }
+            | Self::CompressionSkipped { turn_id, .. }
             | Self::ModelStarted { turn_id, .. }
             | Self::ModelFinished { turn_id, .. }
             | Self::ToolStarted { turn_id, .. }
@@ -177,6 +184,7 @@ impl Event {
             Self::FinalCallForced { .. } => "final_call_forced",
             Self::SegmentOpened { .. } => "segment_opened",
             Self::SegmentSealed { .. } => "segment_sealed",
+            Self::CompressionSkipped { .. } => "compression_skipped",
             Self::ModelStarted { .. } => "model_started",
             Self::ModelFinished { .. } => "model_finished",
             Self::ToolStarted { .. } => "tool_started",

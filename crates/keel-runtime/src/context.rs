@@ -233,111 +233,199 @@ impl ContextStage for HistoryStage {
     }
 
     async fn build(&self, ctx: &BuildCtx<'_>) -> Option<Vec<Fragment>> {
-        if ctx.history.is_empty() {
+        if ctx.history.is_empty() && ctx.records.is_empty() {
             return None;
         }
         // Never spend the room the current input needs.
-        let budget = ctx.budget_tokens.checked_sub(estimate_tokens(ctx.input))?;
-        if budget == 0 {
+        let available = ctx.budget_tokens.checked_sub(estimate_tokens(ctx.input))?;
+        if available == 0 {
             return None;
         }
 
-        // A turn starts at a user message. Keep or drop whole turns so an
-        // assistant message never appears without the request it answered.
-        let history = ctx.history;
-        let mut turns: Vec<&[Arc<Message>]> = Vec::new();
-        let mut start = 0usize;
-        for (index, message) in history.iter().enumerate() {
-            if index > 0 && message.role == MessageRole::User {
-                turns.push(&history[start..index]);
-                start = index;
-            }
-        }
-        turns.push(&history[start..]);
-
-        let share = ctx.detail_share.clamp(0.0, 1.0);
-        let detail_budget = ((budget as f32) * share).ceil() as u32;
-
-        // Newest turns stay verbatim. The first two are a floor: they may use
-        // the whole history allowance, but never more than it.
-        let mut detail: Vec<&[Arc<Message>]> = Vec::new();
-        let mut detail_tokens = 0u32;
-        for turn in turns.iter().rev() {
-            let tokens = turn_tokens(turn);
-            if detail.is_empty() {
-                if tokens > budget {
-                    return None;
-                }
-            } else if detail.len() < 2 {
-                if detail_tokens.saturating_add(tokens) > budget {
-                    break;
-                }
-            } else if detail_tokens.saturating_add(tokens) > detail_budget {
+        // Sealed segments are already compressed. They get at most a quarter
+        // of the allowance; older records are dropped past that.
+        let record_cap = (available / 4).max(1);
+        let mut record_lines: Vec<String> = Vec::new();
+        let mut record_tokens = 0u32;
+        for record in ctx.records.iter().rev() {
+            let line = render_record(record);
+            let tokens = estimate_tokens(&line);
+            if record_tokens.saturating_add(tokens) > record_cap && !record_lines.is_empty() {
                 break;
             }
-            detail_tokens = detail_tokens.saturating_add(tokens);
-            detail.push(turn);
+            record_tokens = record_tokens.saturating_add(tokens);
+            record_lines.push(line);
         }
-        if detail.is_empty() {
-            return None;
-        }
-
-        // Everything older is compressed into one digest block, newest first
-        // until the digest allowance runs out.
-        let older = turns.len().saturating_sub(detail.len());
-        let digest_budget = budget.saturating_sub(detail_tokens);
-        let mut digests: Vec<String> = Vec::new();
-        let mut digest_tokens = 0u32;
-        let mut dropped = 0u32;
-        for turn in turns[..older].iter().rev() {
-            let text = digest(turn);
-            let tokens = estimate_tokens(&text);
-            if tokens > digest_budget.saturating_sub(digest_tokens) {
-                dropped = older as u32 - digests.len() as u32;
-                break;
-            }
-            digest_tokens = digest_tokens.saturating_add(tokens);
-            digests.push(text);
-        }
-        digests.reverse();
+        record_lines.reverse();
 
         let mut fragments = Vec::new();
-        if !digests.is_empty() {
-            let mut text = String::from("[earlier turns, compressed]\n");
-            for digest in &digests {
-                text.push_str(digest);
+        if !record_lines.is_empty() {
+            let mut text = String::from("[earlier segments]\n");
+            for line in &record_lines {
+                text.push_str(line);
+                text.push('\n');
             }
             fragments.push(Fragment {
                 role: MessageRole::System,
                 text,
             });
         }
-        for turn in detail.iter().rev() {
-            for message in turn.iter() {
-                if matches!(message.role, MessageRole::User | MessageRole::Assistant)
-                    && !message.content.trim().is_empty()
-                {
+
+        let share = ctx.detail_share.clamp(0.0, 1.0);
+        let budget = available.saturating_sub(record_tokens);
+        let mut detail_turns = 0u32;
+        let mut digest_turns = 0u32;
+        let mut dropped = 0u32;
+        let mut message_tokens = 0u32;
+        if !ctx.history.is_empty() && budget > 0 {
+            if let Some(assembly) = assemble(ctx.history, budget, share) {
+                if !assembly.digests.is_empty() {
+                    let mut text = String::from("[earlier turns, compressed]\n");
+                    for digest in &assembly.digests {
+                        text.push_str(digest);
+                    }
                     fragments.push(Fragment {
-                        role: message.role,
-                        text: message.content.clone(),
+                        role: MessageRole::System,
+                        text,
                     });
                 }
+                fragments.extend(assembly.detail);
+                detail_turns = assembly.detail_turns;
+                digest_turns = assembly.digest_turns;
+                dropped = assembly.dropped;
+                message_tokens = assembly.tokens;
             }
+        }
+
+        if fragments.is_empty() {
+            return None;
         }
 
         if let Some(events) = ctx.events {
             events.emit(keel_core::Event::HistoryAssembled {
                 turn_id: ctx.turn_id,
                 detail_percent: (share * 100.0).round() as u32,
-                detail_turns: detail.len() as u32,
-                digest_turns: digests.len() as u32,
+                detail_turns,
+                digest_turns,
                 dropped_turns: dropped,
-                tokens: detail_tokens.saturating_add(digest_tokens),
+                record_segments: record_lines.len() as u32,
+                tokens: record_tokens.saturating_add(message_tokens),
             });
         }
 
         Some(fragments)
     }
+}
+
+struct Assembly {
+    digests: Vec<String>,
+    detail: Vec<Fragment>,
+    detail_turns: u32,
+    digest_turns: u32,
+    dropped: u32,
+    tokens: u32,
+}
+
+/// Keeps the newest turns verbatim and compresses older ones into digests.
+fn assemble(history: &[Arc<Message>], budget: u32, share: f32) -> Option<Assembly> {
+    // A turn starts at a user message. Keep or drop whole turns so an
+    // assistant message never appears without the request it answered.
+    let mut turns: Vec<&[Arc<Message>]> = Vec::new();
+    let mut start = 0usize;
+    for (index, message) in history.iter().enumerate() {
+        if index > 0 && message.role == MessageRole::User {
+            turns.push(&history[start..index]);
+            start = index;
+        }
+    }
+    turns.push(&history[start..]);
+
+    let detail_budget = ((budget as f32) * share).ceil() as u32;
+
+    // Newest turns stay verbatim. The first two are a floor: they may use the
+    // whole history allowance, but never more than it.
+    let mut detail: Vec<&[Arc<Message>]> = Vec::new();
+    let mut detail_tokens = 0u32;
+    for turn in turns.iter().rev() {
+        let tokens = turn_tokens(turn);
+        if detail.is_empty() {
+            if tokens > budget {
+                return None;
+            }
+        } else if detail.len() < 2 {
+            if detail_tokens.saturating_add(tokens) > budget {
+                break;
+            }
+        } else if detail_tokens.saturating_add(tokens) > detail_budget {
+            break;
+        }
+        detail_tokens = detail_tokens.saturating_add(tokens);
+        detail.push(turn);
+    }
+    if detail.is_empty() {
+        return None;
+    }
+
+    // Everything older is compressed into one digest block, newest first
+    // until the digest allowance runs out.
+    let older = turns.len().saturating_sub(detail.len());
+    let digest_budget = budget.saturating_sub(detail_tokens);
+    let mut digests: Vec<String> = Vec::new();
+    let mut digest_tokens = 0u32;
+    let mut dropped = 0u32;
+    for turn in turns[..older].iter().rev() {
+        let text = digest(turn);
+        let tokens = estimate_tokens(&text);
+        if tokens > digest_budget.saturating_sub(digest_tokens) {
+            dropped = older as u32 - digests.len() as u32;
+            break;
+        }
+        digest_tokens = digest_tokens.saturating_add(tokens);
+        digests.push(text);
+    }
+    digests.reverse();
+
+    let mut fragments = Vec::new();
+    for turn in detail.iter().rev() {
+        for message in turn.iter() {
+            if matches!(message.role, MessageRole::User | MessageRole::Assistant)
+                && !message.content.trim().is_empty()
+            {
+                fragments.push(Fragment {
+                    role: message.role,
+                    text: message.content.clone(),
+                });
+            }
+        }
+    }
+
+    let digest_turns = digests.len() as u32;
+    Some(Assembly {
+        digests,
+        detail: fragments,
+        detail_turns: detail.len() as u32,
+        digest_turns,
+        dropped,
+        tokens: detail_tokens.saturating_add(digest_tokens),
+    })
+}
+
+fn render_record(record: &keel_core::SegmentRecord) -> String {
+    let mut line = format!(
+        "- \"{}\" ({} turns): {}",
+        record.goal, record.turns, record.result
+    );
+    if !record.changes.is_empty() {
+        line.push_str("; changed: ");
+        line.push_str(&record.changes.join(", "));
+    }
+    if record.verified {
+        line.push_str("; verified");
+    }
+    if !record.pending.is_empty() {
+        line.push_str(&format!("; pending: {}", record.pending.len()));
+    }
+    line
 }
 
 fn turn_tokens(turn: &[Arc<Message>]) -> u32 {
