@@ -14,22 +14,20 @@ immutable `RuntimeConfig`; plugins add optional capabilities.
 - `plugins`: tools, channels, memory backends and UI. They never bypass
   permissions, audit or cancellation.
 
-## M1 workspace
+## Workspace
 
 | Member | Responsibility |
 |---|---|
 | `crates/keel-core` | IDs, messages, tool protocol, model wire, policy types, events, errors |
 | `crates/keel-policy` | Profile schema, resolution, `RuntimeConfig`, `TurnLimits` |
-| `crates/keel-runtime` | FSM, turn driver, context builder, dispatch, permission module, verifier, mock model |
-| `hosts/keel-cli` | Loads a profile and runs one mock turn |
+| `crates/keel-model-openai` | OpenAI-compatible wire mapping and streaming provider |
+| `crates/keel-runtime` | FSM, turn driver, context builder, dispatch, permission module, verifier, tools, mock model |
+| `hosts/keel-cli` | Loads a profile, runs one turn, terminal interactions |
 
-M1 has no network, no real model, no plugin lifecycle, no memory backend and no
-UI. The FSM is exercised with a scripted mock model and three tools (`echo`,
-`read_file`, `write_file`).
-
-Status: M1 implemented, including the permission refactor and interaction
-primitives. 86 tests pass; the mock turn overhead is p50 2 us and p99 9 us over
-1000 turns. The next milestone is M2 (one real provider and the coding profile).
+Status: M2 implemented and verified against a real provider. 133 tests pass;
+the self-authored suite is 10/10 and the public baseline is HumanEval+ 20/20
+and MBPP+ 19/20. M3 is designed in ADR 0006 (history assembly and memory); the
+companion profile is the next implementation target.
 
 ## Permission and interaction model
 
@@ -43,6 +41,23 @@ primitives. 86 tests pass; the mock turn overhead is p50 2 us and p99 9 us over
   interactions. The kernel brokers deadlines and audit; the host composes the
   frontend.
 - The acceptance checklist is an ADR/spec contract; verifiers land with M2.
+
+## History and memory (M3)
+
+- A session owns segments; a segment is a task topic with raw entries while
+  open and a structured record once sealed.
+- Segmentation is a kernel-owned deterministic heuristic; the model cannot
+  open or seal a segment and the user never manages compression.
+- Assembly is budget-driven: recent turns in detail, older turns as digests,
+  sealed segments as records, all fitted to the remaining context.
+- Tool entries keep the call, status and head and tail by character count; the
+  full output spills to `.keel/outputs/` and stays reachable.
+- Facts are sedimented at a seal: durable ones become global, the rest stay
+  session-scoped.
+- `L2` and `L3` are structured extracts until the summarization research
+  decides whether a model call is worth its cost.
+
+See ADR 0006 and `docs/llmwiki/tasks/m3-history.md`.
 
 ## Key decisions
 

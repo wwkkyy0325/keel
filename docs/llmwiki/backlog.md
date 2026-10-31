@@ -6,14 +6,13 @@ path", not "never".
 
 ## Context
 
-- **Cross-turn history stage.** The current implementation keeps
-  `BuildCtx.history` empty. This is a current limitation, not a prompt rule.
-  Trigger: a product requirement for follow-up conversation, or M3 companion.
-- **Memory stage (facts/episodic).** No consumer in the coding variant yet.
-  Trigger: M3 companion, or coding needs cross-task facts.
-- **Compaction ladder (trim, rolling summary, LLM compact).** Current behavior
-  is an explicit `ContextOverflow` error, which is safer than silent loss.
-  Trigger: a real task hits the budget, or M5.
+- **Cross-turn history stage.** Scheduled for M3; design fixed in ADR 0006 and
+  steps in `tasks/m3-history.md`. `BuildCtx.history` stays empty until step 1.
+- **Memory stage (facts/episodic).** Session and global fact scopes are part of
+  ADR 0006; extraction and promotion land in step 8.
+- **Compaction ladder.** Replaced by the level ladder in ADR 0006 (`L0` to
+  `L4`), triggered on segment seal and budget pressure. `L2` and `L3` stay
+  model-free until the summarization research decides otherwise.
 
 ## Profiles and prompts
 

@@ -295,3 +295,17 @@
 - Report: `evals/reports/2026-11-02-public-suite.md`.
 - Added a 300,000-token suite stop; 20 + 20 is the regression baseline and a
   50 + 50 expansion was deferred for cost.
+
+## 2026-11-02 — M3 history design
+
+- Recorded ADR 0006: session, segment and entry model; kernel-owned topic
+  segmentation; budget-driven assembly; `L0`–`L4` compression ladder with only
+  two triggers; fact-driven segment retention; the sufficiency gate; tool
+  output truncation by character count with a spill file; strict promotion of
+  session facts to global scope.
+- Added `tasks/m3-history.md` with nine verifiable steps and
+  `tasks/m3-summarization-research.md` with the open summarization question,
+  candidate approaches and the decision rule.
+- `L2` and `L3` stay model-free until that research note has a result.
+- Updated the design summary, the backlog and the profile spec pointer.
+- No code changed.

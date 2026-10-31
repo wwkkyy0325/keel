@@ -173,6 +173,11 @@ The kernel may ask only these at runtime:
 M1 accepts only `Commit`; `Reprompt` and `Ask` return `Unsupported` until the
 re-prompt path lands with verification.
 
+`context_recipe.compaction` names the compression level order; ADR 0006 defines
+`L0` to `L4` and the two triggers (segment seal and budget pressure).
+`memory_policy.promotion` selects the gate that promotes a session fact to
+global scope.
+
 New questions require an ADR and a second consumer.
 
 ## Validation

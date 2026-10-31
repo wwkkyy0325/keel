@@ -323,3 +323,24 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 - Added a 300,000-token suite stop; 20 + 20 is the regression baseline and a
   50 + 50 expansion was deferred for cost.
 - Commit: `feat: cap eval suite spend`.
+
+### M3 history and memory design
+
+- Recorded ADR 0006 with the user's model: topic segmentation, recent-turn
+  detail, budget-driven assembly, result-preserving compression, tool output
+  truncation by character count, automatic stage triggers, and fact-driven
+  segment retention.
+- Segment boundaries are kernel-owned and deterministic; the model cannot open
+  or seal a segment.
+- Compression levels are `L0` raw, `L1` truncated tool output, `L2` turn
+  digest, `L3` segment record and `L4` fact folding. Only segment seal and
+  assembly pressure trigger compression.
+- A sufficiency gate keeps raw entries when the candidate record is missing a
+  required field; `CompressionSkipped` records the reason.
+- Facts are extracted from structured signals and promoted to global scope only
+  under strict conditions; everything else stays session-scoped.
+- Summarization is deliberately unresolved: `tasks/m3-summarization-research.md`
+  compares structured extraction, model summaries and a hybrid, with a probe
+  experiment and a 200k-token budget.
+- Added `tasks/m3-history.md` with nine implementation steps.
+- No code changed.
