@@ -696,6 +696,23 @@
   wrote 14/15 with similar input. Probes or a state-less workload are needed.
 - Missing chapters in no-memo and no-todo are single-run model variance.
 
+### Memory boundary and evaluation plan
+
+- ADR 0012 fixes the boundary: the kernel owns working, episodic, semantic and
+  static procedural memory mechanisms; vector stores, temporal graphs,
+  embedding services, LLM extraction pipelines, MCP memory servers and
+  cross-session backends are ports, adapters or plugins. No vendor memory was
+  imported and no kernel code changed.
+- `01-kernel.md` now says `MemoryStore` is a host port and lists vector, graph
+  and embedding clients under "the kernel does not"; `03-modules.md` names the
+  port layer.
+- Added a memory evaluation task: the five LongMemEval-style abilities.
+  Extraction, knowledge update, forget and recall abstention have kernel tests;
+  multi-session and temporal reasoning wait for M5 persistence, and
+  answer-level abstention needs a host probe.
+- Validation matrix updated with the memory abilities and their gaps.
+- Report/context: `docs/llmwiki/memory-comparison.md`; no code copied.
+
 ### Summary quality floor
 
 - A model-written summary below `max_tokens / 4` tokens, clamped to 64..256,

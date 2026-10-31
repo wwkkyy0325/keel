@@ -99,6 +99,12 @@ triggers below fire.
 | `hosts/` | Executables | CLI, server, device/game hosts | kernel mechanisms, business logic | yes (CLI) |
 | `variants/` | Composition | profile.toml, plugins.toml, prompts, optional evals | kernel code, shared tools | yes (two profiles) |
 | `plugins/` | Optional capabilities | tool/channel/memory packs | permission enforcement, audit | no |
+| `ports/` | Stable contracts for external capabilities | memory, model, channel ports | vendor SDKs, storage engines, extraction pipelines | no |
+
+Memory backends are ports/adapters/plugins, not kernel code. A vector store,
+temporal graph, embedding service or MCP memory server lives under `ports/`,
+`adapters/` or `plugins/`; the kernel keeps only lexical and structured memory
+(ADR 0012).
 | `evals/` | Evidence | cases, harness, scorers, reports | production code, model weights | skeleton |
 | `docs/spec/` | Behavioral contracts | brief, kernel, profile, modules, evals, roadmap | code, internal data | yes |
 | `docs/adr/` | Decisions | context, decision, consequences, alternatives | tutorials, logs | yes |

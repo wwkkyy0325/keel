@@ -37,6 +37,16 @@ claim of failure.
 | Local 26B chapter | tools, todo, persona, provider | 1 chapter, 1,184 CJK, state updated, task closed |
 | 57-turn fusion run | tools, todo, memo, recall, elision, acceptance, probes | In progress |
 
+## Memory abilities
+
+| Ability | Kernel test | Real run | Gap |
+|---|---|---|---|
+| Information extraction | Fact scope tests, record extraction | 24-turn, 15-chapter | No standard scenario set |
+| Multi-session reasoning | None | None | M5 persistence |
+| Temporal reasoning | None | None | No event-time model |
+| Knowledge updates | Contradiction, supersede, forget tests | Memo rewrite | No cross-session conflict policy |
+| Abstention | Unrelated recall test | 24-turn probes | No answer-level check; acceptance would be host-side |
+
 ## Known gaps
 
 - No single run yet combines a pressure-tested memo/recall with tools,

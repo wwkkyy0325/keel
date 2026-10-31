@@ -64,6 +64,14 @@ pub trait MemoryStore {
     async fn write(&self, record: MemoryRecord) -> Result<(), MemoryError>;
 }
 
+`MemoryStore` is a host port, not a kernel implementation. The kernel's
+built-in memory is lexical and structured (segments, records, memo, scoped
+facts; ADR 0012). Vector databases, temporal graphs, embedding services, LLM
+extraction pipelines and MCP memory servers are adapters or plugins; they
+return typed, bounded data and cannot bypass permissions, audit, cancellation
+or the context budget. If an adapter fails, the kernel falls back to its own
+recall and records.
+
 pub trait Policy {
     fn visible_tools(&self, all: &[ToolSchema]) -> Vec<ToolSchema>;
     fn context_recipe(&self) -> ContextRecipe;
@@ -200,6 +208,8 @@ cancellation and interjection distinct. See ADR 0010.
 - Read files, call models or write telemetry sinks directly on the hot path.
 - Own business logic.
 - Hide failures behind retries without recording them.
+- Contain vector stores, graph databases, embedding clients or memory-product
+  extraction pipelines. Those are host ports and plugins (ADR 0012).
 
 ## Acceptance tests
 

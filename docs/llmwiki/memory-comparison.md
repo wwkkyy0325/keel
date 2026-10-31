@@ -109,8 +109,8 @@ memory evaluation suite are the missing pieces.
 
 ## What to do next
 
-1. Add an ADR/spec section that fixes Keel's memory layers and scopes in one
-   place; the pieces exist but are spread across ADR 0006, 0008 and 0011.
+1. Done: ADR 0012 fixes the memory layers and the kernel/port boundary. The
+   pieces were spread across ADR 0006, 0008 and 0011; that is now explicit.
 2. M5 persistence: sessions, summaries, facts and todos in SQLite; workspace
    and global facts survive runs; export and deletion.
 3. A small LongMemEval-style evaluation: extraction, multi-session, temporal,
