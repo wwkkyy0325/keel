@@ -144,6 +144,16 @@ domain tool list is unchanged.
   and admin hardening.
 - Audit is always on; it is not sampled and not optional.
 
+## Secrets
+
+- Hosts read credentials from `.env` or the OS keyring. Profiles reference env
+  or keyring names, never inline values.
+- The agent never asks the user to paste a key into chat; it points to
+  `.env.example` or the keyring.
+- Input detected as a secret is refused before the model call.
+- The event log redacts detected secrets before append.
+- Secrets never appear in code, logs, tests, prompts or git.
+
 ## Model wire
 
 - OpenAI-compatible and Anthropic-compatible providers.

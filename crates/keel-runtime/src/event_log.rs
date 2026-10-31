@@ -1,6 +1,6 @@
 use std::sync::{Mutex, MutexGuard};
 
-use keel_core::{Event, TurnId};
+use keel_core::{redact_secrets, Event, TurnId};
 
 /// One event with its append sequence number.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,7 +26,10 @@ impl EventLog {
     pub fn append(&self, event: Event) -> u64 {
         let mut entries = self.entries();
         let seq = entries.len() as u64 + 1;
-        entries.push(EventRecord { seq, event });
+        entries.push(EventRecord {
+            seq,
+            event: redact_event(event),
+        });
         seq
     }
 
@@ -54,5 +57,27 @@ impl EventLog {
         self.entries
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+/// The event log is an audit record and may be exported. Redact detected
+/// secrets before they reach disk; the host still refuses secret-bearing input
+/// before the model call.
+fn redact_event(event: Event) -> Event {
+    match event {
+        Event::TurnStarted { turn_id, input } => Event::TurnStarted {
+            turn_id,
+            input: redact_secrets(&input),
+        },
+        Event::TurnFinished {
+            turn_id,
+            state,
+            text,
+        } => Event::TurnFinished {
+            turn_id,
+            state,
+            text: redact_secrets(&text),
+        },
+        other => other,
     }
 }

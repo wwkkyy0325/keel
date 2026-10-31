@@ -56,3 +56,10 @@
 - Added a streaming HTTP provider with SSE parsing, usage, error mapping,
   stream-cut detection and cancellation; tested against a local HTTP server.
 - Host provider selection is still pending.
+
+### Secret handling
+
+- Added best-effort secret detection and redaction in `keel-core`.
+- The CLI refuses secret-like input before the model call and directs the user
+  to `.env.example`; the event log redacts detected secrets.
+- Added `.env.example`; `.env` stays gitignored.

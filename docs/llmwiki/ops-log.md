@@ -76,3 +76,13 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
   500, stream cut and cancellation.
 - Verification: 13 tests in `keel-model-openai`, workspace clippy and
   `cargo deny check`.
+
+### Secret handling
+
+- Added core secret detection and redaction for common provider keys, tokens
+  and private keys.
+- The CLI refuses secret-like input before the model call with a rotation
+  warning and points to `.env.example`.
+- The event log redacts `TurnStarted` input and `TurnFinished` text before
+  append.
+- Added `.env.example`; `.env` remains gitignored.

@@ -14,6 +14,7 @@ pub mod message;
 pub mod model;
 pub mod permission;
 pub mod policy;
+pub mod secret;
 pub mod state;
 pub mod tool;
 
@@ -38,6 +39,7 @@ pub use policy::{
     CommitCtx, CommitDecision, CompactionStep, ContextRecipe, MemoryMode, MemoryPolicy, ModelRole,
     ModelRoute, Policy, PromotionMode, VerificationMode,
 };
+pub use secret::{detect_secret, redact_secrets, SecretKind};
 pub use state::{TurnEvent, TurnState};
 pub use tool::{
     ArgValue, ParamKind, ParamSpec, RiskLevel, Tool, ToolArgs, ToolCtx, ToolOutcome, ToolResult,

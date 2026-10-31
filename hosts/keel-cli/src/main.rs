@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use keel_core::{ArgValue, CancelToken, KernelError, Policy, ToolArgs};
+use keel_core::{detect_secret, ArgValue, CancelToken, KernelError, Policy, ToolArgs};
 use keel_runtime::{
     load_profile, validate_config, ContextBuilder, DeferAllInteractionPort, EchoTool, EventLog,
     InteractionBroker, LatestStage, LocalTrashStore, MockModel, MockStep, PermissionEngine,
@@ -23,6 +23,7 @@ async fn main() -> ExitCode {
 
 async fn run() -> Result<(), KernelError> {
     let (profile_path, input) = parse_args()?;
+    reject_secret_input(&input)?;
     let config = load_profile(&profile_path)?;
 
     let workspace = std::env::current_dir().map_err(|error| KernelError::Io {
@@ -131,5 +132,27 @@ fn script_for(config: &RuntimeConfig, input: &str) -> Vec<MockStep> {
 fn invalid_config(message: impl Into<String>) -> KernelError {
     KernelError::InvalidConfig {
         message: message.into(),
+    }
+}
+
+fn reject_secret_input(input: &str) -> Result<(), KernelError> {
+    if let Some(kind) = detect_secret(input) {
+        eprintln!("warning: the input looks like a {} secret.", kind.as_str());
+        eprintln!(
+            "Keys never belong in the chat. Remove it, rotate it if it was real, and put it in .env (see .env.example)."
+        );
+        return Err(invalid_config("secret detected in input"));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn secret_like_input_is_refused() {
+        assert!(reject_secret_input("my key sk-1234567890abcdefghij").is_err());
+        assert!(reject_secret_input("please summarize the design").is_ok());
     }
 }

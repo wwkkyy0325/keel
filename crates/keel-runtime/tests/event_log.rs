@@ -27,6 +27,22 @@ fn append_assigns_monotonic_sequences() {
 }
 
 #[test]
+fn secrets_are_redacted_before_append() {
+    let log = EventLog::new();
+    log.append(Event::TurnStarted {
+        turn_id: TurnId::new(1),
+        input: "my key sk-1234567890abcdefghij".to_owned(),
+    });
+    match &log.snapshot()[0].event {
+        Event::TurnStarted { input, .. } => {
+            assert!(input.contains("[REDACTED]"));
+            assert!(!input.contains("sk-1234567890abcdefghij"));
+        }
+        other => panic!("unexpected event: {other:?}"),
+    }
+}
+
+#[test]
 fn entries_can_be_filtered_by_turn() {
     let log = EventLog::new();
     log.append(Event::TurnStarted {
