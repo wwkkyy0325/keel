@@ -187,3 +187,21 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 - Verification: profile test passes; the CLI reports `DEEPSEEK_API_KEY is
   empty` before any network call.
 - Commit: `feat: add DeepSeek coding profile`.
+
+### Prompt conventions
+
+- Corrected the earlier interpretation: the requirement concerns prompt
+  structure, not cross-turn context.
+- Prohibitions come first; recommendations follow. Instructions are English;
+  entity names and user-provided text keep their original language and
+  spelling.
+- Updated both prompts and documented the convention in `02-profile.md` and
+  `backlog.md`.
+- Verification: 123 tests; clippy, fmt and `cargo deny check`.
+- Commit: `docs: correct prompt ordering convention`.
+
+### Secret hygiene
+
+- A key was pasted into tracked `.env.example`. Moved it to gitignored `.env`,
+  restored the example placeholder, and advised rotation.
+- No key is present in tracked files; `.env` remains ignored.

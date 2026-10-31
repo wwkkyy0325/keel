@@ -74,6 +74,15 @@ M1/M2 parse the subset used by the runnable files under `variants/`; unknown
 fields are errors. Profile inheritance, role-specific routes, memory and
 telemetry sections are target schema and arrive with later milestones.
 
+## Prompt conventions
+
+Persona prompts follow one structure:
+
+- Prohibitions first, then recommended behavior.
+- Instructions are written in English.
+- Entity names, identifiers, file paths and user-provided text keep the
+  entity's own language and spelling; do not translate or transliterate them.
+
 ## Permissions, sandbox and interactions
 
 - `workspace_auto` is the logical sandbox. Inside the workspace, normal reads

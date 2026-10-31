@@ -6,18 +6,14 @@ path", not "never".
 
 ## Context
 
-- **Cross-turn history stage.** Current context is single-turn: `BuildCtx.history`
-  is empty and the model must not refer to earlier turns. Trigger: a product
-  requirement for follow-up conversation, or M3 companion.
+- **Cross-turn history stage.** The current implementation keeps
+  `BuildCtx.history` empty. This is a current limitation, not a prompt rule.
+  Trigger: a product requirement for follow-up conversation, or M3 companion.
 - **Memory stage (facts/episodic).** No consumer in the coding variant yet.
   Trigger: M3 companion, or coding needs cross-task facts.
 - **Compaction ladder (trim, rolling summary, LLM compact).** Current behavior
   is an explicit `ContextOverflow` error, which is safer than silent loss.
   Trigger: a real task hits the budget, or M5.
-- **Decided now:** context assembly is single-turn. It must not include a
-  history stage and must not ask the model to refer to "earlier" content.
-  When the budget is tight, drop from the front and keep the most recent
-  fragments.
 
 ## Profiles and prompts
 
@@ -27,6 +23,13 @@ path", not "never".
 - **Prompt systemization.** Prompts are minimal placeholders. Trigger: a real
   eval failure caused by missing instructions. Do not write a large persona
   before the first end-to-end run.
+
+## Prompt conventions (decided)
+
+- Prohibitions come first; recommended behavior comes after.
+- Instructions are written in English.
+- Entity names, identifiers, file paths and user-provided text keep the
+  entity's own language and spelling. Do not translate or transliterate them.
 
 ## Pipelines and registries
 

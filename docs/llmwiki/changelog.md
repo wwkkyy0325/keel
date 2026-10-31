@@ -159,3 +159,18 @@
 - The task-001 eval metadata now targets the DeepSeek profile.
 - Verification: profile test loads and validates the new profile; the CLI
   reports an empty key clearly.
+
+### Prompt conventions
+
+- Corrected the earlier misreading: the rule is about prompt structure, not
+  cross-turn context. Prohibitions come first, recommended behavior after.
+- Instructions are written in English; entity names, identifiers, file paths
+  and user-provided text keep their original language and spelling.
+- Updated the coding and companion prompts to that structure and documented
+  the convention in `docs/spec/02-profile.md` and `backlog.md`.
+
+### Secret hygiene
+
+- A key was pasted into the tracked `.env.example`. Moved it to the gitignored
+  `.env`, restored the example to a placeholder, and advised rotation. No key
+  is present in the tracked files.

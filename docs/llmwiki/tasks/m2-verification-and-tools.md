@@ -15,14 +15,16 @@ not by the model's own claim.
       allowlist, timeout and permission tests
 - [x] 4. One coding eval case with `setup/`, `hidden/` and `verify.sh` — verify:
       the case rejects an unsolved workspace and accepts the reference fix
-- [ ] 5. Real model end-to-end run — verify: user runs the OpenAI profile with a
-      local `.env` and records the transcript
+- [ ] 5. Real model end-to-end run — verify: user runs the DeepSeek profile
+      with a local `.env` and records the transcript
 
 ## Decisions
 
-- Context is single-turn. There is no history stage and no reference to earlier
-  turns. Under budget pressure, drop from the front and keep the latest
-  fragments.
+- The current context assembly is single-turn: `BuildCtx.history` is empty.
+  This is an implementation limit, not a prompt rule.
+- Prompt convention: prohibitions first, recommendations after; instructions in
+  English; entity names and user-provided text keep their original language and
+  spelling.
 - The kernel produces `Evidence`; the model cannot set `verified`.
 - Compute verification uses a small arithmetic parser, never `eval` or shell.
 - File-hash paths are relative to the workspace and may not escape it.
@@ -33,8 +35,9 @@ not by the model's own claim.
 
 ## User points recorded
 
-- Context assembly is single-turn; do not add history or "as mentioned
-  earlier" behavior now.
+- Prompt convention: prohibitions first, recommendations after; write
+  instructions in English; keep entity names and user-provided text in their
+  original language and spelling.
 - Deferred until their triggers: history, memory, compaction, base profile,
   prompt systemization and a unified pipeline registry.
 - Verification must be real; the model's narrative is not evidence.
