@@ -696,6 +696,23 @@
   wrote 14/15 with similar input. Probes or a state-less workload are needed.
 - Missing chapters in no-memo and no-todo are single-run model variance.
 
+### Local model probe and control-tool fix
+
+- Ran the 24-turn companion probe against a local llama.cpp endpoint
+  (FableVibes-14B, 32k context) at 8k, 16k and 24k working sets: 24/24 `Done`,
+  zero overflow, assembled context peaked at 2,432 tokens. Context is not the
+  bottleneck for this workload.
+- The endpoint exposed a kernel bug: the summarizer request advertised the
+  `keel_interact` control tool, and the model answered with a plan-approval
+  call, so every memo update failed with `summarizer returned no text`.
+  `ModelRequest.control_tool` now gates that tool; the summarizer and the
+  reserved final call clear it, and the wire builder omits an empty `tools`
+  array. The same 8k arm had zero summary failures after the fix.
+- The 14B still hallucinated the Marlin config path at every working-set size,
+  even when recall supplied it. Model quality, not context, is the limit.
+  Report: `evals/reports/2026-11-03-local-model-context.md`.
+- Verification: 234 tests; fmt and clippy clean.
+
 ### Kernel affordances in personas
 
 - The coding, novel and companion personas now state the kernel's affordances up front:
