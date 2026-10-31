@@ -153,3 +153,22 @@ async fn failed_backup_aborts_the_write() {
         "old"
     );
 }
+
+#[tokio::test]
+async fn writing_creates_missing_parent_directories() {
+    let dir = tempfile::tempdir().unwrap();
+    let tool = WriteFileTool::new(Arc::new(LocalTrashStore::new(dir.path().to_path_buf())));
+
+    let result = tool
+        .call(
+            args("tests/test_calc.py", "print('ok')\n"),
+            &ctx(dir.path()),
+        )
+        .await;
+
+    assert!(result.is_success(), "{result:?}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("tests").join("test_calc.py")).unwrap(),
+        "print('ok')\n"
+    );
+}

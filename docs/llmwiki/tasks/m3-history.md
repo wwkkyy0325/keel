@@ -73,6 +73,11 @@ one at a time. Summarization is blocked on
       `evals/reports/2026-11-03-companion-20-turn.md`. The run also found and
       fixed the CJK token estimate, provider overhead calibration, Chinese
       segmentation and the newest-segment detail window.
+      The coding path was verified the same way: 20/20 `Done` with four tools
+      at a 16k window, 292k tokens, generated tests passing 15/15 externally.
+      Report: `evals/reports/2026-11-03-coding-20-turn.md`. It found that
+      `write_file` could not create a missing parent directory; the tool now
+      does.
 
 ## Answer artifact (ADR 0007)
 

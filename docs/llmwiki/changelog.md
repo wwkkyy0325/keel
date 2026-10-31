@@ -535,3 +535,16 @@
   history only.
 - The synthetic window matrix is now documented as a machinery regression, not
   as evidence about real token counts.
+
+### M3 real coding session
+
+- Ran 20 real coding turns with four tools at a 16k window: 20/20 `Done`,
+  271.6k input and 20.6k output tokens, no overflow or wrap-up. The generated
+  tests passed 15/15 when run externally.
+- Verified the final workspace: renamed parameters, type hints, docstrings,
+  `ValueError` on zero division, `pow2`, bitwise `is_even`, `clamp` and the
+  README all match the tasks.
+- The run found that `write_file` could not create a missing parent directory.
+  It now creates parent directories inside the workspace, with a test.
+- Added `variants/coding/profile.deepseek.session.toml` for headless sessions
+  and `evals/reports/2026-11-03-coding-20-turn.md`.

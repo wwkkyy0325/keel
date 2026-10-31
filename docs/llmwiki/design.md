@@ -27,7 +27,8 @@ immutable `RuntimeConfig`; plugins add optional capabilities.
 Status: M3 complete except for the summarization research. Sessions,
 budget-driven history assembly, the context governor, tool summaries, segment
 records, three-tier facts and the turn `Answer` artifact are implemented. A
-real 20-turn DeepSeek companion run at an 8k window finished 20/20. 198 tests
+real 20-turn DeepSeek companion run at an 8k window finished 20/20, and a
+20-turn coding session with four tools at 16k finished 20/20. 199 tests
 pass; the self-authored suite is 10/10 and the public baseline is HumanEval+
 20/20 and MBPP+ 19/20.
 

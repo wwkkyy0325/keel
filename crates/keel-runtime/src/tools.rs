@@ -671,6 +671,12 @@ impl Tool for WriteFileTool {
             }
         };
 
+        if let Some(parent) = resolved.parent() {
+            if let Err(error) = tokio::fs::create_dir_all(parent).await {
+                return ToolResult::failure(ctx.call_id, "write_file", io_error(&error));
+            }
+        }
+
         match tokio::fs::write(&resolved, content).await {
             Ok(()) => {
                 let message = match backup {

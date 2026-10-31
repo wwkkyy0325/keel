@@ -567,3 +567,15 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 - Added estimator tests, Chinese segmentation tests and a calibration test
   asserting the next turn's budget drops by the observed overhead.
 - Verification: 198 tests; fmt and clippy clean.
+
+### M3 real coding session
+
+- Added a headless coding profile: DeepSeek, 16k window, 12,288 budget, four
+  tools, no shell.
+- 20/20 turns `Done`; 271,631 input + 20,617 output tokens; no overflow or
+  wrap-up. Real budgets dropped to about 11k after overhead calibration.
+- Workspace checks passed; generated pytest suite passed 15/15 when run
+  externally.
+- `write_file` now creates missing parent directories; added a nested-write
+  test.
+- Verification: 199 tests; fmt and clippy clean.
