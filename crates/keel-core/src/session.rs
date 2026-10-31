@@ -118,6 +118,13 @@ pub struct SegmentRecord {
     /// Model-written summary, when a summarizer is configured and the segment
     /// was large enough. The structured fields stay authoritative.
     pub summary: Option<String>,
+    /// Segment ids whose stored content this summary includes.
+    pub covers: Vec<u32>,
+    /// Excluded from the context projection because facts cover its changes.
+    /// The record and its transcript stay in storage.
+    pub folded: bool,
+    /// Set on a folded record after a later summary absorbed its content.
+    pub absorbed_by: Option<u32>,
 }
 
 /// A topic span of a session.
@@ -157,6 +164,8 @@ pub struct SegmentChange {
     pub forgotten: Vec<String>,
     /// Keys promoted above session scope at this seal.
     pub promoted: Vec<String>,
+    /// Records excluded from the context because facts cover them.
+    pub folded: Vec<u32>,
 }
 
 /// Everything one finished turn contributes to the session.
@@ -219,7 +228,7 @@ impl Session {
             return SegmentChange::default();
         };
         let sealed = open_id;
-        let (skipped, forgotten, promoted) = self.seal_and_record();
+        let (skipped, forgotten, promoted, folded) = self.seal_and_record();
         let opened = self.open_segment(input);
         SegmentChange {
             sealed: Some(sealed),
@@ -228,6 +237,7 @@ impl Session {
             skipped,
             forgotten,
             promoted,
+            folded,
         }
     }
 
@@ -300,10 +310,10 @@ impl Session {
 
     /// Seals the open segment, builds its record when the gate passes, and
     /// sediments its facts.
-    fn seal_and_record(&mut self) -> (Option<CompressionSkip>, Vec<String>, Vec<String>) {
+    fn seal_and_record(&mut self) -> (Option<CompressionSkip>, Vec<String>, Vec<String>, Vec<u32>) {
         let (skipped, facts, forgotten_terms) = {
             let Some(segment) = self.segments.last_mut() else {
-                return (None, Vec::new(), Vec::new());
+                return (None, Vec::new(), Vec::new(), Vec::new());
             };
             segment.state = SegmentState::Sealed;
             let id = segment.id;
@@ -326,7 +336,45 @@ impl Session {
         for term in forgotten_terms {
             forgotten.extend(self.forget_matching(&term));
         }
-        (skipped, forgotten, self.apply_facts(facts))
+        let promoted = self.apply_facts(facts);
+        let folded = self.fold_covered_records();
+        (skipped, forgotten, promoted, folded)
+    }
+
+    /// Folds records whose changes are all represented by artifact facts.
+    ///
+    /// The record and its transcript stay in storage; only the context
+    /// projection drops it. The newest non-empty segment is never folded.
+    fn fold_covered_records(&mut self) -> Vec<u32> {
+        let newest = self
+            .segments
+            .iter()
+            .rposition(|segment| !segment.entries.is_empty());
+        let covered: BTreeSet<String> = self
+            .facts
+            .iter()
+            .chain(self.workspace_facts.iter())
+            .chain(self.global_facts.iter())
+            .filter_map(|fact| fact.key.strip_prefix("artifact:").map(str::to_owned))
+            .collect();
+
+        let mut folded = Vec::new();
+        for (index, segment) in self.segments.iter_mut().enumerate() {
+            if Some(index) == newest {
+                continue;
+            }
+            let Some(record) = segment.record.as_mut() else {
+                continue;
+            };
+            if record.folded || !record.pending.is_empty() || record.changes.is_empty() {
+                continue;
+            }
+            if record.changes.iter().all(|path| covered.contains(path)) {
+                record.folded = true;
+                folded.push(segment.id);
+            }
+        }
+        folded
     }
 
     fn seal_reason(&mut self, input: &str) -> Option<String> {
@@ -548,23 +596,52 @@ impl Session {
         )
     }
 
-    /// Attaches a model summary to an existing record.
-    pub fn set_record_summary(&mut self, segment_id: u32, summary: &str) {
-        let Some(segment) = self
-            .segments
-            .iter_mut()
-            .find(|segment| segment.id == segment_id)
-        else {
-            return;
-        };
-        let Some(record) = segment.record.as_mut() else {
-            return;
-        };
+    /// Attaches a model summary to an existing record and marks the folded
+    /// records whose content it absorbed.
+    pub fn set_record_summary(&mut self, segment_id: u32, summary: &str, covers: &[u32]) {
         let text = summary.trim();
         if text.is_empty() {
             return;
         }
-        record.summary = Some(text.chars().take(800).collect());
+        let clipped: String = text.chars().take(800).collect();
+        if let Some(segment) = self
+            .segments
+            .iter_mut()
+            .find(|segment| segment.id == segment_id)
+        {
+            if let Some(record) = segment.record.as_mut() {
+                record.summary = Some(clipped);
+                record.covers = covers.to_vec();
+            }
+        }
+        for segment in &mut self.segments {
+            let absorbed = segment
+                .record
+                .as_ref()
+                .map(|record| record.folded && covers.contains(&segment.id))
+                .unwrap_or(false);
+            if absorbed {
+                if let Some(record) = segment.record.as_mut() {
+                    record.absorbed_by = Some(segment_id);
+                }
+            }
+        }
+    }
+
+    /// Folded records whose content no later summary has absorbed.
+    pub fn folded_for_summary(&self, exclude: u32) -> Vec<(u32, SegmentRecord)> {
+        self.segments
+            .iter()
+            .filter(|segment| segment.id != exclude)
+            .filter_map(|segment| {
+                let record = segment.record.as_ref()?;
+                if record.folded && record.summary.is_none() && record.absorbed_by.is_none() {
+                    Some((segment.id, record.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     /// Records of sealed segments that are no longer the newest content.
@@ -578,6 +655,7 @@ impl Session {
             .enumerate()
             .filter(|(index, _)| Some(*index) != newest)
             .filter_map(|(_, segment)| segment.record.clone())
+            .filter(|record| !record.folded)
             .collect()
     }
 }
@@ -930,6 +1008,9 @@ fn build_record(segment: &Segment) -> Result<SegmentRecord, Vec<String>> {
         verified: segment.verified,
         turns: segment.turns,
         summary: None,
+        covers: Vec::new(),
+        folded: false,
+        absorbed_by: None,
     })
 }
 
@@ -1464,5 +1545,70 @@ mod chinese_segmentation_tests {
 
         assert_eq!(change.reason.as_deref(), Some("topic"));
         assert_eq!(session.segments().len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod folding_tests {
+    use super::*;
+
+    fn record(session: &mut Session, input: &str, artifacts: &[String], pending: &[String]) {
+        session.record_turn(TurnRecord {
+            input,
+            text: "done",
+            tools: &[],
+            artifacts,
+            pending,
+            verified: false,
+        });
+    }
+
+    #[test]
+    fn a_covered_record_is_folded_and_kept_for_summary() {
+        let mut session = Session::new();
+        let artifacts = vec!["a.py".to_owned()];
+        record(&mut session, "write a.py", &artifacts, &[]);
+        session.begin_turn("alpha beta");
+
+        record(&mut session, "gamma delta", &[], &[]);
+        let change = session.begin_turn("epsilon zeta");
+
+        assert_eq!(change.folded, vec![0]);
+        assert!(session.records().is_empty(), "folded records leave context");
+        let folded = session.folded_for_summary(change.sealed.unwrap());
+        assert_eq!(folded.len(), 1);
+        assert_eq!(folded[0].0, 0);
+
+        session.set_record_summary(change.sealed.unwrap(), "summary", &[0]);
+        assert!(session
+            .folded_for_summary(change.sealed.unwrap())
+            .is_empty());
+    }
+
+    #[test]
+    fn a_record_with_pending_is_not_folded() {
+        let mut session = Session::new();
+        let artifacts = vec!["a.py".to_owned()];
+        let pending = vec!["blocked on review".to_owned()];
+        record(&mut session, "write a.py", &artifacts, &pending);
+        session.begin_turn("alpha beta");
+
+        record(&mut session, "gamma delta", &[], &[]);
+        let change = session.begin_turn("epsilon zeta");
+
+        assert!(change.folded.is_empty());
+        assert_eq!(session.records().len(), 1);
+    }
+
+    #[test]
+    fn a_record_without_facts_is_not_folded() {
+        let mut session = Session::new();
+        record(&mut session, "first", &[], &[]);
+        session.begin_turn("alpha beta");
+
+        record(&mut session, "gamma delta", &[], &[]);
+        let change = session.begin_turn("epsilon zeta");
+
+        assert!(change.folded.is_empty());
     }
 }

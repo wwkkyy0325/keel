@@ -359,7 +359,7 @@ impl<M: ModelProvider> TurnDriver<M> {
             self.working_set.saturating_sub(overhead),
             self.output_reserve,
         );
-        let (change, transcript, opened_topic) = {
+        let (change, transcript, opened_topic, folded) = {
             let mut session = self
                 .session
                 .lock()
@@ -372,7 +372,11 @@ impl<M: ModelProvider> TurnDriver<M> {
                     .last()
                     .map(|segment| segment.topic.clone())
             });
-            (change, transcript, opened_topic)
+            let folded = change
+                .sealed
+                .map(|id| session.folded_for_summary(id))
+                .unwrap_or_default();
+            (change, transcript, opened_topic, folded)
         };
         if let Some(segment_id) = change.sealed {
             self.events.append(Event::SegmentSealed {
@@ -400,6 +404,12 @@ impl<M: ModelProvider> TurnDriver<M> {
                 key: key.clone(),
             });
         }
+        for segment_id in &change.folded {
+            self.events.append(Event::SegmentFolded {
+                turn_id,
+                segment_id: *segment_id,
+            });
+        }
         if let (Some(segment_id), Some(topic)) = (change.opened, opened_topic) {
             self.events.append(Event::SegmentOpened {
                 turn_id,
@@ -416,8 +426,28 @@ impl<M: ModelProvider> TurnDriver<M> {
             let raw_tokens: u32 = messages.iter().fold(0u32, |total, message| {
                 total.saturating_add(message.estimated_tokens())
             });
-            let text = transcript_text(messages);
-            if raw_tokens >= SUMMARY_MIN_TOKENS {
+            let mut text = transcript_text(messages);
+            let covers: Vec<u32> = folded.iter().map(|(id, _)| *id).collect();
+            let mut folded_tokens = 0u32;
+            if !folded.is_empty() {
+                let mut notes = String::from(
+                    "
+[folded earlier work]
+",
+                );
+                for (id, record) in &folded {
+                    notes.push_str(&format!(
+                        "[segment {id}] goal: {}; result: {}; changes: {}
+",
+                        record.goal,
+                        record.result,
+                        record.changes.join(", ")
+                    ));
+                }
+                folded_tokens = estimate_tokens(&notes);
+                text.push_str(&notes);
+            }
+            if raw_tokens.saturating_add(folded_tokens) >= SUMMARY_MIN_TOKENS {
                 let result = tokio::select! {
                     _ = cancel.cancelled() => None,
                     result = tokio::time::timeout(
@@ -430,7 +460,7 @@ impl<M: ModelProvider> TurnDriver<M> {
                         .session
                         .lock()
                         .unwrap_or_else(|poisoned| poisoned.into_inner());
-                    session.set_record_summary(segment_id, &summary.text);
+                    session.set_record_summary(segment_id, &summary.text, &covers);
                     drop(session);
                     stats.usage.input_tokens = stats
                         .usage

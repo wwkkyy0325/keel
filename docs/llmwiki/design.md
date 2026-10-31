@@ -26,10 +26,10 @@ immutable `RuntimeConfig`; plugins add optional capabilities.
 
 Status: M3 complete except for the summarization research. Sessions,
 budget-driven history assembly, the context governor, tool summaries, segment
-records, three-tier facts, model segment summaries and the turn `Answer`
-artifact are implemented. A
+records, L4 folding, three-tier facts, model segment summaries and the turn
+`Answer` artifact are implemented; ADR 0008 fixes the persistence layout. A
 real 20-turn DeepSeek companion run at an 8k window finished 20/20, and a
-20-turn coding session with four tools at 16k finished 20/20. 204 tests
+20-turn coding session with four tools at 16k finished 20/20. 208 tests
 pass; the self-authored suite is 10/10 and the public baseline is HumanEval+
 20/20 and MBPP+ 19/20.
 

@@ -988,3 +988,85 @@ async fn reported_usage_calibrates_the_next_budget() {
         .collect();
     assert_eq!(budgets.last(), Some(&(4096 - 500)));
 }
+
+struct CaptureSummarizer {
+    inputs: Arc<Mutex<Vec<String>>>,
+}
+
+#[async_trait]
+impl keel_runtime::Summarizer for CaptureSummarizer {
+    async fn summarize(
+        &self,
+        transcript: &str,
+        _cancel: &CancelToken,
+    ) -> Result<keel_runtime::Summarized, ModelError> {
+        self.inputs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(transcript.to_owned());
+        Ok(keel_runtime::Summarized {
+            text: "summary".to_owned(),
+            usage: TokenUsage::default(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn folded_work_is_included_in_a_later_summary() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let mut config = common::runtime_config(&["write_file"], 4, PermissionLevel::WorkspaceAuto);
+    config.context.stages = vec![
+        "system".to_owned(),
+        "memory".to_owned(),
+        "history".to_owned(),
+        "latest".to_owned(),
+    ];
+    config.context.budget_tokens = 8192;
+
+    let mut write_args = ToolArgs::new();
+    write_args.insert("path", ArgValue::String("a.txt".to_owned()));
+    write_args.insert("content", ArgValue::String("hi".to_owned()));
+    let model = MockModel::new(vec![
+        MockStep::TextAndToolCall {
+            text: "writing".to_owned(),
+            name: "write_file".to_owned(),
+            args: write_args,
+        },
+        MockStep::Text("done".to_owned()),
+        MockStep::Text("x".repeat(4000)),
+        MockStep::Text("ok".to_owned()),
+    ]);
+    let inputs = Arc::new(Mutex::new(Vec::new()));
+    let summarizer = CaptureSummarizer {
+        inputs: inputs.clone(),
+    };
+    let driver = common::build_driver(
+        model,
+        config,
+        events.clone(),
+        dir.path(),
+        common::test_limits(),
+    )
+    .with_summarizer(Arc::new(summarizer));
+
+    assert!(driver
+        .run("write a note", CancelToken::new())
+        .await
+        .is_done());
+    assert!(driver.run("alpha beta", CancelToken::new()).await.is_done());
+    let third = driver.run("gamma delta", CancelToken::new()).await;
+    assert!(third.is_done());
+
+    let folded = events
+        .for_turn(third.turn_id)
+        .iter()
+        .any(|record| matches!(record.event, Event::SegmentFolded { .. }));
+    assert!(folded, "the covered segment was not folded");
+
+    let inputs = inputs.lock().unwrap();
+    assert!(!inputs.is_empty(), "no catch-up summary was made");
+    let last = inputs.last().unwrap();
+    assert!(last.contains("[folded earlier work]"), "{last}");
+    assert!(last.contains("[segment 0]"), "{last}");
+}

@@ -93,6 +93,20 @@ one at a time. Summarization is blocked on
       notes, `missing` when empty — verify: narration is excluded, a written
       file appears in `changes`, and a text-less turn is marked missing
 
+## L4 and storage design
+
+- [x] Fold a record when every change is covered by an artifact fact and it has
+      no pending items; keep it in storage and drop it from the context
+      projection — verify: covered records fold, records with pending items or
+      missing facts do not
+- [x] Append folded records without a summary to the next segment summary,
+      marked `[segment N]`; the new record lists them in `covers` and each one
+      gets `absorbed_by` — verify: the summarizer input contains the marker and
+      the absorbed record leaves the catch-up set
+- [x] Storage layout for the audit, transcript, derived-context and memory
+      planes in ADR 0008 — verify: every in-memory field maps to a column;
+      implementation deferred to M5
+
 ## Verification commands
 
 ```bash

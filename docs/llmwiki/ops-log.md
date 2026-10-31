@@ -592,3 +592,16 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 - Real smoke: turn 1 long answer, turn 2 topic change produced a 63-character
   summary, turn 3 carried the record.
 - Verification: 204 tests; fmt and clippy clean.
+
+### M3 L4 folding and storage design
+
+- `fold_covered_records` folds older records when every change path has an
+  `artifact:` fact and `pending` is empty; `records()` filters folded rows from
+  context while storage keeps them.
+- `folded_for_summary` returns folded records without a summary and without an
+  absorber; the driver appends them to the summarizer input marked
+  `[segment N]`. `set_record_summary(..., covers)` records the coverage and
+  sets `absorbed_by` on each absorbed record.
+- Added `SegmentFolded` and the `SegmentChange.folded` list.
+- Wrote ADR 0008 with the SQLite layout, invariants and frontend queries.
+- Verification: 208 tests; fmt and clippy clean.

@@ -84,6 +84,10 @@ pub enum Event {
         segment_id: u32,
         chars: u32,
     },
+    SegmentFolded {
+        turn_id: TurnId,
+        segment_id: u32,
+    },
     CompressionSkipped {
         turn_id: TurnId,
         segment_id: u32,
@@ -170,6 +174,7 @@ impl Event {
             | Self::SegmentOpened { turn_id, .. }
             | Self::SegmentSealed { turn_id, .. }
             | Self::SegmentSummarized { turn_id, .. }
+            | Self::SegmentFolded { turn_id, .. }
             | Self::CompressionSkipped { turn_id, .. }
             | Self::FactPromoted { turn_id, .. }
             | Self::FactForgotten { turn_id, .. }
@@ -201,6 +206,7 @@ impl Event {
             Self::SegmentOpened { .. } => "segment_opened",
             Self::SegmentSealed { .. } => "segment_sealed",
             Self::SegmentSummarized { .. } => "segment_summarized",
+            Self::SegmentFolded { .. } => "segment_folded",
             Self::CompressionSkipped { .. } => "compression_skipped",
             Self::FactPromoted { .. } => "fact_promoted",
             Self::FactForgotten { .. } => "fact_forgotten",

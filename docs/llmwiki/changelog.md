@@ -564,3 +564,17 @@
   record in the next request; `summary:` is now printed by the CLI.
 - Verification: 204 tests; large/short segment gating, fallback and usage
   accounting are covered.
+
+### M3 L4 folding and storage design
+
+- Records whose changes are all covered by artifact facts and that have no
+  pending items are folded: they leave the context projection but stay in
+  storage. The newest segment is never folded.
+- Folded records without a summary are appended to the next segment summary,
+  marked `[segment N]`. On success the new record lists them in `covers`, and
+  each one records `absorbed_by`.
+- Added ADR 0008: four storage planes (audit, transcript, derived context,
+  facts), a SQLite schema, soft flags instead of deletes, context snapshots and
+  provenance. Implementation is deferred to M5.
+- Verification: 208 tests; folding rules, later-summary absorption and the
+  driver marker are covered.
