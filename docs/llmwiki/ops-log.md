@@ -694,6 +694,17 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
   current turn.
 - Verification: 226+ tests; fmt and clippy clean.
 
+### Derived current task
+
+- `TodoList::current` prefers an explicit in-progress item and falls back to
+  the first pending item; `render` adds `current: #id text`. The driver's
+  `TodoUpdated` and the CLI task line use `current`.
+- The first pending task is therefore already current; the model only marks it
+  completed. This removes the in-progress tool round per chapter.
+- The novel persona and the ablation generator gained a derived form; the
+  original prompt/arm files remain for comparison.
+- Verification: 233 tests; fmt and clippy clean.
+
 ### Kernel ablation results
 
 - Five arms, fifteen chapters, one fixed chapter-only prompt:

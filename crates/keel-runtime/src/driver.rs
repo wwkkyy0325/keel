@@ -1333,7 +1333,7 @@ impl<M: ModelProvider> TurnDriver<M> {
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
                 (
                     list.items.len() as u32,
-                    list.in_progress().map(|item| item.id),
+                    list.current().map(|item| item.id),
                     list.state,
                     list.completed() as u32,
                     list.failed() as u32,

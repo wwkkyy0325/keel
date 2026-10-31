@@ -294,6 +294,23 @@ impl TodoList {
             .find(|item| item.status == TodoStatus::InProgress)
     }
 
+    /// The task the model should work on next.
+    ///
+    /// An explicit `in_progress` wins; otherwise the first pending item is
+    /// current. This lets the model mark only completion and saves one tool
+    /// round per task.
+    pub fn current(&self) -> Option<&TodoItem> {
+        if let Some(item) = self.in_progress() {
+            return Some(item);
+        }
+        if self.state.is_closed() {
+            return None;
+        }
+        self.items
+            .iter()
+            .find(|item| item.status == TodoStatus::Pending)
+    }
+
     pub fn completed(&self) -> usize {
         self.items
             .iter()
@@ -315,6 +332,9 @@ impl TodoList {
         match self.state {
             TodoState::Active => {
                 let mut text = String::from("[tasks]\n");
+                if let Some(current) = self.current() {
+                    text.push_str(&format!("current: #{} {}\n", current.id, current.text));
+                }
                 for item in &self.items {
                     text.push_str(&format!(
                         "#{} {} {}\n",
@@ -387,6 +407,17 @@ mod tests {
         assert_eq!(todos.remove(id), Err(TodoError::Locked));
         todos.update_status(id, TodoStatus::Completed).unwrap();
         assert_eq!(todos.completed(), 1);
+    }
+
+    #[test]
+    fn the_first_pending_item_is_current_until_completed() {
+        let mut todos = TodoList::new();
+        let first = todos.add_host("one").unwrap();
+        let second = todos.add_host("two").unwrap();
+        assert_eq!(todos.current().map(|item| item.id), Some(first));
+        todos.update_status(first, TodoStatus::Completed).unwrap();
+        assert_eq!(todos.current().map(|item| item.id), Some(second));
+        assert!(todos.render().contains("current: #2 two"));
     }
 
     #[test]

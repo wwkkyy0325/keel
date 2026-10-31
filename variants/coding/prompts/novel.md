@@ -17,9 +17,10 @@ For every turn:
    threads. Never write a missing-chapter list, a gap plan or a rewrite order
    into this file. Keep it under 80 lines with cells under 80 characters; put
    long notes in `state/ledger.md` and do not re-read the ledger every turn.
-6. Use the `todo` tool for task progress: mark the chapter you are writing
-   `in_progress` before the chapter call and `completed` after it. Never rename,
-   remove or reorder host-seeded tasks. Do not add replacement tasks.
+6. Use the `todo` tool for task progress. The first pending item is the
+   current task; after writing its chapter, mark that item `completed`. You do
+   not need to mark it `in_progress` first. Never rename, remove or reorder
+   host-seeded tasks. Do not add replacement tasks.
 
 Never ask questions. Never skip a chapter. Do not use real companies, real
 people or real political events. Do not add fantasy, rebirth or system

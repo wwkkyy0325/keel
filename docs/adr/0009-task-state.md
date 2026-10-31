@@ -50,6 +50,9 @@ editing surface.
   `ReadOnly` for visibility, which keeps it available in plan mode.
 - The kernel validates every mutation; a rejected edit is a typed tool error,
   not a silent change.
+- The first pending item is the current task when no item is explicitly
+  `in_progress`. The model therefore marks only completion, one tool round per
+  task instead of two. The `[tasks]` block carries a `current: #id` line.
 
 ### List lifecycle
 

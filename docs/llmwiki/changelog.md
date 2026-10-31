@@ -663,6 +663,15 @@
 - Verification: 230 tests; fmt and clippy clean. Arm results are tracked in
   `docs/llmwiki/tasks/ablation.md`.
 
+### Derived current task
+
+- `TodoList::current` returns the explicit `in_progress` item or the first
+  pending item. The `[tasks]` block renders a `current: #id` line; the driver
+  and CLI use it for events and progress.
+- The model now marks only completion, saving one todo round-trip per task.
+  The novel persona and the ablation prompts use the derived form.
+- Verification: 233 tests; fmt and clippy clean.
+
 ### Kernel ablation results
 
 - Ran five fifteen-chapter arms under one fixed protocol: full, no-todo,

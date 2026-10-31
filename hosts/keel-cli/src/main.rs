@@ -229,7 +229,7 @@ fn print_todos(todos: Option<&Arc<Mutex<TodoList>>>) {
         return;
     }
     let current = list
-        .in_progress()
+        .current()
         .map(|item| format!("#{}", item.id))
         .unwrap_or_else(|| "-".to_owned());
     println!(
