@@ -696,6 +696,17 @@
   wrote 14/15 with similar input. Probes or a state-less workload are needed.
 - Missing chapters in no-memo and no-todo are single-run model variance.
 
+### Summary quality floor
+
+- A model-written summary below `max_tokens / 4` tokens, clamped to 64..256,
+  is now a failed summarizer call. The driver keeps the previous memo and
+  writes the structured fallback instead of absorbing a segment into a
+  near-empty summary.
+- The observed case was a 126-character Chinese memo against a 756-token
+  budget. Normal summaries of 1,000+ characters pass.
+- Verification: unit tests for the 126-character case and the floor scaling;
+  239 tests, fmt and clippy clean. ADR 0006 records the gate.
+
 ### IDF recall scoring and Chinese queries
 
 - Recall now filters query-only question and meta words (English and Chinese
