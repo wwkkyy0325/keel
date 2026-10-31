@@ -56,7 +56,11 @@ fn coding_profile_loads() {
     assert_eq!(config.permission_level, PermissionLevel::WorkspaceAuto);
     assert_eq!(
         config.context.stages,
-        vec!["system".to_owned(), "latest".to_owned()]
+        vec![
+            "system".to_owned(),
+            "history".to_owned(),
+            "latest".to_owned()
+        ]
     );
     assert_eq!(config.verification, VerificationMode::None);
 }

@@ -13,9 +13,9 @@ use keel_core::{
 use keel_model_openai::{OpenAiConfig, OpenAiProvider};
 use keel_runtime::{
     load_profile, validate_config, CodeSearchTool, ContextBuilder, EchoTool, EventLog,
-    InteractionBroker, LatestStage, ListDirTool, LocalTrashStore, MockModel, MockStep,
-    PermissionEngine, ReadFileTool, RuntimeConfig, ShellTool, SystemStage, ToolRegistry,
-    TurnDriver, TurnDriverConfig, WriteFileTool,
+    HistoryStage, InteractionBroker, LatestStage, ListDirTool, LocalTrashStore, MockModel,
+    MockStep, PermissionEngine, ReadFileTool, RuntimeConfig, ShellTool, SystemStage, ToolRegistry,
+    TurnDriver, TurnDriverConfig, TurnOutcome, WriteFileTool,
 };
 use terminal::TerminalInteractionPort;
 
@@ -51,10 +51,13 @@ async fn main() -> ExitCode {
 
 async fn run() -> Result<(), KernelError> {
     dotenvy::dotenv().ok();
-    let (profile_path, input, workspace, acceptance_path) = parse_args()?;
-    let config = load_profile(&profile_path)?;
+    let args = parse_args()?;
+    let config = load_profile(&args.profile)?;
 
-    let permissions = Arc::new(PermissionEngine::new(workspace, config.permission_level)?);
+    let permissions = Arc::new(PermissionEngine::new(
+        args.workspace,
+        config.permission_level,
+    )?);
 
     let mut registry = ToolRegistry::new();
     registry.register(Arc::new(EchoTool::new()))?;
@@ -69,6 +72,7 @@ async fn run() -> Result<(), KernelError> {
 
     let context = ContextBuilder::new(vec![
         Arc::new(SystemStage::new()),
+        Arc::new(HistoryStage::new()),
         Arc::new(LatestStage::new()),
     ]);
     validate_config(&config, &registry, &context)?;
@@ -79,7 +83,7 @@ async fn run() -> Result<(), KernelError> {
         config.interaction,
         events.clone(),
     ));
-    let model = build_model(&config, &input)?;
+    let model = build_model(&config, &args.input, args.session)?;
     let policy: Arc<dyn Policy> = Arc::new(config.clone());
     let driver = TurnDriver::new(
         model,
@@ -96,11 +100,60 @@ async fn run() -> Result<(), KernelError> {
         },
     );
 
-    let driver = match acceptance_path {
-        Some(path) => driver.with_acceptance(acceptance::load(&path)?, 2),
+    let driver = match &args.acceptance {
+        Some(path) => driver.with_acceptance(acceptance::load(path)?, 2),
         None => driver,
     };
-    let outcome = driver.run(&input, CancelToken::new()).await;
+
+    if args.session {
+        return run_session(&driver, &config, &events).await;
+    }
+
+    let outcome = driver.run(&args.input, CancelToken::new()).await;
+    print_outcome(&config, &events, &outcome);
+    done_or_error(outcome)
+}
+
+/// Reads inputs from stdin until EOF, keeping one session across turns.
+async fn run_session(
+    driver: &TurnDriver<HostModel>,
+    config: &RuntimeConfig,
+    events: &Arc<EventLog>,
+) -> Result<(), KernelError> {
+    use std::io::{BufRead, IsTerminal, Write};
+
+    let stdin = std::io::stdin();
+    let interactive = stdin.is_terminal();
+    let mut line = String::new();
+    loop {
+        if interactive {
+            print!("keel> ");
+            let _ = std::io::stdout().flush();
+        }
+        line.clear();
+        let read = stdin
+            .lock()
+            .read_line(&mut line)
+            .map_err(|error| KernelError::Io {
+                message: error.to_string(),
+            })?;
+        if read == 0 {
+            break;
+        }
+        let input = line.trim_end_matches(['\r', '\n']);
+        if input.trim().is_empty() {
+            continue;
+        }
+        let outcome = driver.run(input, CancelToken::new()).await;
+        print_outcome(config, events, &outcome);
+        if outcome.is_cancelled() {
+            break;
+        }
+    }
+    Ok(())
+}
+
+fn print_outcome(config: &RuntimeConfig, events: &EventLog, outcome: &TurnOutcome) {
     println!("profile: {}", config.profile_name);
     println!("turn: {}", outcome.turn_id.get());
     println!("state: {}", outcome.state);
@@ -130,7 +183,9 @@ async fn run() -> Result<(), KernelError> {
             kind.as_str()
         );
     }
+}
 
+fn done_or_error(outcome: TurnOutcome) -> Result<(), KernelError> {
     if outcome.is_done() {
         Ok(())
     } else {
@@ -142,9 +197,20 @@ async fn run() -> Result<(), KernelError> {
     }
 }
 
-fn build_model(config: &RuntimeConfig, input: &str) -> Result<HostModel, KernelError> {
+fn build_model(
+    config: &RuntimeConfig,
+    input: &str,
+    session: bool,
+) -> Result<HostModel, KernelError> {
     match config.model_route.provider.as_str() {
-        "mock" => Ok(HostModel::Mock(MockModel::new(script_for(config, input)))),
+        "mock" => {
+            let model = if session {
+                MockModel::repeating(vec![MockStep::Text("mock session turn".to_owned())])
+            } else {
+                MockModel::new(script_for(config, input))
+            };
+            Ok(HostModel::Mock(model))
+        }
         "openai" | "openai-compatible" => {
             let base_url = config
                 .model_base_url
@@ -176,10 +242,19 @@ fn build_model(config: &RuntimeConfig, input: &str) -> Result<HostModel, KernelE
     }
 }
 
-fn parse_args() -> Result<(PathBuf, String, PathBuf, Option<PathBuf>), KernelError> {
+struct Args {
+    profile: PathBuf,
+    input: String,
+    workspace: PathBuf,
+    acceptance: Option<PathBuf>,
+    session: bool,
+}
+
+fn parse_args() -> Result<Args, KernelError> {
     let mut profile = PathBuf::from("variants/coding/profile.toml");
     let mut input = String::from("hello from keel");
     let mut acceptance = None;
+    let mut session = false;
     let mut workspace = std::env::current_dir().map_err(|error| KernelError::Io {
         message: error.to_string(),
     })?;
@@ -210,13 +285,22 @@ fn parse_args() -> Result<(PathBuf, String, PathBuf, Option<PathBuf>), KernelErr
                         invalid_config("missing value for `--acceptance`")
                     })?));
             }
+            "--session" => {
+                session = true;
+            }
             other => {
                 return Err(invalid_config(format!("unknown argument `{other}`")));
             }
         }
     }
 
-    Ok((profile, input, workspace, acceptance))
+    Ok(Args {
+        profile,
+        input,
+        workspace,
+        acceptance,
+        session,
+    })
 }
 
 fn script_for(config: &RuntimeConfig, input: &str) -> Vec<MockStep> {

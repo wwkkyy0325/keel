@@ -373,3 +373,25 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
   model with scripted growth; the measured knee replaces the provisional
   floors.
 - No code changed.
+
+### M3 session and history pipeline
+
+- Added `keel-core::session`: `Session`, `Segment`, `SegmentState` and `Entry`.
+  Turns are recorded as user input plus assistant text; `seal_current` closes a
+  segment and the next turn opens a new one. Topic labels keep the original
+  language and are bounded to 80 characters.
+- Changed the context contract: `BuildCtx` carries `budget_tokens`; each stage
+  receives the remaining budget; `ContextStage::build` returns zero or more
+  fragments, so history can emit a sequence of messages.
+- Added `HistoryStage` (priority 9, before `latest`). It groups messages into
+  turns, keeps whole turns only, drops the oldest first, and reserves room for
+  the current input so history can never crowd it out.
+- The driver owns a `Session`, passes its history into the context, and records
+  every non-cancelled turn after the terminal state is known.
+- Added `--session` to the CLI: one input per line until EOF, one driver for
+  the whole run. All coding profiles and the companion profile list the
+  `history` stage.
+- Verification: `cargo fmt --check`; `cargo clippy --workspace --all-targets --
+  -D warnings`; `cargo test --workspace` (141 tests). A 20-turn mock companion
+  session reached `Done` on all 20 turns, and per-turn input tokens grew
+  (139, 145, 152 on the three-turn smoke), confirming history is assembled.

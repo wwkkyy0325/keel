@@ -6,12 +6,12 @@ one at a time. Summarization is blocked on
 
 ## Steps
 
-- [ ] 1. Session and segment types — verify: unit test appends turns, opens a
+- [x] 1. Session and segment types — verify: unit test appends turns, opens a
       segment, seals it, and keeps entries ordered
-- [ ] 2. Contract change: `BuildCtx` carries the remaining budget and a session
-      view; a context stage may emit several messages — verify: builder test
-      with a multi-message stage and an unchanged single-message stage
-- [ ] 3. CLI session loop — verify: 20-turn mock session reaches `Done` each
+- [x] 2. Contract change: `BuildCtx` carries the remaining budget and the
+      history slice; a context stage may emit several messages — verify:
+      builder test with a multi-message stage and the remaining-budget probe
+- [x] 3. CLI session loop — verify: 20-turn mock session reaches `Done` each
       turn and keeps history across turns
 - [ ] 4. Budget-driven assembly: detail window sized in tokens (two-turn
       floor, no turn ceiling), digests for older turns, records for sealed

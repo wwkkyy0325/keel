@@ -336,3 +336,20 @@
 - Set provisional floors at 16k for coding and 8k for no-tool profiles, with
   validation and a window-matrix test (8k to 1M) to replace them with measured
   values.
+
+### M3 session and history pipeline
+
+- Added `Session`, `Segment`, `SegmentState` and `Entry` to `keel-core`. A turn
+  records the user input and the assistant text; an open segment is created on
+  first use and `seal_current` starts a new one.
+- `BuildCtx` now carries `budget_tokens` (remaining for the stage) and the
+  history slice; a context stage may return several fragments.
+- Added `HistoryStage`: it keeps whole turns, never splits a user/assistant
+  pair, drops the oldest turns first, and always leaves room for the current
+  input.
+- The driver owns a session and records every non-cancelled turn, so later
+  turns see earlier ones.
+- The CLI has a `--session` loop that reads one input per line until EOF and
+  keeps the driver across turns; all profiles list the `history` stage.
+- Verification: 141 tests; a 20-turn mock companion session reaches `Done` on
+  every turn; `cargo fmt --check`, clippy and `cargo test --workspace` pass.

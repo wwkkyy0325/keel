@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -24,11 +24,11 @@ impl ContextStage for StaticStage {
         self.priority
     }
 
-    async fn build(&self, _ctx: &BuildCtx<'_>) -> Option<Fragment> {
-        Some(Fragment {
+    async fn build(&self, _ctx: &BuildCtx<'_>) -> Option<Vec<Fragment>> {
+        Some(vec![Fragment {
             role: MessageRole::System,
             text: self.text.clone(),
-        })
+        }])
     }
 }
 
@@ -44,12 +44,12 @@ impl ContextStage for SlowStage {
         0
     }
 
-    async fn build(&self, _ctx: &BuildCtx<'_>) -> Option<Fragment> {
+    async fn build(&self, _ctx: &BuildCtx<'_>) -> Option<Vec<Fragment>> {
         tokio::time::sleep(Duration::from_secs(30)).await;
-        Some(Fragment {
+        Some(vec![Fragment {
             role: MessageRole::System,
             text: "late".to_owned(),
-        })
+        }])
     }
 }
 
@@ -67,6 +67,7 @@ fn build_ctx<'a>(input: &'a str, system_prompt: &'a str) -> BuildCtx<'a> {
         input,
         history: &[],
         system_prompt,
+        budget_tokens: 4096,
     }
 }
 
@@ -212,4 +213,109 @@ async fn cancellation_stops_context_build() {
         .await
         .unwrap_err();
     assert!(matches!(error, KernelError::Cancelled { .. }));
+}
+
+struct MultiStage {
+    name: &'static str,
+    priority: i32,
+}
+
+#[async_trait]
+impl ContextStage for MultiStage {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    fn priority(&self) -> i32 {
+        self.priority
+    }
+
+    async fn build(&self, _ctx: &BuildCtx<'_>) -> Option<Vec<Fragment>> {
+        Some(vec![
+            Fragment {
+                role: MessageRole::User,
+                text: "one".to_owned(),
+            },
+            Fragment {
+                role: MessageRole::Assistant,
+                text: "two".to_owned(),
+            },
+        ])
+    }
+}
+
+struct BudgetProbe {
+    name: &'static str,
+    text: String,
+    seen: Arc<Mutex<Vec<u32>>>,
+}
+
+#[async_trait]
+impl ContextStage for BudgetProbe {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    fn priority(&self) -> i32 {
+        0
+    }
+
+    async fn build(&self, ctx: &BuildCtx<'_>) -> Option<Vec<Fragment>> {
+        self.seen
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(ctx.budget_tokens);
+        Some(vec![Fragment {
+            role: MessageRole::System,
+            text: self.text.clone(),
+        }])
+    }
+}
+
+#[tokio::test]
+async fn a_stage_can_emit_several_messages() {
+    let builder = ContextBuilder::new(vec![Arc::new(MultiStage {
+        name: "multi",
+        priority: 0,
+    })]);
+    let ctx = build_ctx("input", "system");
+    let built = builder
+        .build(&ctx, &recipe(&["multi"], 100), &CancelToken::new())
+        .await
+        .unwrap();
+
+    assert_eq!(built.fragments.len(), 2);
+    assert_eq!(built.fragments[0].role, MessageRole::User);
+    assert_eq!(built.fragments[0].text, "one");
+    assert_eq!(built.fragments[1].role, MessageRole::Assistant);
+    assert_eq!(built.fragments[1].text, "two");
+}
+
+#[tokio::test]
+async fn each_stage_sees_the_remaining_budget() {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let builder = ContextBuilder::new(vec![
+        Arc::new(BudgetProbe {
+            name: "first",
+            text: "x".repeat(40),
+            seen: seen.clone(),
+        }),
+        Arc::new(BudgetProbe {
+            name: "second",
+            text: String::new(),
+            seen: seen.clone(),
+        }),
+    ]);
+    let ctx = build_ctx("input", "system");
+    builder
+        .build(
+            &ctx,
+            &recipe(&["first", "second"], 100),
+            &CancelToken::new(),
+        )
+        .await
+        .unwrap();
+
+    let seen = seen.lock().unwrap();
+    assert_eq!(*seen, vec![100, 90]);
 }

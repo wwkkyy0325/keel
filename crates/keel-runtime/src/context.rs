@@ -3,7 +3,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use keel_core::{
-    BuildCtx, CancelToken, ContextRecipe, ContextStage, Fragment, KernelError, MessageRole,
+    estimate_tokens, BuildCtx, CancelToken, ContextRecipe, ContextStage, Fragment, KernelError,
+    Message, MessageRole,
 };
 
 /// Result of one context assembly pass.
@@ -74,41 +75,51 @@ impl ContextBuilder {
         let mut stages = Vec::new();
         let mut used = 0u32;
 
-        for (_, stage) in selected {
-            let fragment = tokio::select! {
+        'stages: for (_, stage) in selected {
+            let stage_ctx = ctx.with_budget(recipe.budget_tokens.saturating_sub(used));
+            let built = tokio::select! {
                 _ = cancel.cancelled() => {
                     return Err(KernelError::Cancelled { stage: "context" });
                 }
-                fragment = stage.build(ctx) => fragment,
+                built = stage.build(&stage_ctx) => built,
             };
-            let Some(fragment) = fragment else {
+            let Some(built) = built else {
                 continue;
             };
+            if built.is_empty() {
+                continue;
+            }
 
-            let tokens = fragment.estimated_tokens();
-            if used.saturating_add(tokens) <= recipe.budget_tokens {
-                used = used.saturating_add(tokens);
+            let mut emitted = false;
+            for fragment in built {
+                let tokens = fragment.estimated_tokens();
+                if used.saturating_add(tokens) <= recipe.budget_tokens {
+                    used = used.saturating_add(tokens);
+                    fragments.push(fragment);
+                    emitted = true;
+                    continue;
+                }
+
+                let remaining = recipe.budget_tokens.saturating_sub(used);
+                if remaining == 0 {
+                    break 'stages;
+                }
+                let keep = (remaining as usize).saturating_mul(4);
+                let text: String = fragment.text.chars().take(keep).collect();
+                if text.is_empty() {
+                    break 'stages;
+                }
+                used = recipe.budget_tokens;
+                fragments.push(Fragment {
+                    role: fragment.role,
+                    text,
+                });
                 stages.push(stage.name().to_owned());
-                fragments.push(fragment);
-                continue;
+                break 'stages;
             }
-
-            let remaining = recipe.budget_tokens.saturating_sub(used);
-            if remaining == 0 {
-                break;
+            if emitted {
+                stages.push(stage.name().to_owned());
             }
-            let keep = (remaining as usize).saturating_mul(4);
-            let text: String = fragment.text.chars().take(keep).collect();
-            if text.is_empty() {
-                break;
-            }
-            used = recipe.budget_tokens;
-            stages.push(stage.name().to_owned());
-            fragments.push(Fragment {
-                role: fragment.role,
-                text,
-            });
-            break;
         }
 
         Ok(BuiltContext {
@@ -145,14 +156,14 @@ impl ContextStage for SystemStage {
         0
     }
 
-    async fn build(&self, ctx: &BuildCtx<'_>) -> Option<Fragment> {
+    async fn build(&self, ctx: &BuildCtx<'_>) -> Option<Vec<Fragment>> {
         if ctx.system_prompt.trim().is_empty() {
             return None;
         }
-        Some(Fragment {
+        Some(vec![Fragment {
             role: MessageRole::System,
             text: ctx.system_prompt.to_owned(),
-        })
+        }])
     }
 }
 
@@ -181,13 +192,97 @@ impl ContextStage for LatestStage {
         10
     }
 
-    async fn build(&self, ctx: &BuildCtx<'_>) -> Option<Fragment> {
+    async fn build(&self, ctx: &BuildCtx<'_>) -> Option<Vec<Fragment>> {
         if ctx.input.is_empty() {
             return None;
         }
-        Some(Fragment {
+        Some(vec![Fragment {
             role: MessageRole::User,
             text: ctx.input.to_owned(),
-        })
+        }])
+    }
+}
+
+/// Emits recorded history, keeping the newest messages that fit.
+///
+/// History runs before `latest`, so it leaves room for the current input.
+/// Only user and assistant text is emitted; tool-call structure is not
+/// replayed from earlier turns.
+pub struct HistoryStage;
+
+impl HistoryStage {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for HistoryStage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl ContextStage for HistoryStage {
+    fn name(&self) -> &'static str {
+        "history"
+    }
+
+    fn priority(&self) -> i32 {
+        9
+    }
+
+    async fn build(&self, ctx: &BuildCtx<'_>) -> Option<Vec<Fragment>> {
+        if ctx.history.is_empty() {
+            return None;
+        }
+        // Never spend the room the current input needs.
+        let budget = ctx.budget_tokens.checked_sub(estimate_tokens(ctx.input))?;
+        if budget == 0 {
+            return None;
+        }
+
+        // A turn starts at a user message. Keep or drop whole turns so an
+        // assistant message never appears without the request it answered.
+        let history = ctx.history;
+        let mut turns: Vec<&[Arc<Message>]> = Vec::new();
+        let mut start = 0usize;
+        for (index, message) in history.iter().enumerate() {
+            if index > 0 && message.role == MessageRole::User {
+                turns.push(&history[start..index]);
+                start = index;
+            }
+        }
+        turns.push(&history[start..]);
+
+        let mut chosen: Vec<&Arc<Message>> = Vec::new();
+        let mut used = 0u32;
+        for turn in turns.iter().rev() {
+            let tokens = turn.iter().fold(0u32, |total, message| {
+                total.saturating_add(message.estimated_tokens())
+            });
+            if used.saturating_add(tokens) > budget && !chosen.is_empty() {
+                break;
+            }
+            used = used.saturating_add(tokens);
+            chosen.extend(turn.iter().rev());
+        }
+        if chosen.is_empty() {
+            return None;
+        }
+        chosen.reverse();
+        Some(
+            chosen
+                .into_iter()
+                .filter(|message| {
+                    matches!(message.role, MessageRole::User | MessageRole::Assistant)
+                        && !message.content.trim().is_empty()
+                })
+                .map(|message| Fragment {
+                    role: message.role,
+                    text: message.content.clone(),
+                })
+                .collect(),
+        )
     }
 }

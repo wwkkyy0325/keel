@@ -1,15 +1,15 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use keel_core::{
     detect_secret, AcceptanceItem, BuildCtx, CancelToken, CommitCtx, CommitDecision, ErrorCode,
     Event, InteractionId, InteractionRequest, InteractionResponse, KernelError, Message,
     ModelChunk, ModelError, ModelProvider, ModelRequest, ModelRole, OnTimeout, Policy,
-    ReasoningLevel, SecretKind, ToolArgs, ToolOutcome, TurnEvent, TurnState, VerificationMode,
-    VerificationReport,
+    ReasoningLevel, SecretKind, Session, ToolArgs, ToolOutcome, TurnEvent, TurnState,
+    VerificationMode, VerificationReport,
 };
 
 use crate::context::ContextBuilder;
@@ -98,6 +98,7 @@ pub struct TurnDriver<M> {
     limits: TurnLimits,
     workspace_root: PathBuf,
     acceptance: Option<AcceptancePlan>,
+    session: Mutex<Session>,
     next_turn: AtomicU64,
 }
 
@@ -129,6 +130,7 @@ impl<M: ModelProvider> TurnDriver<M> {
             limits: config.limits,
             workspace_root: config.permissions.root().to_path_buf(),
             acceptance: None,
+            session: Mutex::new(Session::new()),
             next_turn: AtomicU64::new(1),
         }
     }
@@ -204,6 +206,13 @@ impl<M: ModelProvider> TurnDriver<M> {
             deferred: stats.deferred.len(),
         });
 
+        if state != TurnState::Cancelled {
+            self.session
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .record_turn(input, &text);
+        }
+
         TurnOutcome {
             turn_id,
             state,
@@ -254,11 +263,19 @@ impl<M: ModelProvider> TurnDriver<M> {
         }
 
         let recipe = self.policy.context_recipe();
+        let history = {
+            let session = self
+                .session
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            session.history()
+        };
         let build_ctx = BuildCtx {
             turn_id,
             input,
-            history: &[],
+            history: &history,
             system_prompt: &self.system_prompt,
+            budget_tokens: recipe.budget_tokens,
         };
         let built = self.context.build(&build_ctx, &recipe, cancel).await?;
         self.events.append(Event::ContextBuilt {

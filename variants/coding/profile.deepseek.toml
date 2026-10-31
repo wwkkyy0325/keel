@@ -11,7 +11,7 @@ thinking_budget = 0
 max_output_tokens = 4096
 
 [context]
-stages = ["system", "latest"]
+stages = ["system", "history", "latest"]
 budget_tokens = 16000
 
 [tools]

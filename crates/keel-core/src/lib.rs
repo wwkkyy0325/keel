@@ -15,6 +15,7 @@ pub mod model;
 pub mod permission;
 pub mod policy;
 pub mod secret;
+pub mod session;
 pub mod state;
 pub mod tool;
 pub mod verification;
@@ -41,6 +42,7 @@ pub use policy::{
     ModelRoute, Policy, PromotionMode, ReasoningLevel, VerificationMode,
 };
 pub use secret::{detect_secret, redact_secrets, SecretKind};
+pub use session::{Entry, Segment, SegmentState, Session};
 pub use state::{TurnEvent, TurnState};
 pub use tool::{
     ArgValue, ParamKind, ParamSpec, RiskLevel, Tool, ToolArgs, ToolCtx, ToolOutcome, ToolResult,

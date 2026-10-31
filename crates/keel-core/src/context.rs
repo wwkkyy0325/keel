@@ -11,6 +11,21 @@ pub struct BuildCtx<'a> {
     pub input: &'a str,
     pub history: &'a [Arc<Message>],
     pub system_prompt: &'a str,
+    /// Tokens left for this stage after higher-priority stages.
+    pub budget_tokens: u32,
+}
+
+impl<'a> BuildCtx<'a> {
+    /// Rebuilds the context with the budget remaining for one stage.
+    pub fn with_budget(&self, budget_tokens: u32) -> BuildCtx<'a> {
+        BuildCtx {
+            turn_id: self.turn_id,
+            input: self.input,
+            history: self.history,
+            system_prompt: self.system_prompt,
+            budget_tokens,
+        }
+    }
 }
 
 /// One piece of prompt content produced by a stage.
@@ -37,9 +52,12 @@ pub fn estimate_tokens(text: &str) -> u32 {
 
 /// A context fragment producer. Stages are ordered by priority; equal
 /// priorities keep registration order.
+///
+/// A stage may emit several fragments, because history is a sequence of user
+/// and assistant messages rather than one text block.
 #[async_trait]
 pub trait ContextStage: Send + Sync {
     fn name(&self) -> &'static str;
     fn priority(&self) -> i32;
-    async fn build(&self, ctx: &BuildCtx<'_>) -> Option<Fragment>;
+    async fn build(&self, ctx: &BuildCtx<'_>) -> Option<Vec<Fragment>>;
 }

@@ -65,6 +65,14 @@ cargo run -p keel-cli -- --profile variants/companion/profile.toml --input "hell
 The M1 mock model makes no network calls. The coding profile exercises one
 `echo` tool call; the companion profile exercises the no-tools policy.
 
+Keep one session across turns with `--session`; it reads one input per line
+until EOF and the history stage carries earlier turns into later ones:
+
+```bash
+printf 'first\nsecond\n' | cargo run -p keel-cli -- \
+  --profile variants/companion/profile.toml --session
+```
+
 For DeepSeek (`deepseek-flash`, OpenAI-compatible):
 
 ```bash
