@@ -59,6 +59,21 @@ See `evals/reports/2026-11-03-kernel-ablation.md`. The short version:
   carries the story; they need probes or a state-less workload to measure;
 - missing chapters in `no-memo` and `no-todo` are single-run model variance.
 
+## Derived current task
+
+- [x] `TodoList::current` returns the explicit in-progress item or the first
+      pending item; `[tasks]` renders it; the model marks only completion.
+      Verify: unit tests and 233 workspace tests.
+- [x] `full-15-derived`: 15/15, 0 overflow, 2 elisions, tasks closed,
+      722,580 input tokens versus 776,150 for the explicit arm (-6.9%).
+      Per-turn variance is larger than the delta, so this run cannot attribute
+      the saving to the removed round-trip alone.
+- [x] `TurnOutcome::model_calls` and `usage: calls=N` report model round-trips
+      directly. Verify: `text_only_turn_reaches_done` asserts one call.
+- [ ] Probe the short memo: the derived arm wrote a 126-character memo and the
+      kernel still absorbed the covered segment.
+- [ ] Recall and memo probes with early details removed from the state.
+
 ## Metrics
 
 - chapters written and CJK characters

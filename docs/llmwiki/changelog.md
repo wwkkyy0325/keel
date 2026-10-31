@@ -696,6 +696,23 @@
   wrote 14/15 with similar input. Probes or a state-less workload are needed.
 - Missing chapters in no-memo and no-todo are single-run model variance.
 
+### Derived current task and model-call telemetry
+
+- `TodoList::current` derives the current task from the explicit in-progress
+  item or the first pending item. The `[tasks]` block shows `current: #id`, and
+  the model marks only completion, removing one todo round per task.
+- The derived full-15 arm wrote 15/15, closed the list, had zero overflow and
+  used 722,580 input tokens versus 776,150 for the explicit arm (-6.9%).
+  Per-turn variance is larger than the delta, so the run alone does not
+  attribute the saving.
+- `TurnOutcome::model_calls` counts main and summary calls; the CLI usage line
+  now prints `calls=N` so arm comparisons can use round-trips directly.
+- Observation: the derived arm wrote a 126-character memo (budget 756 tokens)
+  and the kernel still absorbed the covered segment. A failed summarizer call
+  falls back, a degenerate short answer does not; this needs a probe before any
+  guard.
+- Verification: 233 tests; fmt and clippy clean.
+
 ### Structured memo fallback
 
 - When the model summary fails or times out, the kernel now writes a

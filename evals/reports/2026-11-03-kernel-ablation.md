@@ -33,6 +33,29 @@ Validator: full 1 error / 6 warnings, no-todo 2/6, no-recall 3/5, no-memo 3/1,
 unbounded 0/4. Most errors are chapter length below the 1,200-character floor,
 not structural corruption.
 
+### Follow-up: derived current task
+
+The todo protocol then changed: the current task is the first pending item, and
+the model marks only completion. A chapter needs one `todo` call instead of
+two. The prompt, model and workload are otherwise unchanged.
+
+| Arm | Ch | CJK | Overflow | Elided | Recall | Memo chars | Tasks | Input |
+|---|---|---|---|---|---|---|---|---|
+| full, explicit current | 15 | 23,542 | 0 | 1 | 2 / 1,599 | 1,179 | closed 15/15 | 776,150 |
+| full, derived current | 15 | 23,465 | 0 | 2 | 2 / 1,530 | 126 | closed 15/15 | 722,580 |
+
+Input fell 6.9%. The per-turn delta swings from -30k to +31k because the model
+varies how much it reads and writes per chapter, so one run cannot separate the
+removed round-trip from that variance. To measure the structural change
+directly, the usage line now reports `calls=` per turn; the next arms should
+read round-trips from it instead of inferring them from token totals.
+
+The derived arm also produced a 126-character memo against a 756-token budget,
+where the explicit arm produced 1,179 characters. The kernel marked the covered
+segment absorbed either way. A structured fallback covers a failed summarizer
+call, not a degenerate but valid answer, so a very short memo can silently
+replace history. This is a quality signal to probe, not a confirmed defect.
+
 ## Findings
 
 ### 1. Bounding live tool results is load-bearing
@@ -55,7 +78,8 @@ item observed here.
 This suggests a next design step: derive the current task from the first
 pending item, or advance it automatically when the previous one completes, so a
 chapter needs at most one todo call. That keeps the tracking benefit and
-removes one model round per chapter.
+removes one model round per chapter. The derived-current follow-up above
+implements half of that and still closes the list.
 
 ### 3. Memo and recall are not load-bearing for this workload
 
@@ -88,9 +112,9 @@ to a mechanism. The validator caught them, which is the intended behavior.
 
 ## Next
 
-1. Remove one todo round per chapter by deriving the current task from the
-   first pending item, then measure input tokens again.
-2. Add recall probes after sealing, with early details removed from the state,
+1. Add recall probes after sealing, with early details removed from the state,
    so no-recall can actually lose something.
-3. Repeat `full`, `no-todo` and `unbounded` once to separate model variance from
-   mechanism effects.
+2. Probe the short-memo case: a 126-character memo absorbed a segment; remove
+   an early detail from the state and ask for it after the seal.
+3. Repeat `full`, `no-todo`, `full-derived` and `unbounded` once with `calls=`
+   recorded, to separate model variance from mechanism effects.
