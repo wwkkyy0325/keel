@@ -130,6 +130,7 @@ fn request() -> ModelRequest {
     ModelRequest {
         messages: vec![Arc::new(Message::user("hi"))],
         tools: Vec::new(),
+        control_tool: true,
         thinking_budget: 0,
         max_output_tokens: 32,
         route: ModelRoute {

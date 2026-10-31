@@ -795,6 +795,7 @@ impl<M: ModelProvider> TurnDriver<M> {
                 } else {
                     visible.clone()
                 },
+                control_tool: !final_call,
                 thinking_budget: self.policy.thinking_budget(),
                 max_output_tokens: self.max_output_tokens,
                 route: route.clone(),

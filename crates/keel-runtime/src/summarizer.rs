@@ -83,6 +83,7 @@ impl<M: ModelProvider> Summarizer for ProviderSummarizer<M> {
                 Arc::new(Message::user(input)),
             ],
             tools: Vec::new(),
+            control_tool: false,
             thinking_budget: 0,
             max_output_tokens: max_tokens,
             route: ModelRoute {

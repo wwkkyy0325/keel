@@ -29,16 +29,20 @@ pub fn build_request(
         .map(|message| message_json(message, include_reasoning))
         .collect();
     let mut tools: Vec<Value> = request.tools.iter().map(tool_json).collect();
-    tools.push(control_tool_json());
+    if request.control_tool {
+        tools.push(control_tool_json());
+    }
 
     let mut body = json!({
         "model": model,
         "messages": messages,
-        "tools": tools,
         "stream": true,
         "stream_options": { "include_usage": true },
         "max_tokens": request.max_output_tokens,
     });
+    if !tools.is_empty() {
+        body["tools"] = Value::Array(tools);
+    }
     if let Some(level) = reasoning {
         body["reasoning_effort"] = Value::String(level.as_str().to_owned());
     }

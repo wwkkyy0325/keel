@@ -25,6 +25,10 @@ pub struct TokenUsage {
 pub struct ModelRequest {
     pub messages: Vec<Arc<Message>>,
     pub tools: Vec<ToolSchema>,
+    /// Whether to advertise the interaction control tool. Main turns need it;
+    /// summarizer and other internal calls must not offer it, or a model may
+    /// answer with a control call instead of text.
+    pub control_tool: bool,
     pub thinking_budget: u32,
     pub max_output_tokens: u32,
     pub route: ModelRoute,

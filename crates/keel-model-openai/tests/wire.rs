@@ -39,6 +39,7 @@ fn request() -> ModelRequest {
             Arc::new(Message::tool_result(ToolCallId::new(7), "echo", "hello")),
         ],
         tools: vec![echo_schema()],
+        control_tool: true,
         thinking_budget: 0,
         max_output_tokens: 128,
         route: ModelRoute {
@@ -116,6 +117,24 @@ fn request_preserves_structured_tool_calls_and_control_tool() {
     let tool_result = &body["messages"][3];
     assert_eq!(tool_result["role"], "tool");
     assert_eq!(tool_result["tool_call_id"], "call-7");
+}
+
+#[test]
+fn a_request_without_the_control_tool_omits_it() {
+    let mut req = request();
+    req.control_tool = false;
+    let body = build_request(&req, "fallback", None);
+    let tools = body["tools"].as_array().unwrap();
+    assert_eq!(tools.len(), 1);
+    assert!(tools
+        .iter()
+        .all(|tool| tool["function"]["name"] != CONTROL_TOOL_NAME));
+
+    let mut req = request();
+    req.control_tool = false;
+    req.tools = Vec::new();
+    let body = build_request(&req, "fallback", None);
+    assert!(body.get("tools").is_none());
 }
 
 #[test]
