@@ -39,7 +39,7 @@ workspace=$(mktemp -d)
 cp evals/cases/coding/task-001/setup/* "$workspace/"
 cargo run -p keel-cli -- \
   --workspace "$workspace" \
-  --profile variants/coding/profile.openai.toml \
+  --profile variants/coding/profile.deepseek.toml \
   --input "$(cat evals/cases/coding/task-001/task.md)"
 bash evals/cases/coding/task-001/verify.sh "$workspace"
 ```

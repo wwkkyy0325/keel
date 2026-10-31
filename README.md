@@ -65,7 +65,18 @@ cargo run -p keel-cli -- --profile variants/companion/profile.toml --input "hell
 The M1 mock model makes no network calls. The coding profile exercises one
 `echo` tool call; the companion profile exercises the no-tools policy.
 
-For a real OpenAI-compatible endpoint:
+For DeepSeek (`deepseek-flash`, OpenAI-compatible):
+
+```bash
+cp .env.example .env
+# edit .env and set DEEPSEEK_API_KEY only
+cargo run -p keel-cli -- --profile variants/coding/profile.deepseek.toml --input "hello"
+```
+
+The profile carries `base_url = "https://api.deepseek.com"` and
+`model = "deepseek-flash"`; only the key belongs in `.env`.
+
+For an OpenAI endpoint:
 
 ```bash
 cp .env.example .env

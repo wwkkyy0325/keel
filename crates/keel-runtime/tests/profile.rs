@@ -81,6 +81,25 @@ fn openai_profile_loads_and_validates() {
 }
 
 #[test]
+fn deepseek_profile_loads_and_validates() {
+    let config = load_profile(&repo_root().join("variants/coding/profile.deepseek.toml")).unwrap();
+    assert_eq!(config.profile_name, "coding-deepseek");
+    assert_eq!(config.model_route.provider, "openai-compatible");
+    assert_eq!(config.model_route.model, "deepseek-flash");
+    assert_eq!(
+        config.model_base_url.as_deref(),
+        Some("https://api.deepseek.com")
+    );
+    assert_eq!(config.api_key_env.as_deref(), Some("DEEPSEEK_API_KEY"));
+    validate_config(
+        &config,
+        &common::standard_registry(&repo_root()),
+        &common::standard_context(),
+    )
+    .unwrap();
+}
+
+#[test]
 fn companion_profile_loads() {
     let config = load_profile(&repo_root().join("variants/companion/profile.toml")).unwrap();
     assert_eq!(config.profile_name, "companion");

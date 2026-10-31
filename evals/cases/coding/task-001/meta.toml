@@ -2,6 +2,6 @@
 id = "task-001"
 kind = "coding"
 timeout_seconds = 300
-profile = "variants/coding/profile.openai.toml"
-model = "gpt-4o-mini"
+profile = "variants/coding/profile.deepseek.toml"
+model = "deepseek-flash"
 seeds = [1]

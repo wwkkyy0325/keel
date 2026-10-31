@@ -149,3 +149,13 @@
 - Updated README and the eval instructions with the runnable command.
 - Verification: 122 tests, clippy, fmt, `cargo deny check` and a CLI mock turn
   with `--workspace`.
+
+### DeepSeek profile
+
+- Added `variants/coding/profile.deepseek.toml` using the OpenAI-compatible
+  endpoint `https://api.deepseek.com` and model `deepseek-flash`.
+- `.env.example` and the local `.env` use `DEEPSEEK_API_KEY`; only the key is
+  left blank. The profile carries the endpoint and model.
+- The task-001 eval metadata now targets the DeepSeek profile.
+- Verification: profile test loads and validates the new profile; the CLI
+  reports an empty key clearly.

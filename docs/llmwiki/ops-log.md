@@ -177,3 +177,13 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 - Verification: 122 tests, clippy, fmt, `cargo deny check`; mock turn with
   `--workspace` reaches `Done`.
 - Commit: `feat: add workspace override to the CLI`.
+
+### DeepSeek profile
+
+- Added `variants/coding/profile.deepseek.toml` with OpenAI-compatible
+  `base_url = "https://api.deepseek.com"` and `model = "deepseek-flash"`.
+- `.env` and `.env.example` use `DEEPSEEK_API_KEY`; only the key is blank.
+- Eval `task-001` metadata targets the DeepSeek profile.
+- Verification: profile test passes; the CLI reports `DEEPSEEK_API_KEY is
+  empty` before any network call.
+- Commit: `feat: add DeepSeek coding profile`.
