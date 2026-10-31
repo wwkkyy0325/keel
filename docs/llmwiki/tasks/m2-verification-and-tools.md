@@ -13,7 +13,7 @@ not by the model's own claim.
 - [x] 3. Structured shell tool: program plus argument list, no interpolation,
       allowlist, permission request; command and test verifiers on top — verify:
       allowlist, timeout and permission tests
-- [ ] 4. One coding eval case with `setup/`, `hidden/` and `verify.sh` — verify:
+- [x] 4. One coding eval case with `setup/`, `hidden/` and `verify.sh` — verify:
       the case rejects an unsolved workspace and accepts the reference fix
 - [ ] 5. Real model end-to-end run — verify: user runs the OpenAI profile with a
       local `.env` and records the transcript
@@ -61,4 +61,8 @@ not by the model's own claim.
 - The CLI uses a terminal interaction port. A non-terminal stdin defers, so
   headless runs deny permission-gated actions.
 - Coding profiles expose six tools, including `shell`.
+- Step 4 adds `evals/cases/coding/task-001`: an empty-list mean fix with
+  hidden unittest coverage and a reference fix. The case rejects the initial
+  workspace and accepts the reference; this was checked with `verify.sh`.
 - `cargo test --workspace` passes: 122 tests.
+- Step 5, the real model run, needs a local `.env` and is not yet executed.

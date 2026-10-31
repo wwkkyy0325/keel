@@ -1,0 +1,7 @@
+[case]
+id = "task-001"
+kind = "coding"
+timeout_seconds = 300
+profile = "variants/coding/profile.openai.toml"
+model = "gpt-4o-mini"
+seeds = [1]

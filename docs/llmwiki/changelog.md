@@ -130,3 +130,14 @@
   in `backlog.md`.
 - Verification: 122 tests; clippy, fmt, `cargo deny check` and a CLI mock turn
   pass.
+
+### First coding eval case
+
+- Added `evals/cases/coding/task-001`: fix `mean([])` to return `0.0`, with
+  `setup/`, hidden unittest coverage, a reference fix, `verify.sh` and
+  `meta.toml`.
+- The case rejects the initial workspace (`exit 1`, one test error) and accepts
+  the reference fix (`exit 0`, four tests pass).
+- Added `evals/README.md` and `.gitattributes` to keep shell and Python files
+  at LF.
+- The real model run is still pending a local `.env`.

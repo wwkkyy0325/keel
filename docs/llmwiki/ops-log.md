@@ -158,3 +158,13 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 - Verification: 122 tests; clippy, fmt, `cargo deny check`; CLI mock turn
   reaches `Done`.
 - Commit: `feat: add structured shell and terminal approvals`.
+
+### M2 — First coding eval case
+
+- Added `evals/cases/coding/task-001` with `task.md`, `setup/`, `hidden/`,
+  `reference/`, `verify.sh` and `meta.toml`.
+- The case fixes `mean([])`; the initial workspace fails one hidden test and
+  the reference fix passes all four.
+- Added `evals/README.md` and `.gitattributes` with LF for `*.sh` and `*.py`.
+- Real model execution remains step 5 and needs a local `.env`.
+- Commit: `test: add first coding eval case`.
