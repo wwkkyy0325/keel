@@ -234,3 +234,15 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
   `keel-policy` crate split is waived until a second consumer.
 - Verification: 124 tests; clippy, fmt and `cargo deny check`.
 - Commit: `feat: report token usage and turn duration`.
+
+### Adaptive reasoning — ADR and reasoning content
+
+- Recorded ADR 0005 with the corrected trigger set: no context-overflow or
+  compaction trigger, default `Low`, no user on/off switch.
+- Added `Message::reasoning_content`; the driver collects thinking deltas and
+  attaches them to assistant tool-call messages. The wire echoes
+  `reasoning_content` when present.
+- Added `docs/llmwiki/tasks/adaptive-reasoning.md` for the controller,
+  profile removal and verifier signals.
+- Verification: 125 tests; clippy, fmt and `cargo deny check`.
+- Commit: `feat: preserve reasoning content for tool calls`.

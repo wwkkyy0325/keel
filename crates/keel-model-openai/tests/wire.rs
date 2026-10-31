@@ -58,6 +58,28 @@ fn reasoning_effort_is_omitted_unless_configured() {
 }
 
 #[test]
+fn assistant_reasoning_content_is_echoed() {
+    let mut args = ToolArgs::new();
+    args.insert("text", ArgValue::String("hello".to_owned()));
+    let call = ToolCallRequest {
+        id: ToolCallId::new(7),
+        name: "echo".to_owned(),
+        args,
+    };
+    let mut request = request();
+    request.messages[2] =
+        Arc::new(Message::assistant_tool_calls(vec![call]).with_reasoning("let me check the file"));
+
+    let body = build_request(&request, "fallback", None);
+
+    assert_eq!(
+        body["messages"][2]["reasoning_content"],
+        "let me check the file"
+    );
+    assert!(body["messages"][0].get("reasoning_content").is_none());
+}
+
+#[test]
 fn request_preserves_structured_tool_calls_and_control_tool() {
     let body = build_request(&request(), "fallback", None);
     assert_eq!(body["model"], "test-model");

@@ -202,3 +202,14 @@
 - Recorded the M2 acceptance state: one interactive terminal run remains, and
   the `keel-policy` crate split is explicitly waived until a second consumer.
 - Verification: 124 tests; clippy, fmt and `cargo deny check`.
+
+### Adaptive reasoning ADR and reasoning content
+
+- Recorded ADR 0005: kernel-owned `Low -> High -> Max`, no user switch,
+  failure-driven escalation, and no context-overflow trigger.
+- `Message` now carries `reasoning_content`; the driver accumulates thinking
+  deltas and the OpenAI-compatible wire echoes it on assistant tool-call
+  messages. This is required by DeepSeek thinking mode.
+- Added `docs/llmwiki/tasks/adaptive-reasoning.md` for the remaining
+  controller and verifier-signal work.
+- Verification: 125 tests; clippy, fmt and `cargo deny check`.

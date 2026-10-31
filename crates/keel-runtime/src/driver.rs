@@ -297,6 +297,7 @@ impl<M: ModelProvider> TurnDriver<M> {
             };
 
             let mut round_text = String::new();
+            let mut round_reasoning = String::new();
             let mut calls = Vec::new();
             let mut pending_interactions: Vec<InteractionRequest> = Vec::new();
 
@@ -338,7 +339,9 @@ impl<M: ModelProvider> TurnDriver<M> {
                         text.push_str(&delta);
                         round_text.push_str(&delta);
                     }
-                    Ok(Some(Ok(ModelChunk::ThinkingDelta(_)))) => {}
+                    Ok(Some(Ok(ModelChunk::ThinkingDelta(delta)))) => {
+                        round_reasoning.push_str(&delta);
+                    }
                     Ok(Some(Ok(ModelChunk::ToolCall(call)))) => calls.push(call),
                     Ok(Some(Ok(ModelChunk::Interaction(request)))) => {
                         pending_interactions.push(request);
@@ -476,7 +479,11 @@ impl<M: ModelProvider> TurnDriver<M> {
                 if !round_text.is_empty() {
                     messages.push(Arc::new(Message::assistant(round_text)));
                 }
-                messages.push(Arc::new(Message::assistant_tool_calls(calls.clone())));
+                let mut tool_call_message = Message::assistant_tool_calls(calls.clone());
+                if !round_reasoning.is_empty() {
+                    tool_call_message = tool_call_message.with_reasoning(round_reasoning.clone());
+                }
+                messages.push(Arc::new(tool_call_message));
 
                 let results = self
                     .dispatcher

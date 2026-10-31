@@ -20,6 +20,9 @@ pub struct Message {
     pub content: String,
     pub tool_calls: Vec<ToolCallRequest>,
     pub tool_call_id: Option<ToolCallId>,
+    /// Provider reasoning text that must be echoed back with tool calls for
+    /// thinking-mode models such as DeepSeek.
+    pub reasoning_content: Option<String>,
 }
 
 impl Message {
@@ -29,6 +32,7 @@ impl Message {
             content: content.into(),
             tool_calls: Vec::new(),
             tool_call_id: None,
+            reasoning_content: None,
         }
     }
 
@@ -51,7 +55,14 @@ impl Message {
             content: String::new(),
             tool_calls,
             tool_call_id: None,
+            reasoning_content: None,
         }
+    }
+
+    /// Attaches provider reasoning text to this message.
+    pub fn with_reasoning(mut self, reasoning: impl Into<String>) -> Self {
+        self.reasoning_content = Some(reasoning.into());
+        self
     }
 
     /// Builds a tool-result message linked to its originating call.
@@ -61,6 +72,7 @@ impl Message {
             content: format!("{tool}: {}", content.into()),
             tool_calls: Vec::new(),
             tool_call_id: Some(call_id),
+            reasoning_content: None,
         }
     }
 
@@ -72,12 +84,16 @@ impl Message {
             content: format!("{tool}: {}", content.into()),
             tool_calls: Vec::new(),
             tool_call_id: None,
+            reasoning_content: None,
         }
     }
 
     /// Cheap token estimate for budget checks, including tool-call payloads.
     pub fn estimated_tokens(&self) -> u32 {
         let mut total = crate::context::estimate_tokens(&self.content);
+        if let Some(reasoning) = &self.reasoning_content {
+            total = total.saturating_add(crate::context::estimate_tokens(reasoning));
+        }
         for call in &self.tool_calls {
             total = total.saturating_add(crate::context::estimate_tokens(&call.name));
             for key in call.args.keys() {
@@ -110,6 +126,14 @@ mod tests {
         assert_eq!(message.role, MessageRole::Assistant);
         assert_eq!(message.tool_calls, vec![call()]);
         assert!(message.tool_call_id.is_none());
+        assert!(message.reasoning_content.is_none());
+    }
+
+    #[test]
+    fn reasoning_attaches_to_tool_call_messages() {
+        let message = Message::assistant_tool_calls(vec![call()]).with_reasoning("plan");
+        assert_eq!(message.reasoning_content.as_deref(), Some("plan"));
+        assert!(message.estimated_tokens() > 0);
     }
 
     #[test]

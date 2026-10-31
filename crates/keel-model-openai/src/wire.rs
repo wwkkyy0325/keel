@@ -189,6 +189,13 @@ fn message_json(message: &Message) -> Value {
     let mut value = Map::new();
     value.insert("role".to_owned(), json!(role_str(message.role)));
     value.insert("content".to_owned(), json!(message.content));
+    if message.role == MessageRole::Assistant {
+        if let Some(reasoning) = &message.reasoning_content {
+            if !reasoning.is_empty() {
+                value.insert("reasoning_content".to_owned(), json!(reasoning));
+            }
+        }
+    }
     if !message.tool_calls.is_empty() {
         let calls: Vec<Value> = message
             .tool_calls

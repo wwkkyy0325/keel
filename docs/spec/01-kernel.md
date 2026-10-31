@@ -164,6 +164,10 @@ domain tool list is unchanged.
 - Streaming first; non-streaming is a compatibility path.
 - Provider config: base URL, key, model, context window, max tokens, reasoning
   dialect.
+- Thinking-mode providers may require `reasoning_content` to be echoed back on
+  assistant tool-call messages; the kernel stores it and the adapter renders it.
+- Reasoning effort is adaptive and kernel-owned (ADR 0005); it is not a model
+  choice or a user-facing on/off switch.
 - Role routing: main, compact, subagent, verifier, commit.
 - Retries are bounded; circuit breaking is per provider.
 - Token usage is recorded per call.
