@@ -23,6 +23,12 @@ the evidence trail for the clean-room claim.
 | 2026-11-02 | BigCodeBench | Apache-2.0 | Planned library-usage cases | Downloaded locally, not vendored |
 | 2026-11-02 | SWE-bench harness | MIT; each repository keeps its license | Planned later repo-level cases | Run in isolated workspaces; no code copied |
 | 2026-11-02 | Anthropic context-editing documentation | Public documentation | Design reference for threshold-triggered tool-result clearing and summarization | No code copied; thresholds re-derived for Keel (ADR 0006) |
+| 2026-11-03 | MemGPT / Letta papers and docs | Public papers/docs | Memory comparison note | Comparison only; no code or prompt copied |
+| 2026-11-03 | Mem0 paper, blog and benchmark discussion | Public papers/docs | Memory comparison note | Comparison only; vendor claims treated as unverified |
+| 2026-11-03 | Zep / Graphiti paper | Public paper | Memory comparison note | Comparison only; no code copied |
+| 2026-11-03 | A-MEM and MemoryOS papers | Public papers | Memory comparison note | Comparison only; no code copied |
+| 2026-11-03 | LongMemEval and LoCoMo papers, LoCoMo audit | Public papers/audit | Memory evaluation critique | Comparison only; no dataset vendored |
+| 2026-11-03 | DeepSeek Harness memory plugin pages (npm/GitHub) | Public package pages | Landscape survey | Comparison only; no plugin code copied |
 
 ## Excluded materials
 
