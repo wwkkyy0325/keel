@@ -40,7 +40,8 @@ claim of failure.
 | 3-turn micro-slice | same, narrowed recall markers | 3/3 Done, 0 overflow, 2/2 chapters, 2/2 tasks closed, no recall on chapter turns |
 | Local 26B 15-turn slice | tools, sequential todo, 20k, per-turn acceptance | 1 turn: chapter written, state missing; acceptance caught; stopped |
 | Local 26B micro-slice | same, explicit state instruction | 1/2 chapters; turn 2 missing `ch-002.md` while task 2 completed; acceptance caught; stopped |
-| Full 50-turn rerun | DeepSeek, 24k, per-turn acceptance | Pending |
+| Full 50 first attempt | DeepSeek, 24k, per-turn acceptance | 10 turns: 9 Done, 1 provider timeout; 10 chapters, no gaps, tasks 9/50, acceptance 9/9 |
+| Full 50 with retry | DeepSeek, 24k, per-turn acceptance, `--retry-errors 2` | Pending |
 
 ## Memory abilities
 

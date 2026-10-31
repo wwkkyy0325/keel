@@ -726,7 +726,13 @@
 - Task completion is not evidence-gated: the task list can close as
   `completed` while the expected file is missing. Acceptance remains the
   authority; a host-side revert or evidence rule is a follow-up.
-- The full 50-turn rerun on DeepSeek is still pending.
+- First full 50 attempt on DeepSeek: 10 turns, 9 Done, 1 model-stream timeout
+  at turn 10; 10 chapters with no gaps, tasks 9/50, acceptance 9/9, 0 overflow,
+  0 recall. `--stop-on-error` stopped the run. The chapter and state for turn
+  10 were written before the timeout.
+- Added CLI `--retry-errors N`: re-run the same input after a failed turn,
+  bounded, so a transient stream timeout does not end a long run.
+- The full 50 rerun with `--retry-errors 2` is pending.
 
 ### Fusion run: negative result at 16k
 

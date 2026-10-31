@@ -168,6 +168,30 @@ fallback is safer but adds records to an already tight context.
 The fixes are validated on the slices. The full 50-turn rerun is still
 pending; the slices are not a substitute for it.
 
+## Full 50 attempt: stopped by a provider timeout
+
+The first full run used the 24k profile, per-turn checker and
+`--stop-on-error`.
+
+- 10 turns: 9 `Done`, 1 `Error`.
+- The error was `timeout during model stream after 180000 ms` on turn 10, not
+  an overflow and not an acceptance failure. The model had already written
+  `ch-010.md` and updated the state; the turn could not produce the final text
+  before the turn deadline.
+- Chapters 1–10 exist with no gaps; state Last chapter 10.
+- Tasks: 9 done, current #10, list open. Chapter 10 was written but the task
+  was not marked completed before the timeout.
+- Acceptance passed on all 9 completed turns; 0 overflow; 0 elisions.
+- Recall: 0 turns. The narrowed gate kept the chapter briefs from pulling old
+  segments.
+- Memo: 9 revisions, 4 summary failures (fallback).
+
+The timeout is a provider/network event, not a kernel mechanism failure. It did
+show one host gap: a single transient stream timeout ends a long run. The CLI
+now has `--retry-errors N`, which re-runs the same input after a failed turn;
+the state and files written before the timeout are already on disk. The full
+50 is being rerun with two retries.
+
 ## Local 26B attempt
 
 The local Gemma 4 26B was run at 32k server context and a 20k working set with

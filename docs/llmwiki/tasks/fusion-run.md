@@ -55,9 +55,13 @@ host is shared, so the run uses the remote DeepSeek endpoint.
       because the state was not written; a micro-slice passed chapter 1 but
       missed `ch-002.md` while marking task 2 completed. Acceptance caught both;
       `--stop-on-error` stopped. Resource: 13.6 GB VRAM, ~0.4 GB free RAM.
-- [ ] Run the full 50-turn rerun on DeepSeek with the 24k profile, per-turn
-      acceptance, narrowed markers and `--stop-on-error`. The slices are not a
-      substitute.
+- [x] First full 50 attempt on DeepSeek: 10 turns, 9 Done, 1 model-stream
+      timeout at turn 10; 10 chapters, no gaps, tasks 9/50, acceptance 9/9,
+      0 overflow, 0 recall. Stopped by `--stop-on-error`.
+- [x] Add `--retry-errors N` to the CLI: re-run the same input after a failed
+      turn, bounded. Verify: 242 tests; no test covers the session loop yet.
+- [ ] Rerun the full 50 on DeepSeek with `--retry-errors 2`, the 24k profile,
+      per-turn acceptance and narrowed markers. The slices are not a substitute.
 - [ ] Consider evidence-gating host task completion: a task marked `completed`
       without the expected artifact, or a turn that fails acceptance, should
       not leave the list closed as `completed`. Host-side revert or kernel
