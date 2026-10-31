@@ -321,3 +321,18 @@
   and a cost guard.
 - Added a provenance entry for the public context-editing documentation used as
   a design reference; no code was copied.
+
+### M3 dynamic watermarks and window floor
+
+- Replaced percentage watermarks with headroom measured in calls:
+  `headroom_calls = (ceiling - used) / growth`, with a 90% guard for growth
+  spikes. A fast coding turn now compacts earlier in absolute tokens; a slow
+  chat runs longer.
+- Split the two budgets: `budget_tokens` is the working-set target per call,
+  `context_window` is the hard capacity. A 1M window no longer implies an
+  850k trigger.
+- Recorded the observed plateau near 200k as the reason for a working-set
+  target rather than a percentage of the window.
+- Set provisional floors at 16k for coding and 8k for no-tool profiles, with
+  validation and a window-matrix test (8k to 1M) to replace them with measured
+  values.

@@ -30,10 +30,11 @@ api_key_env = "OPENAI_API_KEY"   # name only; never the key itself
 supports_reasoning = true        # endpoint accepts adaptive reasoning hints
 thinking_budget = 1024
 max_output_tokens = 4096
+context_window = 128000          # hard capacity; must exceed budget + reserve
 
 [context]
 stages = ["system", "best_practices", "task_state", "memory", "history", "latest"]
-budget_tokens = 16000
+budget_tokens = 16000            # working-set target per call, not the window
 compaction = ["trim", "rolling_summary", "llm_compact"]
 
 [tools]
@@ -184,7 +185,12 @@ New questions require an ADR and a second consumer.
 
 - `visible_tools` must be a subset of registered tools.
 - `context.stages` must reference registered stages.
-- `budget_tokens` must be positive and <= the model context window.
+- `context_window` must be positive and is the model's hard capacity.
+- `budget_tokens` must be positive and, together with `max_output_tokens`,
+  must not exceed `context_window`. It is the working-set target, so it may be
+  far below the window.
+- A coding profile below 16k or a no-tool profile below 8k is rejected until
+  the window-matrix test in ADR 0006 moves those floors.
 - `thinking_budget` must be within the provider's supported range.
 - `verification.mode = tests` requires a test runner tool.
 - `permission.level` is `workspace_auto` or `full_auto`; it cannot be escalated

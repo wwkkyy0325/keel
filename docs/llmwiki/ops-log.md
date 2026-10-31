@@ -360,3 +360,16 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 - Added `ContextPressure` to the event list and a provenance row for the
   public context-editing documentation.
 - No code changed.
+
+### M3 dynamic watermarks and window floor
+
+- Replaced fixed percentages with call headroom derived from observed growth:
+  amber at four calls, orange at two, red at one or at 90% of the ceiling.
+- Split `budget_tokens` (working-set target) from `context_window` (hard
+  capacity); config validation requires budget plus output reserve to fit.
+- Provisional floors: 16k for coding with six tools, 8k for a no-tool
+  companion; recorded the per-call overhead arithmetic behind them.
+- Added a window-matrix test step (8k, 16k, 32k, 64k, 128k, 1M) using a mock
+  model with scripted growth; the measured knee replaces the provisional
+  floors.
+- No code changed.

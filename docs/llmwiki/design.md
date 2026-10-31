@@ -48,8 +48,11 @@ companion profile is the next implementation target.
   open and a structured record once sealed.
 - Segmentation is a kernel-owned deterministic heuristic; the model cannot
   open or seal a segment and the user never manages compression.
-- Assembly is budget-driven: recent turns in detail, older turns as digests,
-  sealed segments as records, all fitted to the remaining context.
+- A context governor measures headroom in calls at the observed growth rate
+  and acts cheap-first; assembly keeps recent turns in detail, older turns as
+  digests and sealed segments as records.
+- `budget_tokens` is the working-set target and `context_window` is the hard
+  capacity; a 1M window does not mean a 1M working set.
 - Tool entries keep the call, status and head and tail by character count; the
   full output spills to `.keel/outputs/` and stays reachable.
 - Facts are sedimented at a seal: durable ones become global, the rest stay

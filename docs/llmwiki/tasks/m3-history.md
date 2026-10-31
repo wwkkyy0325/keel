@@ -19,11 +19,14 @@ one at a time. Summarization is blocked on
       produce the expected composition, a short-turn chat keeps many turns
       verbatim, a tool-heavy turn is digested sooner, and `HistoryAssembled`
       reports the composition
-- [ ] 5. Context governor: gauge, watermarks, level-dependent detail share,
-      cheap-first actions — verify: a fixture drives each level; amber
-      micro-compaction saves tokens with no model call; orange shrinks the
-      share; red injects the wrap-up exactly once per crossing; critical ends
-      in `ContextOverflow`; `ContextPressure` reports every decision
+- [ ] 5. Context governor: gauge over `min(model_window, budget_tokens)`,
+      headroom measured in calls at the observed growth rate, level-dependent
+      detail share, cheap-first actions — verify: a fixture drives each level;
+      amber micro-compaction saves tokens with no model call; orange shrinks
+      the share; red injects the wrap-up exactly once per crossing; critical
+      ends in `ContextOverflow`; `ContextPressure` reports every decision;
+      a profile whose budget plus output reserve exceeds `context_window` is
+      rejected at load time
 - [ ] 6. Turn-budget wrap-up: reserve one model call for the final answer and
       forbid new tool calls on it — verify: a turn that reaches the call limit
       ends with an answer instead of `TurnsExhausted`
@@ -39,7 +42,11 @@ one at a time. Summarization is blocked on
 - [ ] 10. Facts: extraction from structured signals, session and global scope,
       strict promotion, contradiction handling — verify: a verified constraint
       is promoted; a transient path is not; a contradiction demotes
-- [ ] 11. Companion profile and 20-turn real run — verify: profile-only diff
+- [ ] 11. Window matrix: 8k, 16k, 32k, 64k, 128k and 1M with scripted growth,
+      companion and coding, mock model — verify: success rate, overflow rate,
+      compactions, wrap-ups and tokens per window are recorded, and the
+      measured knee replaces the provisional floors in ADR 0006
+- [ ] 12. Companion profile and 20-turn real run — verify: profile-only diff
       from M2, no tools, no kernel branch; transcript and metrics recorded
 
 ## Verification commands

@@ -75,25 +75,38 @@ measures pressure before every model call and decides what to do about it.
 **Gauge.** Before each call:
 
 ```
-effective_window = model_window - output_reserve
-used             = estimated input + tool schemas + system + persona
-ratio            = used / effective_window
+capacity       = model_window - output_reserve
+ceiling        = min(capacity, working_set_target)
+used           = estimated input + tool schemas + system + persona + current input
+growth         = max(EWMA of per-call growth, last call growth, floor)
+headroom_calls = (ceiling - used) / growth
 ```
 
-The estimate is the same cheap estimate used elsewhere; after a call the
-adapter's reported usage replaces it when it is larger. Ratios, not token
-constants, so a larger window needs no code change.
+`working_set_target` is the profile's `budget_tokens`, not the model window. A
+1M window does not mean a 1M working set: observed sessions plateau near 200k
+and come back down, so the target is what keeps cost and latency at the working
+set while `capacity` stays the hard limit. Validation requires
+`working_set_target + output_reserve <= model_window`.
 
-**Watermarks and actions.** Each level does the cheapest thing that can work,
-and a higher level runs only when the cheaper one was not enough:
+The estimate is the cheap one used elsewhere; after a call the adapter's
+reported usage replaces it when larger.
 
-| Level | Ratio | Action |
+**Levels are headroom in calls, not percentages.** A percentage of the window
+is wrong in both directions: on a 1M window it fires at 850k, long after the
+working set has plateaued; on a 16k window it fires after one large tool
+result. The trigger is how many more calls fit at the observed growth rate:
+
+| Level | Condition | Action |
 |---|---|---|
-| green | below 50% | proceed |
-| amber | 50 to 70% | micro-compaction: truncate or drop old tool results, drop promoted records; no model call |
-| orange | 70 to 85% | seal the segment and build `L2`/`L3` structured records; shrink the detail share |
-| red | above 85% | inject a wrap-up instruction, then compact; if no call fits, compact directly |
-| critical | still over budget after compaction | `ContextOverflow` with the composition in the error |
+| green | more than 4 calls of headroom | proceed |
+| amber | 4 or fewer | micro-compaction: truncate or drop old tool results, drop promoted records; no model call |
+| orange | 2 or fewer | seal the segment and build `L2`/`L3` structured records; shrink the detail share |
+| red | 1 or fewer, or `used` above 90% of the ceiling | inject a wrap-up instruction, then compact; if no call fits, compact directly |
+| critical | still over the ceiling after compaction | `ContextOverflow` with the composition in the error |
+
+The 90% guard exists because growth can spike after the estimate was taken. The
+thresholds move with the growth rate: a fast coding turn compacts earlier in
+absolute tokens, a slow chat runs longer.
 
 **The detail share is a function of the level**, not a constant: 80% at green,
 60% at amber, 40% at orange, 20% at red, always with the two-turn floor. This
@@ -142,6 +155,22 @@ produced in the current turn, only completed turns and sealed segments.
 
 If the pinned parts alone exceed the budget, the turn ends in `ContextOverflow`;
 the kernel does not silently emit a partial prompt.
+
+**Minimum supported window.** Fixed per-call overhead is the system and persona
+prompt, the tool schemas, the output reserve and the current input. Measured
+here: prompt about 150 tokens, six tool schemas about 1.5k, output reserve up
+to `max_output_tokens`, current input about 200 tokens. That leaves roughly:
+
+| Window | Usable after overhead | Provisional floor for |
+|---|---|---|
+| 8k | about 6.5k with no tools and a 1k output reserve | companion, no tools |
+| 16k | about 10k with six tools and a 4k reserve | coding |
+| 32k and above | comfortable for coding | — |
+
+Below the floor the config is rejected with a clear error rather than running
+and thrashing. These numbers are provisional; the window-matrix test in the M3
+task doc moves them with evidence. The output reserve is a cap, not a constant
+charge: a tool-call turn reserves less than a final-answer turn.
 
 ### 4. Compression ladder and triggers
 
