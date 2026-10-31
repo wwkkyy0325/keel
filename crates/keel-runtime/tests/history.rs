@@ -634,7 +634,7 @@ async fn recall_off_has_no_recall_block() {
 }
 
 #[tokio::test]
-async fn a_summary_failure_keeps_records_in_context() {
+async fn a_summary_failure_writes_a_structured_fallback() {
     let summarizer: Arc<dyn Summarizer> = Arc::new(FailingSummarizer);
     let harness = harness_with(4096, "ack", Some(summarizer));
 
@@ -655,14 +655,16 @@ async fn a_summary_failure_keeps_records_in_context() {
         .is_done());
 
     let requests = harness.requests.lock().unwrap();
-    assert!(!requests[2].iter().any(|message| {
-        message.role == MessageRole::System && message.content.starts_with("[conversation summary")
-    }));
-    let record = requests[2]
+    let summary = requests[2]
         .iter()
         .find(|message| {
-            message.role == MessageRole::System && message.content.starts_with("[earlier segments]")
+            message.role == MessageRole::System
+                && message.content.starts_with("[conversation summary")
         })
-        .expect("record fallback");
-    assert!(record.content.contains("fix the parser bug"));
+        .expect("structured fallback summary");
+    assert!(summary.content.contains("[structured fallback summary]"));
+    assert!(summary.content.contains("fix the parser bug"));
+    assert!(requests[2]
+        .iter()
+        .all(|message| !message.content.starts_with("[earlier segments]")));
 }

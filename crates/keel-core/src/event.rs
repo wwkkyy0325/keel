@@ -120,6 +120,8 @@ pub enum Event {
         covers: Vec<u32>,
         chars: u32,
         budget: u32,
+        /// True when the model failed and the kernel wrote a structured memo.
+        fallback: bool,
     },
     SummaryFailed {
         turn_id: TurnId,

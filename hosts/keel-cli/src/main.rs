@@ -337,7 +337,7 @@ fn print_outcome(config: &RuntimeConfig, events: &EventLog, outcome: &TurnOutcom
     {
         println!("recall: segments={segments:?} tokens={tokens}");
     }
-    if let Some((revision, covers, chars, budget)) = events
+    if let Some((revision, covers, chars, budget, fallback)) = events
         .for_turn(outcome.turn_id)
         .iter()
         .rev()
@@ -347,12 +347,16 @@ fn print_outcome(config: &RuntimeConfig, events: &EventLog, outcome: &TurnOutcom
                 covers,
                 chars,
                 budget,
+                fallback,
                 ..
-            } => Some((*revision, covers.len(), *chars, *budget)),
+            } => Some((*revision, covers.len(), *chars, *budget, *fallback)),
             _ => None,
         })
     {
-        println!("summary: revision={revision} covers={covers} chars={chars} budget={budget}");
+        println!(
+            "summary: revision={revision} covers={covers} chars={chars} \
+             budget={budget} fallback={fallback}"
+        );
     }
     if let Some(reason) = events
         .for_turn(outcome.turn_id)

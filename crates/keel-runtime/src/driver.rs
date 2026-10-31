@@ -22,7 +22,7 @@ use crate::interaction::InteractionBroker;
 use crate::permission::PermissionEngine;
 use crate::registry::ToolRegistry;
 use crate::summarizer::{
-    clip_to_tokens, memo_budget, transcript_text, Summarizer, MEMO_BUDGET_FLOOR,
+    clip_to_tokens, memo_budget, transcript_text, trim_to_budget, Summarizer, MEMO_BUDGET_FLOOR,
     MIN_TRANSCRIPT_TOKENS, SUMMARY_INPUT_MARGIN,
 };
 use crate::summary::{compact_args, summarize_output};
@@ -566,10 +566,20 @@ impl<M: ModelProvider> TurnDriver<M> {
                                     covers,
                                     chars: summary.text.chars().count() as u32,
                                     budget,
+                                    fallback: false,
                                 });
                             }
                         }
                         Some(Ok(Err(error))) => {
+                            self.apply_fallback_summary(
+                                turn_id,
+                                segment_id,
+                                record,
+                                &absorbable,
+                                &covers,
+                                previous_summary.as_deref(),
+                                budget,
+                            );
                             let mut session = self
                                 .session
                                 .lock()
@@ -582,6 +592,15 @@ impl<M: ModelProvider> TurnDriver<M> {
                             });
                         }
                         Some(Err(_)) => {
+                            self.apply_fallback_summary(
+                                turn_id,
+                                segment_id,
+                                record,
+                                &absorbable,
+                                &covers,
+                                previous_summary.as_deref(),
+                                budget,
+                            );
                             let mut session = self
                                 .session
                                 .lock()
@@ -1238,6 +1257,40 @@ impl<M: ModelProvider> TurnDriver<M> {
         Ok(to)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn apply_fallback_summary(
+        &self,
+        turn_id: keel_core::TurnId,
+        segment_id: u32,
+        record: &SegmentRecord,
+        absorbable: &[(u32, SegmentRecord)],
+        covers: &[u32],
+        previous: Option<&str>,
+        budget: u32,
+    ) {
+        let Some((text, used)) =
+            fallback_memo(previous, segment_id, record, absorbable, covers, budget)
+        else {
+            return;
+        };
+        let mut session = self
+            .session
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let revision = session.set_summary(&text, &used, budget);
+        drop(session);
+        if let Some(revision) = revision {
+            self.events.append(Event::SummaryUpdated {
+                turn_id,
+                revision,
+                covers: used,
+                chars: text.chars().count() as u32,
+                budget,
+                fallback: true,
+            });
+        }
+    }
+
     fn todo_snapshot(&self) -> Option<TodoList> {
         self.todos.as_ref().map(|handle| {
             handle
@@ -1304,6 +1357,49 @@ fn verification_failures(report: &VerificationReport) -> Vec<String> {
         .chain(report.required_unverified.iter())
         .cloned()
         .collect()
+}
+
+/// Builds a deterministic memo from structured records when the model summary
+/// fails. Only records that fit the budget are covered; the rest stay visible.
+#[allow(clippy::too_many_arguments)]
+fn fallback_memo(
+    previous: Option<&str>,
+    new_id: u32,
+    new_record: &SegmentRecord,
+    absorbable: &[(u32, SegmentRecord)],
+    covers: &[u32],
+    budget: u32,
+) -> Option<(String, Vec<u32>)> {
+    if !covers.contains(&new_id) {
+        return None;
+    }
+    let mut text = String::from("[structured fallback summary]\n");
+    text.push_str(&render_summary_record(new_id, new_record));
+    if let Some(previous) = previous {
+        text.push_str(previous);
+        text.push('\n');
+    }
+    let mut used = vec![new_id];
+    let mut tokens = estimate_tokens(&text);
+    let mut lines: Vec<String> = Vec::new();
+    for (id, record) in absorbable.iter().rev() {
+        if !covers.contains(id) {
+            continue;
+        }
+        let line = render_summary_record(*id, record);
+        let line_tokens = estimate_tokens(&line);
+        if tokens.saturating_add(line_tokens) > budget {
+            continue;
+        }
+        tokens = tokens.saturating_add(line_tokens);
+        lines.push(line);
+        used.push(*id);
+    }
+    lines.reverse();
+    for line in lines {
+        text.push_str(&line);
+    }
+    Some((trim_to_budget(&text, budget), used))
 }
 
 /// Replaces old tool-result bodies with a short marker, keeping the latest

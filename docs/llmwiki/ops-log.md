@@ -694,6 +694,18 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
   current turn.
 - Verification: 226+ tests; fmt and clippy clean.
 
+### Structured memo fallback
+
+- `fallback_memo` builds `[structured fallback summary]` from the new record,
+  the previous memo and the unabsorbed records that fit the budget. It covers
+  only what it includes; the rest render as fallback records.
+- `apply_fallback_summary` runs in both the model-error and timeout paths and
+  emits `SummaryUpdated { fallback: true }` before `SummaryFailed`.
+- Motivation: the fixed full-15 arm lost its only memo to
+  `summarizer returned no text`, so recall had no absorbed segment. The
+  fallback keeps the pipeline available without a model call.
+- Verification: 232 tests; fmt and clippy clean.
+
 ### Recall budget and mid-turn compaction
 
 - `HistoryStage` now uses `(remaining / 4).max(400)` for recall and reports the
