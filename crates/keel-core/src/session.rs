@@ -15,6 +15,36 @@ pub struct Entry {
     pub message: Arc<Message>,
 }
 
+/// Compact record of one tool call and its result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolSummary {
+    pub name: String,
+    pub args: String,
+    pub status: String,
+    pub output: String,
+}
+
+impl ToolSummary {
+    /// Renders the summary as history text.
+    pub fn render(&self) -> String {
+        let mut line = format!("- {}", self.name);
+        if !self.args.is_empty() {
+            line.push(' ');
+            line.push_str(&self.args);
+        }
+        line.push_str(" -> ");
+        line.push_str(&self.status);
+        if !self.output.trim().is_empty() {
+            for output_line in self.output.lines() {
+                line.push('\n');
+                line.push_str("  ");
+                line.push_str(output_line);
+            }
+        }
+        line
+    }
+}
+
 /// A topic span of a session.
 ///
 /// Segmentation is decided by the kernel; this type only holds the result. A
@@ -45,8 +75,9 @@ impl Session {
     /// Records a completed turn, opening a segment when none is open.
     ///
     /// The input is stored even when the turn produced no text, so the next
-    /// turn can see what was asked.
-    pub fn record_turn(&mut self, input: &str, text: &str) {
+    /// turn can see what was asked. Tool summaries are appended to the
+    /// assistant entry as a compact block.
+    pub fn record_turn(&mut self, input: &str, text: &str, tools: &[ToolSummary]) {
         if !matches!(
             self.segments.last().map(|segment| segment.state),
             Some(SegmentState::Open)
@@ -69,9 +100,20 @@ impl Session {
                 message: Arc::new(Message::user(input)),
             });
         }
-        if !text.trim().is_empty() {
+        let mut body = text.trim().to_owned();
+        if !tools.is_empty() {
+            if !body.is_empty() {
+                body.push_str("\n\n");
+            }
+            body.push_str("[tools]\n");
+            for tool in tools {
+                body.push_str(&tool.render());
+                body.push('\n');
+            }
+        }
+        if !body.trim().is_empty() {
             segment.entries.push(Entry {
-                message: Arc::new(Message::assistant(text)),
+                message: Arc::new(Message::assistant(body)),
             });
         }
     }
@@ -138,7 +180,7 @@ mod tests {
     #[test]
     fn first_turn_opens_a_segment_and_keeps_order() {
         let mut session = Session::new();
-        session.record_turn("fix the parser", "done");
+        session.record_turn("fix the parser", "done", &[]);
 
         assert_eq!(session.segments().len(), 1);
         let segment = &session.segments()[0];
@@ -157,10 +199,10 @@ mod tests {
     #[test]
     fn sealing_starts_a_new_segment() {
         let mut session = Session::new();
-        session.record_turn("first topic", "ok");
+        session.record_turn("first topic", "ok", &[]);
         assert!(session.seal_current());
         assert!(!session.seal_current());
-        session.record_turn("second topic", "ok");
+        session.record_turn("second topic", "ok", &[]);
 
         assert_eq!(session.segments().len(), 2);
         assert_eq!(session.segments()[0].state, SegmentState::Sealed);
@@ -171,7 +213,7 @@ mod tests {
     #[test]
     fn a_turn_without_text_still_records_the_input() {
         let mut session = Session::new();
-        session.record_turn("unanswered", "");
+        session.record_turn("unanswered", "", &[]);
 
         let history = session.history();
         assert_eq!(history.len(), 1);
@@ -182,11 +224,37 @@ mod tests {
     fn topic_keeps_the_original_language_and_is_bounded() {
         let mut session = Session::new();
         let long = "修复解析器".repeat(40);
-        session.record_turn(&long, "done");
+        session.record_turn(&long, "done", &[]);
 
         let topic = &session.segments()[0].topic;
         assert!(topic.starts_with("修复解析器"));
         assert_eq!(topic.chars().count(), 80);
         assert!(!topic.contains("fix"));
+    }
+}
+
+#[cfg(test)]
+mod tool_summary_tests {
+    use super::*;
+
+    #[test]
+    fn tool_summaries_are_appended_to_the_assistant_entry() {
+        let mut session = Session::new();
+        let summary = ToolSummary {
+            name: "read_file".to_owned(),
+            args: "path=src/lib.rs".to_owned(),
+            status: "ok".to_owned(),
+            output: "line one\nline two".to_owned(),
+        };
+        session.record_turn("read it", "it parses", &[summary]);
+
+        let history = session.history();
+        assert_eq!(history.len(), 2);
+        assert!(history[1].content.starts_with("it parses"));
+        assert!(history[1].content.contains("[tools]"));
+        assert!(history[1]
+            .content
+            .contains("- read_file path=src/lib.rs -> ok"));
+        assert!(history[1].content.contains("  line one"));
     }
 }

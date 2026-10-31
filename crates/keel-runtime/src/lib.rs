@@ -15,6 +15,7 @@ pub mod mock_model;
 pub mod permission;
 pub mod profile;
 pub mod registry;
+pub mod summary;
 pub mod tools;
 pub mod trash;
 pub mod verification;

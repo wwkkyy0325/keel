@@ -32,9 +32,11 @@ one at a time. Summarization is blocked on
       schemas and one instruction message; a model that still requests a tool
       gets no dispatch and the turn ends in `Error` instead of a silent
       `Done`; `FinalCallForced` is emitted once
-- [ ] 7. Tool summaries: head and tail by character count, spill file under
+- [x] 7. Tool summaries: head and tail by character count, spill file under
       `.keel/outputs/`, marker carries the path — verify: a 200 kB output
-      truncates, spills once, and is readable through `read_file`
+      truncates to 2000 + 1000 characters, spills once, and is readable through
+      `read_file`; arguments are clipped at 200 characters; args and output are
+      redacted before recording or spilling
 - [ ] 8. Kernel segmentation heuristic — verify: transcript fixtures seal on
       topic change, verified completion, and size cap, and do not seal on a
       follow-up that references the same artifact

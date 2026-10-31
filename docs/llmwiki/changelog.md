@@ -409,3 +409,17 @@
   `changes:` line.
 - Verification: 161 tests; narration exclusion, change recording and the
   missing-answer case are covered.
+
+### M3 tool summaries in history
+
+- Added `summary`: tool arguments are rendered as one line clipped at 200
+  characters; results over 3000 characters keep the first 2000 and last 1000,
+  with a marker naming `.keel/outputs/turn-{turn}-call-{index}.txt`.
+- The full output spills once to that path. Both the summary and the spill are
+  redacted first.
+- `Session::record_turn` now takes tool summaries and appends a `[tools]` block
+  to the assistant entry, so the next turn sees what ran and what it returned.
+- The turn records the answer body plus the tool block; the transcript keeps
+  the full output.
+- Verification: 167 tests; a 200 kB `read_file` result truncates, spills, and is
+  readable back through `read_file`.

@@ -6,9 +6,9 @@ use std::time::Duration;
 use async_trait::async_trait;
 use keel_core::{
     AcceptanceItem, ArgValue, CancelToken, CommitCtx, CommitDecision, ContextRecipe, ErrorCode,
-    Event, MemoryPolicy, Message, ModelError, ModelProvider, ModelRequest, ModelRole, ModelRoute,
-    ModelStream, PermissionLevel, Policy, ReasoningLevel, SecretKind, ToolArgs, ToolSchema, TurnId,
-    TurnState, VerificationMode, VerifySpec,
+    Event, MemoryPolicy, Message, MessageRole, ModelError, ModelProvider, ModelRequest, ModelRole,
+    ModelRoute, ModelStream, PermissionLevel, Policy, ReasoningLevel, SecretKind, Tool, ToolArgs,
+    ToolCallId, ToolCtx, ToolOutcome, ToolSchema, TurnId, TurnState, VerificationMode, VerifySpec,
 };
 use keel_runtime::{
     DeferAllInteractionPort, EventLog, InteractionBroker, MockModel, MockStep, PermissionEngine,
@@ -856,4 +856,75 @@ async fn written_files_are_recorded_in_the_answer() {
     assert_eq!(outcome.answer.changes.len(), 1);
     assert_eq!(outcome.answer.changes[0].path, "note.txt");
     assert!(dir.path().join("note.txt").exists());
+}
+
+#[tokio::test]
+async fn a_large_tool_result_is_summarized_and_spilled() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let mut config = common::runtime_config(&["read_file"], 4, PermissionLevel::WorkspaceAuto);
+    config.context.stages = vec![
+        "system".to_owned(),
+        "history".to_owned(),
+        "latest".to_owned(),
+    ];
+    // The current turn keeps the full result, so it needs room for it.
+    config.context.budget_tokens = 60_000;
+
+    let content = "x".repeat(200_000);
+    std::fs::write(dir.path().join("big.txt"), &content).unwrap();
+    let mut args = ToolArgs::new();
+    args.insert("path", ArgValue::String("big.txt".to_owned()));
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let model = ToolRecordingModel {
+        inner: MockModel::new(vec![
+            MockStep::ToolCall {
+                name: "read_file".to_owned(),
+                args,
+            },
+            MockStep::Text("done".to_owned()),
+            MockStep::Text("again".to_owned()),
+        ]),
+        seen: seen.clone(),
+    };
+    let driver = common::build_driver(model, config, events, dir.path(), common::test_limits());
+
+    assert!(driver.run("first", CancelToken::new()).await.is_done());
+    assert!(driver.run("second", CancelToken::new()).await.is_done());
+
+    {
+        let seen = seen.lock().unwrap();
+        let last = &seen[2].1;
+        let assistant = last
+            .iter()
+            .find(|message| {
+                message.role == MessageRole::Assistant && message.content.contains("[tools]")
+            })
+            .unwrap_or_else(|| panic!("no tool block in history: {last:?}"));
+        assert!(assistant.content.starts_with("done"));
+        assert!(assistant
+            .content
+            .contains("[truncated 200000 chars; full output: .keel/outputs/turn-1-call-0.txt]"));
+    }
+
+    let spilled =
+        std::fs::read_to_string(dir.path().join(".keel/outputs/turn-1-call-0.txt")).unwrap();
+    assert_eq!(spilled.chars().count(), 200_000);
+
+    let tool = keel_runtime::ReadFileTool::new();
+    let mut read_args = ToolArgs::new();
+    read_args.insert(
+        "path",
+        ArgValue::String(".keel/outputs/turn-1-call-0.txt".to_owned()),
+    );
+    let ctx = ToolCtx {
+        turn_id: TurnId::new(99),
+        call_id: ToolCallId::next(),
+        workspace_root: dir.path().to_path_buf(),
+        cancel: CancelToken::new(),
+    };
+    match tool.call(read_args, &ctx).await.outcome {
+        ToolOutcome::Success { content } => assert_eq!(content.chars().count(), 200_000),
+        other => panic!("read_file could not read the spill: {other:?}"),
+    }
 }

@@ -5,11 +5,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use keel_core::{
-    detect_secret, estimate_tokens, AcceptanceItem, Answer, ArgValue, BuildCtx, CancelToken,
-    CommitCtx, CommitDecision, ErrorCode, Event, EventSink, InteractionId, InteractionRequest,
-    InteractionResponse, KernelError, Message, ModelChunk, ModelError, ModelProvider, ModelRequest,
-    ModelRole, OnTimeout, Policy, ReasoningLevel, SecretKind, Session, ToolArgs, ToolOutcome,
-    TurnEvent, TurnState, VerificationMode, VerificationReport,
+    detect_secret, estimate_tokens, redact_secrets, AcceptanceItem, Answer, ArgValue, BuildCtx,
+    CancelToken, CommitCtx, CommitDecision, ErrorCode, Event, EventSink, InteractionId,
+    InteractionRequest, InteractionResponse, KernelError, Message, ModelChunk, ModelError,
+    ModelProvider, ModelRequest, ModelRole, OnTimeout, Policy, ReasoningLevel, SecretKind, Session,
+    ToolArgs, ToolOutcome, TurnEvent, TurnState, VerificationMode, VerificationReport,
 };
 
 use crate::context::ContextBuilder;
@@ -20,6 +20,7 @@ use crate::governor::{ContextGovernor, PressureLevel};
 use crate::interaction::InteractionBroker;
 use crate::permission::PermissionEngine;
 use crate::registry::ToolRegistry;
+use crate::summary::{compact_args, summarize_output};
 use crate::verification::AcceptanceVerifier;
 
 const MODEL_CALL_TIMEOUT: Duration = Duration::from_secs(120);
@@ -59,6 +60,7 @@ struct TurnStats {
     awaiting_wrap_up: bool,
     wrap_up_report: Option<String>,
     answer: Answer,
+    tool_summaries: Vec<keel_core::ToolSummary>,
 }
 
 struct AcceptancePlan {
@@ -232,13 +234,6 @@ impl<M: ModelProvider> TurnDriver<M> {
             deferred: stats.deferred.len(),
         });
 
-        if state != TurnState::Cancelled {
-            self.session
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .record_turn(input, &text);
-        }
-
         if let Some(report) = &stats.wrap_up_report {
             stats.answer.notes = Some(report.clone());
         }
@@ -254,6 +249,13 @@ impl<M: ModelProvider> TurnDriver<M> {
             }
         }
         stats.answer.missing = stats.answer.body.trim().is_empty();
+
+        if state != TurnState::Cancelled {
+            self.session
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .record_turn(input, &stats.answer.body, &stats.tool_summaries);
+        }
 
         TurnOutcome {
             turn_id,
@@ -695,7 +697,9 @@ impl<M: ModelProvider> TurnDriver<M> {
                 if cancel.is_cancelled() {
                     return Err(KernelError::Cancelled { stage: "tools" });
                 }
-                for result in &results {
+                for (index, (call, result)) in
+                    calls_for_audit.iter().zip(results.iter()).enumerate()
+                {
                     let content = match &result.outcome {
                         ToolOutcome::Success { content } => content.clone(),
                         ToolOutcome::Failure { error } => {
@@ -705,8 +709,24 @@ impl<M: ModelProvider> TurnDriver<M> {
                     messages.push(Arc::new(Message::tool_result(
                         result.call_id,
                         &result.tool,
-                        content,
+                        content.clone(),
                     )));
+
+                    let status = match &result.outcome {
+                        ToolOutcome::Success { .. } => "ok".to_owned(),
+                        ToolOutcome::Failure { error } => {
+                            format!("error {}", error.code.as_str())
+                        }
+                    };
+                    let output =
+                        summarize_output(&self.workspace_root, turn_id.get(), index, &content)
+                            .await;
+                    stats.tool_summaries.push(keel_core::ToolSummary {
+                        name: call.name.clone(),
+                        args: redact_secrets(&compact_args(&call.args)),
+                        status,
+                        output,
+                    });
                 }
 
                 let mut failures = 0u32;

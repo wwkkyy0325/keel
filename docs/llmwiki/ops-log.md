@@ -451,3 +451,16 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
   The CLI prints `answer:` and `changes:`.
 - Added `MockStep::TextAndToolCall` for a narration-plus-tool round.
 - Verification: 161 tests; `cargo fmt --check`; clippy with `-D warnings`.
+
+### M3 tool summaries in history
+
+- Added `keel-runtime::summary` with `compact_args` and `summarize_output`.
+  Head/tail are 2000/1000 characters; args are clipped at 200; long output is
+  redacted, then written once to `.keel/outputs/turn-{turn}-call-{i}.txt`.
+- The driver builds one summary per tool result, appends them to
+  `TurnStats`, and records them into the session with the answer body.
+- `Session::record_turn` appends a `[tools]` block to the assistant entry;
+  history therefore carries the calls, statuses and bounded output.
+- Added `MockStep::TextAndToolCall` for narration-plus-tool rounds.
+- Verification: 167 tests; the 200 kB read spills and is re-readable through
+  `read_file`; fmt and clippy clean.
