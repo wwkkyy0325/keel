@@ -1,17 +1,18 @@
 mod common;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use async_trait::async_trait;
 use keel_core::{
     AcceptanceItem, ArgValue, CancelToken, CommitCtx, CommitDecision, ContextRecipe, ErrorCode,
-    Event, MemoryPolicy, ModelError, ModelRole, ModelRoute, PermissionLevel, Policy,
-    ReasoningLevel, SecretKind, ToolArgs, ToolSchema, TurnId, TurnState, VerificationMode,
-    VerifySpec,
+    Event, MemoryPolicy, Message, ModelError, ModelProvider, ModelRequest, ModelRole, ModelRoute,
+    ModelStream, PermissionLevel, Policy, ReasoningLevel, SecretKind, ToolArgs, ToolSchema, TurnId,
+    TurnState, VerificationMode, VerifySpec,
 };
 use keel_runtime::{
     DeferAllInteractionPort, EventLog, InteractionBroker, MockModel, MockStep, PermissionEngine,
-    RuntimeConfig, TurnDriver, TurnDriverConfig,
+    RuntimeConfig, TurnDriver, TurnDriverConfig, TurnLimits,
 };
 
 struct RepromptPolicy {
@@ -698,4 +699,108 @@ async fn secret_like_input_is_reported_on_the_turn_and_not_blocked() {
         _ => None,
     });
     assert!(input.is_some_and(|input| !input.contains("sk-1234567890abcdefghij")));
+}
+
+type SeenRequests = Arc<Mutex<Vec<(usize, Vec<Arc<Message>>)>>>;
+
+struct ToolRecordingModel {
+    inner: MockModel,
+    seen: SeenRequests,
+}
+
+#[async_trait]
+impl ModelProvider for ToolRecordingModel {
+    async fn stream(
+        &self,
+        request: ModelRequest,
+        cancel: &CancelToken,
+    ) -> Result<ModelStream, ModelError> {
+        self.seen
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push((request.tools.len(), request.messages.clone()));
+        self.inner.stream(request, cancel).await
+    }
+}
+
+fn two_call_limits() -> TurnLimits {
+    TurnLimits {
+        max_model_calls: 2,
+        max_tool_calls: 8,
+        tool_timeout: Duration::from_millis(200),
+        turn_timeout: Duration::from_secs(2),
+    }
+}
+
+#[tokio::test]
+async fn the_last_model_call_is_reserved_for_the_answer() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&["echo"], 4, PermissionLevel::WorkspaceAuto);
+
+    let mut args = ToolArgs::new();
+    args.insert("text", ArgValue::String("hi".to_owned()));
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let model = ToolRecordingModel {
+        inner: MockModel::new(vec![
+            MockStep::ToolCall {
+                name: "echo".to_owned(),
+                args,
+            },
+            MockStep::Text("final answer".to_owned()),
+        ]),
+        seen: seen.clone(),
+    };
+    let driver = common::build_driver(model, config, events.clone(), dir.path(), two_call_limits());
+
+    let outcome = driver.run("hi", CancelToken::new()).await;
+    assert!(outcome.is_done(), "{outcome:?}");
+    assert_eq!(outcome.text, "final answer");
+
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 2);
+    assert_eq!(seen[0].0, 1, "the first call may use tools");
+    assert_eq!(seen[1].0, 0, "the final call must not receive tools");
+    assert!(seen[1]
+        .1
+        .iter()
+        .any(|message| message.content.starts_with("This is the last model call")));
+
+    let forced = events
+        .for_turn(outcome.turn_id)
+        .iter()
+        .filter(|record| matches!(record.event, Event::FinalCallForced { .. }))
+        .count();
+    assert_eq!(forced, 1);
+}
+
+#[tokio::test]
+async fn tools_are_not_dispatched_on_the_final_call() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&["echo"], 4, PermissionLevel::WorkspaceAuto);
+
+    let mut args = ToolArgs::new();
+    args.insert("text", ArgValue::String("hi".to_owned()));
+    let model = MockModel::new(vec![
+        MockStep::ToolCall {
+            name: "echo".to_owned(),
+            args: args.clone(),
+        },
+        MockStep::ToolCall {
+            name: "echo".to_owned(),
+            args,
+        },
+    ]);
+    let driver = common::build_driver(model, config, events.clone(), dir.path(), two_call_limits());
+
+    let outcome = driver.run("hi", CancelToken::new()).await;
+    assert_eq!(outcome.state, TurnState::Error);
+
+    let dispatched = events
+        .for_turn(outcome.turn_id)
+        .iter()
+        .filter(|record| matches!(record.event, Event::ToolStarted { .. }))
+        .count();
+    assert_eq!(dispatched, 1, "only the first call may dispatch a tool");
 }

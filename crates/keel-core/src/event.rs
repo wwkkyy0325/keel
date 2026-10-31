@@ -65,6 +65,9 @@ pub enum Event {
         used: u32,
         ceiling: u32,
     },
+    FinalCallForced {
+        turn_id: TurnId,
+    },
     ModelStarted {
         turn_id: TurnId,
         provider: String,
@@ -134,6 +137,7 @@ impl Event {
             | Self::ContextPressure { turn_id, .. }
             | Self::HistoryAssembled { turn_id, .. }
             | Self::WrapUpInjected { turn_id, .. }
+            | Self::FinalCallForced { turn_id, .. }
             | Self::ModelStarted { turn_id, .. }
             | Self::ModelFinished { turn_id, .. }
             | Self::ToolStarted { turn_id, .. }
@@ -158,6 +162,7 @@ impl Event {
             Self::ContextPressure { .. } => "context_pressure",
             Self::HistoryAssembled { .. } => "history_assembled",
             Self::WrapUpInjected { .. } => "wrap_up_injected",
+            Self::FinalCallForced { .. } => "final_call_forced",
             Self::ModelStarted { .. } => "model_started",
             Self::ModelFinished { .. } => "model_finished",
             Self::ToolStarted { .. } => "tool_started",

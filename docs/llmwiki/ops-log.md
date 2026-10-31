@@ -415,3 +415,16 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
   ends in `ContextOverflow`; tool-result clearing at amber moves to step 7.
 - Verification: 152 tests; `cargo fmt --check`; clippy with `-D warnings`;
   20-turn mock companion session still reaches `Done` on all turns.
+
+### M3 reserved final call
+
+- The last model call in a turn is reserved for the answer: the request carries
+  no tool schemas and one system instruction asking for completed work, pending
+  work and changed artifacts.
+- A tool call returned on that final call is ignored (no dispatch). If it also
+  carried no text, the turn ends in `Error` rather than a `Done` with empty
+  text.
+- Added `Event::FinalCallForced` and two integration tests: the final request
+  has zero tools and the instruction, and a tool request on the final call is
+  never dispatched.
+- Verification: 154 tests; `cargo fmt --check`; clippy with `-D warnings`.

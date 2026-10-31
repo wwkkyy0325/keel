@@ -8,14 +8,14 @@ use std::time::Duration;
 use async_trait::async_trait;
 use keel_core::{
     CancelToken, CompactionStep, ContextRecipe, Event, InteractionPolicy, InteractionPort,
-    InteractionRequest, InteractionResponse, MemoryMode, MemoryPolicy, ModelRoute, PermissionLevel,
-    Policy, PromotionMode, TurnId, TurnState, VerificationMode,
+    InteractionRequest, InteractionResponse, MemoryMode, MemoryPolicy, ModelProvider, ModelRoute,
+    PermissionLevel, Policy, PromotionMode, TurnId, TurnState, VerificationMode,
 };
 use keel_runtime::{
     validate_config, CodeSearchTool, ContextBuilder, DeferAllInteractionPort, EchoTool, EventLog,
-    HistoryStage, InteractionBroker, LatestStage, ListDirTool, LocalTrashStore, MockModel,
-    PermissionEngine, ReadFileTool, RuntimeConfig, SystemStage, ToolRegistry, TurnDriver,
-    TurnDriverConfig, TurnLimits, WriteFileTool,
+    HistoryStage, InteractionBroker, LatestStage, ListDirTool, LocalTrashStore, PermissionEngine,
+    ReadFileTool, RuntimeConfig, SystemStage, ToolRegistry, TurnDriver, TurnDriverConfig,
+    TurnLimits, WriteFileTool,
 };
 
 pub fn runtime_config(
@@ -89,13 +89,13 @@ pub fn test_limits() -> TurnLimits {
     }
 }
 
-pub fn build_driver(
-    model: MockModel,
+pub fn build_driver<M: ModelProvider>(
+    model: M,
     config: RuntimeConfig,
     events: Arc<EventLog>,
     root: &Path,
     limits: TurnLimits,
-) -> TurnDriver<MockModel> {
+) -> TurnDriver<M> {
     build_driver_with_port(
         model,
         config,
@@ -106,14 +106,14 @@ pub fn build_driver(
     )
 }
 
-pub fn build_driver_with_port(
-    model: MockModel,
+pub fn build_driver_with_port<M: ModelProvider>(
+    model: M,
     config: RuntimeConfig,
     events: Arc<EventLog>,
     root: &Path,
     limits: TurnLimits,
     port: Arc<dyn InteractionPort>,
-) -> TurnDriver<MockModel> {
+) -> TurnDriver<M> {
     let tools = standard_registry(root);
     let context = standard_context();
     validate_config(&config, &tools, &context).unwrap();

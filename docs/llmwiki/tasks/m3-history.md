@@ -27,9 +27,11 @@ one at a time. Summarization is blocked on
       the floor, is rejected at load time. Tool-result clearing at amber lands
       with step 7; mid-turn compaction at critical lands with step 9, so an
       over-budget turn still ends in `ContextOverflow`.
-- [ ] 6. Turn-budget wrap-up: reserve one model call for the final answer and
-      forbid new tool calls on it — verify: a turn that reaches the call limit
-      ends with an answer instead of `TurnsExhausted`
+- [x] 6. Turn-budget wrap-up: reserve one model call for the final answer and
+      forbid new tool calls on it — verify: the last request carries zero tool
+      schemas and one instruction message; a model that still requests a tool
+      gets no dispatch and the turn ends in `Error` instead of a silent
+      `Done`; `FinalCallForced` is emitted once
 - [ ] 7. Tool summaries: head and tail by character count, spill file under
       `.keel/outputs/`, marker carries the path — verify: a 200 kB output
       truncates, spills once, and is readable through `read_file`

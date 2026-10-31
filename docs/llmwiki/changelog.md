@@ -373,3 +373,14 @@
 - Added `HistoryAssembled` with detail/digest/dropped counts and `WrapUpInjected`.
 - Verification: 152 tests; a 20-turn mock companion session still reaches
   `Done` on every turn.
+
+### M3 reserved final call
+
+- The last model call of a turn is reserved for the answer. The kernel adds one
+  instruction message and sends zero tool schemas, so the model cannot start new
+  work.
+- If a model still requests a tool on that call, the call is not dispatched and
+  the turn ends in `Error` instead of a silent `Done` with empty text.
+- Added `FinalCallForced` and two tests: the final request has no tools and the
+  instruction, and a tool request on the final call is never dispatched.
+- Verification: 154 tests; fmt and clippy clean.

@@ -40,6 +40,10 @@ pub struct TurnDriverConfig {
 const WRAP_UP: &str = "Context is nearly exhausted. Do not start new work. \
 Finish the step in flight, then report: goal, done, pending, artifacts, decisions.";
 
+const FINAL_CALL: &str = "This is the last model call for this turn and tools \
+are disabled. Report what you completed, what is still pending, and the files \
+or commands you changed. Do not claim a check ran unless you saw its output.";
+
 #[derive(Default)]
 struct TurnStats {
     tool_calls: u32,
@@ -330,6 +334,7 @@ impl<M: ModelProvider> TurnDriver<M> {
         let mut model_calls = 0u32;
         let mut previous_used: Option<u32> = None;
         let mut wrapped_up = false;
+        let mut final_call_announced = false;
 
         'turn: loop {
             if cancel.is_cancelled() {
@@ -344,9 +349,23 @@ impl<M: ModelProvider> TurnDriver<M> {
                 break 'turn;
             }
 
-            let estimated_tokens = messages.iter().fold(0u32, |total, message| {
+            let mut estimated_tokens = messages.iter().fold(0u32, |total, message| {
                 total.saturating_add(message.estimated_tokens())
             });
+
+            // The last call is reserved for the answer, never for new work.
+            let final_call = model_calls + 1 == self.limits.max_model_calls;
+            if final_call && !final_call_announced {
+                final_call_announced = true;
+                self.events.append(Event::FinalCallForced { turn_id });
+                if estimated_tokens.saturating_add(estimate_tokens(FINAL_CALL))
+                    <= recipe.budget_tokens
+                {
+                    messages.push(Arc::new(Message::system(FINAL_CALL)));
+                    estimated_tokens = estimated_tokens.saturating_add(estimate_tokens(FINAL_CALL));
+                }
+            }
+
             let call_growth = match previous_used {
                 Some(previous) => estimated_tokens.saturating_sub(previous).max(1),
                 None => growth.max(1),
@@ -385,7 +404,11 @@ impl<M: ModelProvider> TurnDriver<M> {
             let route = self.policy.model_route(ModelRole::Main);
             let request = ModelRequest {
                 messages: messages.clone(),
-                tools: visible.clone(),
+                tools: if final_call {
+                    Vec::new()
+                } else {
+                    visible.clone()
+                },
                 thinking_budget: self.policy.thinking_budget(),
                 max_output_tokens: self.max_output_tokens,
                 route: route.clone(),
@@ -494,6 +517,19 @@ impl<M: ModelProvider> TurnDriver<M> {
                 tool_calls: calls.len(),
                 usage,
             });
+
+            // Tools were disabled for the final call. If the model asked for
+            // one anyway, ignore it and keep any text it produced.
+            if final_call && (!calls.is_empty() || !pending_interactions.is_empty()) {
+                calls.clear();
+                pending_interactions.clear();
+                if round_text.trim().is_empty() {
+                    self.step(fsm, turn_id, TurnEvent::TurnsExhausted)?;
+                    return Err(KernelError::Model(ModelError::internal(
+                        "model requested tools on the final call and produced no answer",
+                    )));
+                }
+            }
 
             if !pending_interactions.is_empty() {
                 if !calls.is_empty() {
