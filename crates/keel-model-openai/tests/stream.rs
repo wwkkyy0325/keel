@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use keel_core::{
     CancelToken, ErrorCode, Message, ModelChunk, ModelError, ModelProvider, ModelRequest,
-    ModelRoute, ModelStream,
+    ModelRoute, ModelStream, ReasoningLevel,
 };
 use keel_model_openai::{OpenAiConfig, OpenAiProvider};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -63,7 +63,7 @@ fn provider(url: String) -> OpenAiProvider {
         base_url: url,
         api_key: "test-key".to_owned(),
         model: "fallback-model".to_owned(),
-        reasoning_effort: None,
+        supports_reasoning: false,
     })
     .unwrap()
 }
@@ -78,6 +78,7 @@ fn request() -> ModelRequest {
             provider: "openai".to_owned(),
             model: "test-model".to_owned(),
         },
+        reasoning: ReasoningLevel::Low,
     }
 }
 

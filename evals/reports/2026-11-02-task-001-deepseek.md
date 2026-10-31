@@ -34,9 +34,21 @@ The second run captured usage and latency:
 ## Wire note
 
 `deepseek-flash` defaults to thinking mode. In a tool loop the provider expects
-`reasoning_content` to be echoed back; the adapter does not do that yet. The
-profile sets `reasoning_effort = "none"` so the task can run in non-thinking
-mode.
+`reasoning_content` to be echoed back. The driver now stores it on assistant
+tool-call messages and the wire echoes it, including an empty string when the
+model produced no reasoning. The profile declares `supports_reasoning = true`
+and the kernel starts at `Low`.
+
+## Adaptive reasoning runs
+
+- First adaptive run: started at `Low`, escalated to `High` after tool calls
+  failed. It passed 4/4 with 7170 tokens and 6930 ms. The trigger was too broad:
+  permission denials and ordinary file probes are environmental, not reasoning
+  failures.
+- Refined run: only invalid tool arguments and no-progress rounds escalate.
+  Permission denied, not found, timeout, cancellation and I/O do not. The turn
+  stayed at `Low`, passed 4/4, and used 15361 tokens in 10702 ms.
+- Both runs reported honestly that shell execution was unavailable.
 
 ## Not measured
 

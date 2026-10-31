@@ -5,8 +5,8 @@ use std::sync::Arc;
 use keel_core::{
     detect_secret, BuildCtx, CancelToken, CommitCtx, CommitDecision, ErrorCode, Event,
     InteractionId, InteractionRequest, InteractionResponse, KernelError, Message, ModelChunk,
-    ModelError, ModelProvider, ModelRequest, ModelRole, OnTimeout, Policy, SecretKind, ToolOutcome,
-    TurnEvent, TurnState, VerificationMode,
+    ModelError, ModelProvider, ModelRequest, ModelRole, OnTimeout, Policy, ReasoningLevel,
+    SecretKind, ToolArgs, ToolOutcome, TurnEvent, TurnState, VerificationMode,
 };
 
 use crate::context::ContextBuilder;
@@ -34,6 +34,10 @@ struct TurnStats {
     interactions: u32,
     deferred: Vec<InteractionId>,
     usage: keel_core::TokenUsage,
+    reasoning: ReasoningLevel,
+    consecutive_tool_failures: u32,
+    empty_rounds: u32,
+    previous_failed_call: Option<(String, ToolArgs)>,
 }
 
 /// Terminal result of one turn.
@@ -51,6 +55,8 @@ pub struct TurnOutcome {
     pub usage: keel_core::TokenUsage,
     /// Wall-clock duration of the turn.
     pub duration_ms: u64,
+    /// Final kernel-owned reasoning level for this turn.
+    pub reasoning_level: ReasoningLevel,
 }
 
 impl TurnOutcome {
@@ -179,7 +185,25 @@ impl<M: ModelProvider> TurnDriver<M> {
             secret_warning,
             usage: stats.usage,
             duration_ms: started.elapsed().as_millis() as u64,
+            reasoning_level: stats.reasoning,
         }
+    }
+
+    fn escalate_reasoning(&self, turn_id: keel_core::TurnId, stats: &mut TurnStats, reason: &str) {
+        let from = stats.reasoning;
+        let to = from.next();
+        if to == from {
+            return;
+        }
+        stats.reasoning = to;
+        stats.consecutive_tool_failures = 0;
+        stats.empty_rounds = 0;
+        self.events.append(Event::ReasoningEscalated {
+            turn_id,
+            from: from.as_str().to_owned(),
+            to: to.as_str().to_owned(),
+            reason: reason.to_owned(),
+        });
     }
 
     // The FSM, text buffer and stats are separate borrows by design; bundling
@@ -259,6 +283,7 @@ impl<M: ModelProvider> TurnDriver<M> {
                 thinking_budget: self.policy.thinking_budget(),
                 max_output_tokens: self.max_output_tokens,
                 route: route.clone(),
+                reasoning: stats.reasoning,
             };
             self.events.append(Event::ModelStarted {
                 turn_id,
@@ -476,15 +501,14 @@ impl<M: ModelProvider> TurnDriver<M> {
                     break 'turn;
                 }
 
-                if !round_text.is_empty() {
-                    messages.push(Arc::new(Message::assistant(round_text)));
-                }
                 let mut tool_call_message = Message::assistant_tool_calls(calls.clone());
+                tool_call_message.content = round_text;
                 if !round_reasoning.is_empty() {
                     tool_call_message = tool_call_message.with_reasoning(round_reasoning.clone());
                 }
                 messages.push(Arc::new(tool_call_message));
 
+                let calls_for_audit = calls.clone();
                 let results = self
                     .dispatcher
                     .dispatch(turn_id, calls, &visible_names, cancel)
@@ -492,7 +516,7 @@ impl<M: ModelProvider> TurnDriver<M> {
                 if cancel.is_cancelled() {
                     return Err(KernelError::Cancelled { stage: "tools" });
                 }
-                for result in results {
+                for result in &results {
                     let content = match &result.outcome {
                         ToolOutcome::Success { content } => content.clone(),
                         ToolOutcome::Failure { error } => {
@@ -506,11 +530,47 @@ impl<M: ModelProvider> TurnDriver<M> {
                     )));
                 }
 
+                let mut failures = 0u32;
+                let mut repeated = false;
+                for (call, result) in calls_for_audit.iter().zip(results.iter()) {
+                    let reasoning_failure = match &result.outcome {
+                        ToolOutcome::Failure { error } => {
+                            matches!(error.code, ErrorCode::InvalidArguments)
+                        }
+                        ToolOutcome::Success { .. } => false,
+                    };
+                    if !reasoning_failure {
+                        continue;
+                    }
+                    failures = failures.saturating_add(1);
+                    if let Some((name, args)) = &stats.previous_failed_call {
+                        if name == &call.name && args == &call.args {
+                            repeated = true;
+                        }
+                    }
+                    stats.previous_failed_call = Some((call.name.clone(), call.args.clone()));
+                }
+                if failures == 0 {
+                    stats.consecutive_tool_failures = 0;
+                    stats.previous_failed_call = None;
+                } else {
+                    stats.consecutive_tool_failures =
+                        stats.consecutive_tool_failures.saturating_add(failures);
+                    if repeated || stats.consecutive_tool_failures >= 2 {
+                        self.escalate_reasoning(turn_id, stats, "tool failures");
+                    }
+                }
+                stats.empty_rounds = 0;
+
                 self.step(fsm, turn_id, TurnEvent::Ready)?;
                 continue 'turn;
             }
 
             if round_text.is_empty() {
+                stats.empty_rounds = stats.empty_rounds.saturating_add(1);
+                if stats.empty_rounds >= 2 {
+                    self.escalate_reasoning(turn_id, stats, "no progress");
+                }
                 self.step(fsm, turn_id, TurnEvent::ThinkingOnly)?;
                 continue 'turn;
             }

@@ -38,7 +38,7 @@ pub use permission::{
 };
 pub use policy::{
     CommitCtx, CommitDecision, CompactionStep, ContextRecipe, MemoryMode, MemoryPolicy, ModelRole,
-    ModelRoute, Policy, PromotionMode, VerificationMode,
+    ModelRoute, Policy, PromotionMode, ReasoningLevel, VerificationMode,
 };
 pub use secret::{detect_secret, redact_secrets, SecretKind};
 pub use state::{TurnEvent, TurnState};

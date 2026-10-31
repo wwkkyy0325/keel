@@ -27,7 +27,7 @@ provider = "openai-compatible"
 model = "gpt-4o-mini"
 base_url = "https://api.openai.com/v1"
 api_key_env = "OPENAI_API_KEY"   # name only; never the key itself
-reasoning_effort = "none"        # provider hint; "none" disables thinking
+supports_reasoning = true        # endpoint accepts adaptive reasoning hints
 thinking_budget = 1024
 max_output_tokens = 4096
 

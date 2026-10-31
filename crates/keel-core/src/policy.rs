@@ -34,6 +34,35 @@ pub struct ContextRecipe {
     pub compaction: Vec<CompactionStep>,
 }
 
+/// Kernel-owned reasoning effort for one turn.
+///
+/// The ladder is monotonic within a turn and starts at `Low`. The model cannot
+/// choose the level; the driver escalates it on real failure signals.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ReasoningLevel {
+    #[default]
+    Low,
+    High,
+    Max,
+}
+
+impl ReasoningLevel {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Low => Self::High,
+            Self::High | Self::Max => Self::Max,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::High => "high",
+            Self::Max => "max",
+        }
+    }
+}
+
 /// Verification policy.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VerificationMode {

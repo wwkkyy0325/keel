@@ -246,3 +246,18 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
   profile removal and verifier signals.
 - Verification: 125 tests; clippy, fmt and `cargo deny check`.
 - Commit: `feat: preserve reasoning content for tool calls`.
+
+### Adaptive reasoning controller
+
+- Added `ReasoningLevel` (`Low -> High -> Max`) to the driver: monotonic per
+  turn, reset next turn, no user or model switch.
+- Removed profile `reasoning_effort`; `supports_reasoning` is a provider
+  capability and controls whether the wire sends the level.
+- Escalation only on invalid tool arguments, repeated invalid calls, no-progress
+  rounds and required verifier failures. Permission, not-found, timeout,
+  cancellation, I/O and context overflow do not escalate.
+- Assistant text and tool calls now share one message; `reasoning_content` is
+  echoed even when empty for thinking-mode providers.
+- Real task-001 stayed Low and passed 4/4: 15361 tokens, 10702 ms.
+- Verification: 129 tests; clippy, fmt and `cargo deny check`.
+- Commit: `feat: add adaptive reasoning controller`.

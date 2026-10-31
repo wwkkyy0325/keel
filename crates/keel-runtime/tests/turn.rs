@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use keel_core::{
     ArgValue, CancelToken, CommitCtx, CommitDecision, ContextRecipe, ErrorCode, Event,
-    MemoryPolicy, ModelError, ModelRole, ModelRoute, PermissionLevel, Policy, SecretKind, ToolArgs,
-    ToolSchema, TurnId, TurnState, VerificationMode,
+    MemoryPolicy, ModelError, ModelRole, ModelRoute, PermissionLevel, Policy, ReasoningLevel,
+    SecretKind, ToolArgs, ToolSchema, TurnId, TurnState, VerificationMode,
 };
 use keel_runtime::{
     DeferAllInteractionPort, EventLog, InteractionBroker, MockModel, MockStep, PermissionEngine,
@@ -406,6 +406,125 @@ async fn non_commit_decision_ends_in_error() {
         outcome.error.as_ref().map(|error| error.code()),
         Some(ErrorCode::Unsupported)
     );
+}
+
+#[tokio::test]
+async fn repeated_tool_failure_escalates_reasoning() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&["read_file"], 8, PermissionLevel::WorkspaceAuto);
+    let model = MockModel::new(vec![
+        MockStep::ToolCall {
+            name: "read_file".to_owned(),
+            args: ToolArgs::new(),
+        },
+        MockStep::ToolCall {
+            name: "read_file".to_owned(),
+            args: ToolArgs::new(),
+        },
+        MockStep::Text("done".to_owned()),
+    ]);
+    let driver = common::build_driver(
+        model,
+        config,
+        events.clone(),
+        dir.path(),
+        common::test_limits(),
+    );
+
+    let outcome = driver.run("try", CancelToken::new()).await;
+
+    assert!(outcome.is_done());
+    assert_eq!(outcome.reasoning_level, ReasoningLevel::High);
+    let escalations: Vec<(String, String, String)> = events
+        .for_turn(outcome.turn_id)
+        .into_iter()
+        .filter_map(|record| match record.event {
+            Event::ReasoningEscalated {
+                from, to, reason, ..
+            } => Some((from, to, reason)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        escalations,
+        vec![(
+            "low".to_owned(),
+            "high".to_owned(),
+            "tool failures".to_owned()
+        )]
+    );
+}
+
+#[tokio::test]
+async fn permission_denied_does_not_escalate_reasoning() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&["write_file"], 8, PermissionLevel::WorkspaceAuto);
+    let write_args = || {
+        let mut args = ToolArgs::new();
+        args.insert("path", ArgValue::String("../outside.txt".to_owned()));
+        args.insert("content", ArgValue::String("x".to_owned()));
+        args
+    };
+    let model = MockModel::new(vec![
+        MockStep::ToolCall {
+            name: "write_file".to_owned(),
+            args: write_args(),
+        },
+        MockStep::ToolCall {
+            name: "write_file".to_owned(),
+            args: write_args(),
+        },
+        MockStep::Text("done".to_owned()),
+    ]);
+    let driver = common::build_driver(
+        model,
+        config,
+        events.clone(),
+        dir.path(),
+        common::test_limits(),
+    );
+
+    let outcome = driver.run("try", CancelToken::new()).await;
+
+    assert!(outcome.is_done());
+    assert_eq!(outcome.reasoning_level, ReasoningLevel::Low);
+    assert!(!events
+        .for_turn(outcome.turn_id)
+        .into_iter()
+        .any(|record| matches!(record.event, Event::ReasoningEscalated { .. })));
+}
+
+#[tokio::test]
+async fn repeated_empty_rounds_escalate_reasoning() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&[], 0, PermissionLevel::WorkspaceAuto);
+    let model = MockModel::new(vec![
+        MockStep::Thinking("hmm".to_owned()),
+        MockStep::Thinking("still thinking".to_owned()),
+        MockStep::Text("done".to_owned()),
+    ]);
+    let driver = common::build_driver(
+        model,
+        config,
+        events.clone(),
+        dir.path(),
+        common::test_limits(),
+    );
+
+    let outcome = driver.run("try", CancelToken::new()).await;
+
+    assert!(outcome.is_done());
+    assert_eq!(outcome.reasoning_level, ReasoningLevel::High);
+    assert!(events
+        .for_turn(outcome.turn_id)
+        .into_iter()
+        .any(|record| matches!(
+            record.event,
+            Event::ReasoningEscalated { ref reason, .. } if reason == "no progress"
+        )));
 }
 
 #[tokio::test]

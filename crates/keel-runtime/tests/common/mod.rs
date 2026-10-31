@@ -48,7 +48,7 @@ pub fn runtime_config(
         },
         model_base_url: None,
         api_key_env: None,
-        reasoning_effort: None,
+        supports_reasoning: false,
         max_output_tokens: 1024,
         interaction: InteractionPolicy::default(),
     }

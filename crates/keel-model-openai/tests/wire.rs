@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use keel_core::{
-    ArgValue, InteractionKind, Message, ModelRequest, ModelRoute, ParamKind, ParamSpec, RiskLevel,
-    ToolArgs, ToolCallId, ToolCallRequest, ToolSchema,
+    ArgValue, InteractionKind, Message, ModelRequest, ModelRoute, ParamKind, ParamSpec,
+    ReasoningLevel, RiskLevel, ToolArgs, ToolCallId, ToolCallRequest, ToolSchema,
 };
 use keel_model_openai::{
     build_request, parse_interaction_json, parse_tool_args, FinishedCall, ToolCallAccumulator,
@@ -45,6 +45,7 @@ fn request() -> ModelRequest {
             provider: "openai".to_owned(),
             model: "test-model".to_owned(),
         },
+        reasoning: ReasoningLevel::Low,
     }
 }
 
@@ -53,8 +54,12 @@ fn reasoning_effort_is_omitted_unless_configured() {
     let body = build_request(&request(), "fallback", None);
     assert!(body.get("reasoning_effort").is_none());
 
-    let body = build_request(&request(), "fallback", Some("none"));
-    assert_eq!(body["reasoning_effort"], "none");
+    let body = build_request(&request(), "fallback", Some(ReasoningLevel::Low));
+    assert_eq!(body["reasoning_effort"], "low");
+    let body = build_request(&request(), "fallback", Some(ReasoningLevel::High));
+    assert_eq!(body["reasoning_effort"], "high");
+    let body = build_request(&request(), "fallback", Some(ReasoningLevel::Max));
+    assert_eq!(body["reasoning_effort"], "max");
 }
 
 #[test]
@@ -66,17 +71,23 @@ fn assistant_reasoning_content_is_echoed() {
         name: "echo".to_owned(),
         args,
     };
-    let mut request = request();
-    request.messages[2] =
+    let mut req = request();
+    req.messages[2] =
         Arc::new(Message::assistant_tool_calls(vec![call]).with_reasoning("let me check the file"));
 
-    let body = build_request(&request, "fallback", None);
+    let body = build_request(&req, "fallback", Some(ReasoningLevel::Low));
 
     assert_eq!(
         body["messages"][2]["reasoning_content"],
         "let me check the file"
     );
     assert!(body["messages"][0].get("reasoning_content").is_none());
+
+    let body = build_request(&request(), "fallback", Some(ReasoningLevel::Low));
+    assert_eq!(body["messages"][2]["reasoning_content"], "");
+
+    let body = build_request(&request(), "fallback", None);
+    assert!(body["messages"][2].get("reasoning_content").is_none());
 }
 
 #[test]

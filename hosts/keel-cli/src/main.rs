@@ -111,6 +111,7 @@ async fn run() -> Result<(), KernelError> {
             .saturating_add(outcome.usage.output_tokens)
     );
     println!("duration_ms: {}", outcome.duration_ms);
+    println!("reasoning: {}", outcome.reasoning_level.as_str());
     if let Some(kind) = outcome.secret_warning {
         println!(
             "notice: this turn's input matched a secret pattern ({}); it was not blocked. If it is real, rotate it and keep credentials in .env.",
@@ -153,7 +154,7 @@ fn build_model(config: &RuntimeConfig, input: &str) -> Result<HostModel, KernelE
                 base_url,
                 api_key,
                 model: config.model_route.model.clone(),
-                reasoning_effort: config.reasoning_effort.clone(),
+                supports_reasoning: config.supports_reasoning,
             })
             .map_err(|error| invalid_config(error.to_string()))?;
             Ok(HostModel::OpenAi(provider))

@@ -72,6 +72,7 @@ fn openai_profile_loads_and_validates() {
         Some("https://api.openai.com/v1")
     );
     assert_eq!(config.api_key_env.as_deref(), Some("OPENAI_API_KEY"));
+    assert!(!config.supports_reasoning);
     validate_config(
         &config,
         &common::standard_registry(&repo_root()),
@@ -91,7 +92,7 @@ fn deepseek_profile_loads_and_validates() {
         Some("https://api.deepseek.com")
     );
     assert_eq!(config.api_key_env.as_deref(), Some("DEEPSEEK_API_KEY"));
-    assert_eq!(config.reasoning_effort.as_deref(), Some("none"));
+    assert!(config.supports_reasoning);
     validate_config(
         &config,
         &common::standard_registry(&repo_root()),

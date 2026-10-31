@@ -74,9 +74,9 @@ not by the model's own claim.
   and the external hidden tests passed (4/4). Shell attempts were denied
   because stdin was not a terminal; the model reported the fix as unverified
   by execution instead of claiming a test run.
-- `deepseek-flash` needs `reasoning_effort = "none"` for this tool loop; the
-  thinking-mode default requires `reasoning_content` to be echoed back, which
-  the adapter does not do yet.
+- The initial DeepSeek tool loop needed a fixed `none` because thinking mode
+  requires `reasoning_content` to be echoed back. The adaptive controller now
+  echoes it (including an empty value) and runs at `Low`.
 - M2's end-to-end criterion is met.
 - A second real run captured 7437 tokens and 5916 ms; `verify.sh` passed 4/4
   again.

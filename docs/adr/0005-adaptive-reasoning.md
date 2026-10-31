@@ -27,8 +27,10 @@ tool calls. An adapter cannot treat reasoning as a local UI setting.
    no user-facing on/off switch in the kernel.
 3. Escalate one level when a real failure signal appears:
    - a required acceptance item returns `Failed`;
-   - the same tool with the same arguments fails twice;
-   - two consecutive tool calls fail;
+   - the same tool with the same arguments fails twice with invalid
+     arguments;
+   - two consecutive tool calls fail because the model supplied invalid
+     arguments;
    - a round produces no new information (no tool call, no new content, or the
      same action repeats);
    - `before_commit` returns `Reprompt` and the retry still fails.
@@ -37,13 +39,17 @@ tool calls. An adapter cannot treat reasoning as a local UI setting.
 5. Context overflow and compaction are **not** reasoning signals. They are
    capacity events handled by compaction, a larger window or a subagent. Higher
    effort can increase context use and make the problem worse.
-6. At `Max`, a still-failing turn enters `Escalating` or ends in `Error`; it
+6. Environmental tool outcomes — permission denied, not found, timeout,
+   cancellation and I/O — are not reasoning failures. A model probing for a
+   file or waiting on an approval will not think its way past the environment;
+   escalating only adds cost.
+7. At `Max`, a still-failing turn enters `Escalating` or ends in `Error`; it
    does not retry forever.
-7. Providers map kernel levels to their own controls and clamp unsupported
+8. Providers map kernel levels to their own controls and clamp unsupported
    levels down. When thinking is used, reasoning text is stored on the
    assistant message and echoed back with tool calls when the provider
    requires it.
-8. Hosts may later set a cost ceiling, but `Off` is not a default and is not a
+9. Hosts may later set a cost ceiling, but `Off` is not a default and is not a
    user-facing switch. A host that caps reasoning logs the clamp.
 
 ## Consequences

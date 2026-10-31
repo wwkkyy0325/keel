@@ -28,6 +28,7 @@ pub struct ModelRequest {
     pub thinking_budget: u32,
     pub max_output_tokens: u32,
     pub route: ModelRoute,
+    pub reasoning: crate::policy::ReasoningLevel,
 }
 
 /// One tool call requested by the model.

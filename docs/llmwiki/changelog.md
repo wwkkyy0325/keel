@@ -213,3 +213,17 @@
 - Added `docs/llmwiki/tasks/adaptive-reasoning.md` for the remaining
   controller and verifier-signal work.
 - Verification: 125 tests; clippy, fmt and `cargo deny check`.
+
+### Adaptive reasoning controller
+
+- Added kernel-owned `ReasoningLevel` (`Low -> High -> Max`) to the driver.
+  It starts at Low, is monotonic within a turn and resets next turn.
+- Removed fixed `reasoning_effort` from profiles. `supports_reasoning` is a
+  provider capability; the adapter sends `reasoning_effort` only when true.
+- Escalation signals: invalid tool arguments, repeated invalid calls,
+  no-progress rounds and required verifier failures. Permission denied, not
+  found, timeout, cancellation, I/O and context overflow do not escalate.
+- Assistant messages now combine text and tool calls, and reasoning content is
+  echoed (including an empty string) for thinking-mode providers.
+- Real task-001 stayed at Low, passed 4/4, used 15361 tokens in 10702 ms.
+- Verification: 129 tests; clippy, fmt and `cargo deny check`.

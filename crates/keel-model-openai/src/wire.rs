@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use keel_core::{
     ArgValue, ErrorCode, InteractionKind, InteractionOption, InteractionRequest, Message,
-    MessageRole, ModelError, ModelRequest, ParamKind, ToolArgs, ToolCallId, ToolCallRequest,
-    ToolSchema, TurnId,
+    MessageRole, ModelError, ModelRequest, ParamKind, ReasoningLevel, ToolArgs, ToolCallId,
+    ToolCallRequest, ToolSchema, TurnId,
 };
 use serde_json::{json, Map, Value};
 
@@ -15,17 +15,18 @@ pub const CONTROL_TOOL_NAME: &str = "keel_interact";
 pub fn build_request(
     request: &ModelRequest,
     fallback_model: &str,
-    reasoning_effort: Option<&str>,
+    reasoning: Option<ReasoningLevel>,
 ) -> Value {
     let model = if request.route.model.is_empty() {
         fallback_model
     } else {
         &request.route.model
     };
+    let include_reasoning = reasoning.is_some();
     let messages: Vec<Value> = request
         .messages
         .iter()
-        .map(|message| message_json(message))
+        .map(|message| message_json(message, include_reasoning))
         .collect();
     let mut tools: Vec<Value> = request.tools.iter().map(tool_json).collect();
     tools.push(control_tool_json());
@@ -38,8 +39,8 @@ pub fn build_request(
         "stream_options": { "include_usage": true },
         "max_tokens": request.max_output_tokens,
     });
-    if let Some(effort) = reasoning_effort {
-        body["reasoning_effort"] = Value::String(effort.to_owned());
+    if let Some(level) = reasoning {
+        body["reasoning_effort"] = Value::String(level.as_str().to_owned());
     }
     body
 }
@@ -185,16 +186,17 @@ impl ToolCallAccumulator {
     }
 }
 
-fn message_json(message: &Message) -> Value {
+fn message_json(message: &Message, include_reasoning: bool) -> Value {
     let mut value = Map::new();
     value.insert("role".to_owned(), json!(role_str(message.role)));
     value.insert("content".to_owned(), json!(message.content));
-    if message.role == MessageRole::Assistant {
-        if let Some(reasoning) = &message.reasoning_content {
-            if !reasoning.is_empty() {
-                value.insert("reasoning_content".to_owned(), json!(reasoning));
-            }
-        }
+    if include_reasoning && message.role == MessageRole::Assistant {
+        // Thinking-mode providers require the field even when the model
+        // produced no reasoning text.
+        value.insert(
+            "reasoning_content".to_owned(),
+            json!(message.reasoning_content.as_deref().unwrap_or("")),
+        );
     }
     if !message.tool_calls.is_empty() {
         let calls: Vec<Value> = message
