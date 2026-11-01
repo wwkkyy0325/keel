@@ -55,6 +55,36 @@ async fn main() -> ExitCode {
 async fn run() -> Result<ExitCode, KernelError> {
     dotenvy::dotenv().ok();
     let args = parse_args()?;
+    if args.plugins_check {
+        let path = args
+            .plugins
+            .as_deref()
+            .ok_or_else(|| invalid_config("`--plugins-check` needs `--plugins <file>`"))?;
+        return check_plugins(path).await;
+    }
+    let mut store = match &args.store {
+        Some(path) => Some(store::Store::open(path)?),
+        None => None,
+    };
+    if let Some(session_id) = &args.delete_session {
+        let Some(store) = store.as_mut() else {
+            return Err(invalid_config("`--delete-session` needs `--store`"));
+        };
+        if !store.delete_session(session_id)? {
+            return Err(invalid_config(format!("session `{session_id}` not found")));
+        }
+        println!("deleted session {session_id}");
+        return Ok(ExitCode::SUCCESS);
+    }
+    if let Some(value) = &args.fork_from {
+        let Some(store) = store.as_mut() else {
+            return Err(invalid_config("`--fork-from` needs `--store`"));
+        };
+        let (source, turn) = parse_fork(value)?;
+        store.fork(&source, turn, &args.session_id)?;
+        println!("forked {source}:{turn} into {}", args.session_id);
+    }
+
     let mut config = load_profile(&args.profile)?;
     if args.no_todo {
         config.visible_tool_names.retain(|name| name != "todo");
@@ -65,10 +95,6 @@ async fn run() -> Result<ExitCode, KernelError> {
         config.permission_level,
     )?);
 
-    let mut store = match &args.store {
-        Some(path) => Some(store::Store::open(path)?),
-        None => None,
-    };
     let stored = match &store {
         Some(store) => store.load(&args.session_id)?,
         None => None,
@@ -764,6 +790,12 @@ struct Args {
     context_snapshots: bool,
     /// Plugin file listing MCP servers to load.
     plugins: Option<PathBuf>,
+    /// Probe every configured MCP server and exit.
+    plugins_check: bool,
+    /// Copy a session checkpoint into `--session-id` before running.
+    fork_from: Option<String>,
+    /// Delete a session and its derived rows, then exit.
+    delete_session: Option<String>,
 }
 
 fn parse_args() -> Result<Args, KernelError> {
@@ -785,6 +817,9 @@ fn parse_args() -> Result<Args, KernelError> {
     let mut session_id = "default".to_owned();
     let mut context_snapshots = false;
     let mut plugins = None;
+    let mut plugins_check = false;
+    let mut fork_from = None;
+    let mut delete_session = None;
     let mut workspace = std::env::current_dir().map_err(|error| KernelError::Io {
         message: error.to_string(),
     })?;
@@ -887,6 +922,21 @@ fn parse_args() -> Result<Args, KernelError> {
                         invalid_config("missing value for `--plugins`")
                     })?));
             }
+            "--plugins-check" => {
+                plugins_check = true;
+            }
+            "--fork-from" => {
+                fork_from = Some(
+                    args.next()
+                        .ok_or_else(|| invalid_config("missing value for `--fork-from`"))?,
+                );
+            }
+            "--delete-session" => {
+                delete_session = Some(
+                    args.next()
+                        .ok_or_else(|| invalid_config("missing value for `--delete-session`"))?,
+                );
+            }
             "--turn-timeout-ms" => {
                 let value = args
                     .next()
@@ -927,6 +977,9 @@ fn parse_args() -> Result<Args, KernelError> {
         session_id,
         context_snapshots,
         plugins,
+        plugins_check,
+        fork_from,
+        delete_session,
     })
 }
 
@@ -950,6 +1003,51 @@ fn invalid_config(message: impl Into<String>) -> KernelError {
     KernelError::InvalidConfig {
         message: message.into(),
     }
+}
+
+/// Parses `<session>:<turn>` from `--fork-from`.
+fn parse_fork(value: &str) -> Result<(String, u32), KernelError> {
+    let (source, turn) = value
+        .rsplit_once(':')
+        .ok_or_else(|| invalid_config("`--fork-from` expects `<session>:<turn>`"))?;
+    let turn = turn
+        .parse::<u32>()
+        .map_err(|_| invalid_config("`--fork-from` needs a positive turn number"))?;
+    if source.is_empty() || turn == 0 {
+        return Err(invalid_config("`--fork-from` expects `<session>:<turn>`"));
+    }
+    Ok((source.to_owned(), turn))
+}
+
+/// Probes every configured MCP server and reports one line per server.
+async fn check_plugins(path: &std::path::Path) -> Result<ExitCode, KernelError> {
+    let statuses = mcp::check(path).await?;
+    let mut failed = 0;
+    for status in &statuses {
+        match &status.error {
+            Some(error) => {
+                failed += 1;
+                println!(
+                    "server {}: failed after {} ms: {error}",
+                    status.name, status.duration_ms
+                );
+            }
+            None => println!(
+                "server {}: ready, {} tools, {} ms",
+                status.name, status.tools, status.duration_ms
+            ),
+        }
+    }
+    println!(
+        "{}/{} servers ready",
+        statuses.len() - failed,
+        statuses.len()
+    );
+    Ok(if failed == 0 {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    })
 }
 
 #[cfg(test)]
@@ -984,6 +1082,15 @@ mod tests {
     #[tokio::test]
     async fn a_failed_turn_without_a_checklist_does_not_recover() {
         assert!(!recovered_by_checklist(None, std::path::Path::new(".")).await);
+    }
+
+    #[test]
+    fn a_fork_argument_is_session_and_turn() {
+        assert_eq!(parse_fork("s:3").unwrap(), ("s".to_owned(), 3));
+        assert_eq!(parse_fork("a:b:2").unwrap(), ("a:b".to_owned(), 2));
+        assert!(parse_fork("s").is_err());
+        assert!(parse_fork("s:0").is_err());
+        assert!(parse_fork(":2").is_err());
     }
 
     #[test]

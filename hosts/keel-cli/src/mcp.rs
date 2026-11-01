@@ -67,9 +67,39 @@ enum Transport {
 impl Drop for Transport {
     fn drop(&mut self) {
         if let Transport::Stdio(inner) = self {
-            let _ = inner.child.start_kill();
+            kill_tree(&mut inner.child);
         }
     }
+}
+
+/// Kills the server and its descendants.
+///
+/// On Windows the direct child is often `cmd /c npx ...`; killing only it
+/// leaves the runtime it started alive, holding files or ports. The same
+/// applies to wrapper scripts on Unix, so the server runs in its own process
+/// group and the whole group is signalled.
+fn kill_tree(child: &mut Child) {
+    let Some(pid) = child.id() else {
+        return;
+    };
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+    #[cfg(unix)]
+    {
+        let _ = std::process::Command::new("kill")
+            .args(["-KILL", "--", &format!("-{pid}")])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+    let _ = child.start_kill();
+    let _ = child.try_wait();
 }
 
 /// A connected MCP server and its JSON-RPC channel.
@@ -80,14 +110,22 @@ struct McpServer {
 
 impl McpServer {
     async fn spawn(command: &str, args: &[String]) -> Result<Self, String> {
-        let mut child = Command::new(command)
+        let program = command;
+        let mut command = Command::new(program);
+        command
             .args(args)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
-            .kill_on_drop(true)
+            .kill_on_drop(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.as_std_mut().process_group(0);
+        }
+        let mut child = command
             .spawn()
-            .map_err(|error| format!("cannot start `{command}`: {error}"))?;
+            .map_err(|error| format!("cannot start `{program}`: {error}"))?;
         let stdin = child
             .stdin
             .take()
@@ -424,36 +462,75 @@ impl Tool for McpTool {
     }
 }
 
+/// One server probe, for `--plugins-check` and a configuration page.
+pub struct ServerStatus {
+    pub name: String,
+    pub tools: usize,
+    pub error: Option<String>,
+    pub duration_ms: u128,
+}
+
+/// Starts every configured server, performs the handshake and lists tools.
+///
+/// A failing server does not stop the others; the caller reports each line and
+/// decides the exit code. The transports are dropped at the end of each probe,
+/// which kills the server process tree.
+pub async fn check(path: &Path) -> Result<Vec<ServerStatus>, KernelError> {
+    let file = read_plugin_file(path)?;
+    let mut statuses = Vec::new();
+    for server in file.servers {
+        let started = std::time::Instant::now();
+        let result = async {
+            let mut running = connect(&server).await?;
+            running.initialize().await?;
+            Ok::<usize, String>(running.list_tools().await?.len())
+        }
+        .await;
+        let tools = result.as_ref().copied().unwrap_or(0);
+        statuses.push(ServerStatus {
+            name: server.name,
+            tools,
+            error: result.err(),
+            duration_ms: started.elapsed().as_millis(),
+        });
+    }
+    Ok(statuses)
+}
+
+fn read_plugin_file(path: &Path) -> Result<PluginFile, KernelError> {
+    let raw = std::fs::read_to_string(path).map_err(|error| KernelError::Io {
+        message: format!("cannot read plugins `{}`: {error}", path.display()),
+    })?;
+    toml::from_str(&raw).map_err(|error| KernelError::InvalidConfig {
+        message: format!("invalid plugins `{}`: {error}", path.display()),
+    })
+}
+
+async fn connect(server: &ServerConfig) -> Result<McpServer, String> {
+    if let Some(url) = &server.url {
+        Ok(McpServer::http(url.clone()))
+    } else if let Some(command) = &server.command {
+        McpServer::spawn(command, &server.args).await
+    } else {
+        Err("set either `command` or `url`".to_owned())
+    }
+}
+
 /// Loads the plugin file and registers every discovered MCP tool.
 pub async fn load(
     path: &Path,
     root: &Path,
     registry: &mut keel_runtime::ToolRegistry,
 ) -> Result<Vec<String>, KernelError> {
-    let raw = std::fs::read_to_string(path).map_err(|error| KernelError::Io {
-        message: format!("cannot read plugins `{}`: {error}", path.display()),
-    })?;
-    let file: PluginFile = toml::from_str(&raw).map_err(|error| KernelError::InvalidConfig {
-        message: format!("invalid plugins `{}`: {error}", path.display()),
-    })?;
+    let file = read_plugin_file(path)?;
     let mut names = Vec::new();
     for server in file.servers {
-        let mut running = if let Some(url) = &server.url {
-            McpServer::http(url.clone())
-        } else if let Some(command) = &server.command {
-            match McpServer::spawn(command, &server.args).await {
-                Ok(server) => server,
-                Err(error) => {
-                    eprintln!("plugin `{}` skipped: {error}", server.name);
-                    continue;
-                }
+        let mut running = match connect(&server).await {
+            Ok(server) => server,
+            Err(error) => {
+                eprintln!("plugin `{}` skipped: {error}", server.name);
+                continue;
             }
-        } else {
-            eprintln!(
-                "plugin `{}` skipped: set either `command` or `url`",
-                server.name
-            );
-            continue;
         };
         if let Err(error) = running.initialize().await {
             eprintln!("plugin `{}` skipped: {error}", server.name);
@@ -765,5 +842,60 @@ mod tests {
     #[test]
     fn tool_names_are_sanitized() {
         assert_eq!(sanitize("my-server.tool"), "my_server_tool");
+    }
+
+    /// A third server family on a non-Node runtime. Python is not a project
+    /// dependency, so the test reports success without running when it is
+    /// missing; the fixture itself uses only the standard library.
+    #[tokio::test]
+    async fn a_python_sqlite_server_is_probed_and_called() {
+        let python = std::process::Command::new("python")
+            .arg("--version")
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false);
+        if !python {
+            return;
+        }
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../evals/harness/fixtures/mcp_sqlite_server.py");
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("test.db");
+        let plugins = dir.path().join("plugins.toml");
+        std::fs::write(
+            &plugins,
+            format!(
+                "[[servers]]\nname = \"sqlite\"\ncommand = \"python\"\nargs = ['{}', '{}']\n",
+                fixture.display(),
+                db.display()
+            ),
+        )
+        .unwrap();
+
+        let statuses = check(&plugins).await.unwrap();
+        assert_eq!(statuses.len(), 1);
+        assert!(statuses[0].error.is_none(), "{:?}", statuses[0].error);
+        assert_eq!(statuses[0].tools, 1);
+
+        let mut server = McpServer::spawn(
+            "python",
+            &[fixture.display().to_string(), db.display().to_string()],
+        )
+        .await
+        .unwrap();
+        server.initialize().await.unwrap();
+        server
+            .call_tool("sqlite_query", json!({"sql": "CREATE TABLE t (n INTEGER)"}))
+            .await
+            .unwrap();
+        server
+            .call_tool("sqlite_query", json!({"sql": "INSERT INTO t VALUES (7)"}))
+            .await
+            .unwrap();
+        let result = server
+            .call_tool("sqlite_query", json!({"sql": "SELECT n FROM t"}))
+            .await
+            .unwrap();
+        assert_eq!(render_content(&result), "[[7]]");
     }
 }

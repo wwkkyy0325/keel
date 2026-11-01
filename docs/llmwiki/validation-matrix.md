@@ -26,7 +26,8 @@ claim of failure.
 | Persona affordances | None | Not measured | None (no A/B) | No |
 | Interjections | None | None | None | No (ADR 0010 only) |
 | Session persistence (host store) | Snapshot round-trip, projection replace, history, context snapshot, fault injection (failed save rolls back) | Two-process resume | None | No |
-| M4 plugins | Schema mapping, JSON fallback, mock HTTP MCP server | Filesystem server (3 calls), memory server (3 calls) | None | No |
+| Branching / deletion | Checkpoint per turn, fork restore, fork errors, delete rows | Mock parent/branch/delete on one store | None | No |
+| M4 plugins | Schema mapping, JSON fallback, mock HTTP MCP server, process-tree kill | Filesystem, memory, Python SQLite probe and call | None | No |
 
 ## Fusion evidence
 
@@ -81,10 +82,10 @@ claim of failure.
   `cache-economics.md` predicts a small ordering penalty; the cache-order
   profile exists but has not run.
 - Persona affordances have no A/B measurement.
-- Interjections are a contract only, with no run. M4 covers the MCP path; hot
-  reload, server-initiated requests and a non-Node server family are open. M5
-  covers resume and fault injection; multi-session memory evaluation on the
-  store is open.
+- Interjections are a contract only, with no run. M4 covers the MCP path,
+  restart-based configuration and a non-Node server family; server-initiated
+  requests and the nested-schema description are open. M5 covers resume,
+  branching, deletion and fault injection; checkpoint retention is open.
 
 ## How to update
 

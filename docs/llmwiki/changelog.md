@@ -1123,3 +1123,41 @@
 - Validation matrix: knowledge updates now list subject supersede; the
   extraction gap is narrowed to other imperative phrasing. Report:
   `evals/reports/2026-11-04-memory-multi-session.md`.
+
+### Branching and session deletion
+
+- Every saved turn now writes a `session_checkpoints` row with the post-turn
+  snapshot and task list, in the same transaction as the turn. A branch restores
+  that state instead of replaying the transcript, which would rewrite a memo the
+  model wrote and change when facts were extracted.
+- `--fork-from <session>:<turn>` creates the branch under `--session-id`, copies
+  turns `1..turn`, rebuilds the projection, and records `parent_session_id` and
+  `fork_turn_seq` on the new session. A branch is an ordinary session; there is
+  no branch table.
+- `--delete-session <id>` removes every row of one session in one transaction.
+  Branches are independent and survive the parent. Deleting the
+  `session_current` view would delete nothing; it is derived.
+- Schema version 8. Verify: checkpoint-per-turn, fork restore, fork errors,
+  delete rows, branch survival, plus a two-process mock smoke and a live
+  branch delete. 278 tests; report:
+  `evals/reports/2026-11-04-branching-and-plugin-check.md`.
+
+### Plugin probe and restart
+
+- `--plugins-check --plugins <file>` starts every server, runs `initialize` and
+  `tools/list`, prints one line per server and exits non-zero when any fails.
+  This is the gate a configuration page calls before saving; a changed file
+  still needs a host restart.
+- In-process hot reload is rejected: the tool registry is fixed for a turn, and
+  a mid-turn swap has no correctness story. Restart is cheap because session
+  state is in SQLite.
+- MCP servers are killed as a process tree (`taskkill /T /F` on Windows, the
+  process group on Unix). The direct child is often `cmd /c npx`, so killing it
+  alone left the runtime alive and holding files and ports, which is the usual
+  cause of "restart fails for no reason".
+- Third server family: a Python stdlib SQLite MCP server
+  (`evals/harness/fixtures/mcp_sqlite_server.py`) passed probe, initialize,
+  tools/list and create/insert/select. The test skips when Python is absent.
+- Verify: wrapped (`cmd /c python`) and direct servers reported ready, a broken
+  command reported failed with exit 1, and both server PIDs were gone after the
+  probe. 278 tests; fmt, clippy and deny clean.

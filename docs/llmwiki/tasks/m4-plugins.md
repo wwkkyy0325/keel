@@ -29,12 +29,26 @@ unchanged. MCP is the structured path; the shell tool is the unstructured one.
 - [ ] A DSH bridge: DSH plugins are Cordis TS modules, not MCP. Deferred: the
       agent can drive a headless `dsh` through the shell tool when needed
       instead of adding a runtime adapter now.
-- [ ] Hot reload of `plugins.toml` without restarting the host.
+- [x] `--plugins-check`: probe every configured server (spawn, initialize,
+      tools/list), print one status line per server and exit non-zero when any
+      fails. This is the interface a configuration page calls before saving.
+      Verify: a wrapped and a direct server reported ready, a missing command
+      reported failed, exit code 1.
+- [x] Kill the server process tree on drop: `taskkill /T /F` on Windows, the
+      process group on Unix. Verify: the Python servers, including the
+      grandchild started through `cmd /c`, were gone after the probe.
+- [x] Restart-based configuration instead of hot reload: the file is the
+      source of truth, a changed file needs a host restart, and
+      `--plugins-check` gates the save. Rejected in-process reload: the registry is immutable for
+      a turn and a mid-turn tool swap has no correctness story.
 - [ ] Handle server-initiated requests (sampling, roots) instead of ignoring
       them.
-- [ ] Map nested schemas to typed parameters (or generate a JSON schema tool
-      description) so the model does not have to invent structure.
-- [ ] Test a third server family (git or sqlite) and a non-Node runtime.
+- [ ] Improve the JSON fallback description for nested schemas: show fields,
+      types, required names and a minimal example instead of a clipped raw
+      schema. No kernel change.
+- [x] Test a third server family on a non-Node runtime: a Python stdlib SQLite
+      server (`evals/harness/fixtures/mcp_sqlite_server.py`) passed probe,
+      initialize, tools/list and tools/call (create, insert, select).
 
 ## Reports
 
