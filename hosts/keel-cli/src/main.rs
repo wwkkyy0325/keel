@@ -499,6 +499,25 @@ fn print_outcome(config: &RuntimeConfig, events: &EventLog, outcome: &TurnOutcom
         hit_rate,
         input.saturating_add(outcome.usage.output_tokens)
     );
+    let mut call_index = 0u32;
+    for record in events.for_turn(outcome.turn_id) {
+        if let Event::ModelFinished {
+            usage, tool_calls, ..
+        } = record.event
+        {
+            call_index = call_index.saturating_add(1);
+            let call_hit = if usage.input_tokens == 0 {
+                0.0
+            } else {
+                f64::from(usage.cached_input_tokens.min(usage.input_tokens)) * 100.0
+                    / f64::from(usage.input_tokens)
+            };
+            println!(
+                "call: {call_index} input={} cached={} hit={call_hit:.1}% output={} tools={tool_calls}",
+                usage.input_tokens, usage.cached_input_tokens, usage.output_tokens
+            );
+        }
+    }
     println!("duration_ms: {}", outcome.duration_ms);
     println!("reasoning: {}", outcome.reasoning_level.as_str());
     if let Some(report) = &outcome.verification {
