@@ -12,7 +12,9 @@ use crate::tool::RiskLevel;
 ///
 /// The event log is an append-only turn record, not sampled telemetry. It
 /// carries the turn input and final text so a turn can be replayed; tool
-/// arguments and tool outputs are intentionally excluded.
+/// arguments are intentionally excluded. `ToolFinished` carries a bounded
+/// output preview for a live UI, but that field is skipped during
+/// serialization, so tool output never reaches the store.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Event {
@@ -179,6 +181,11 @@ pub enum Event {
         ok: bool,
         error: Option<ErrorCode>,
         duration_ms: u64,
+        /// Bounded, redacted output for a live UI. Serialization skips it so
+        /// file contents and command output stay out of the persisted event
+        /// stream.
+        #[serde(skip)]
+        output_preview: Option<String>,
     },
     /// One permission request and the engine's decision. A confirmation also
     /// produces `InteractionRequested`/`InteractionResolved`; the final
@@ -323,5 +330,21 @@ mod tests {
         assert_eq!(value["permission_decided"]["access"], "write");
         assert_eq!(value["permission_decided"]["decision"], "allow");
         assert_eq!(event.name(), "permission_decided");
+    }
+
+    #[test]
+    fn a_tool_output_preview_is_not_persisted() {
+        let event = Event::ToolFinished {
+            turn_id: TurnId::new(1),
+            call_id: ToolCallId::new(2),
+            tool: "shell".to_owned(),
+            ok: true,
+            error: None,
+            duration_ms: 3,
+            output_preview: Some("file contents".to_owned()),
+        };
+        let value = serde_json::to_value(&event).unwrap();
+        assert_eq!(value["tool_finished"]["tool"], "shell");
+        assert!(value["tool_finished"].get("output_preview").is_none());
     }
 }

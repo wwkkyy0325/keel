@@ -84,7 +84,7 @@ fn demo_tool_step() -> MockStep {
         "args",
         ArgValue::StringList(vec![
             "-c".to_owned(),
-            "import time; time.sleep(2)".to_owned(),
+            "import time; time.sleep(2); print('check passed')".to_owned(),
         ]),
     );
     MockStep::TextAndToolCall {
@@ -1560,7 +1560,9 @@ mod tests {
                 assert!(matches!(
                     args.get("args"),
                     Some(ArgValue::StringList(items))
-                        if items.iter().any(|item| item.contains("sleep(2)"))
+                        if items.iter().any(|item| {
+                            item.contains("sleep(2)") && item.contains("check passed")
+                        })
                 ));
             }
             other => panic!("unexpected demo step: {other:?}"),

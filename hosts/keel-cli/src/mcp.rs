@@ -724,7 +724,11 @@ fn params_from_schema(schema: &Value) -> Option<Vec<ParamSpec>> {
     for (name, property) in properties {
         let kind = match property.get("type").and_then(Value::as_str) {
             Some("string") => ParamKind::String,
-            Some("integer") | Some("number") => ParamKind::Integer,
+            Some("integer") => ParamKind::Integer,
+            // `number` may be fractional, and the kernel models integers only.
+            // Advertising it as an integer would silently drop the fraction,
+            // so the tool falls back to one JSON argument like nested objects.
+            Some("number") => return None,
             Some("boolean") => ParamKind::Boolean,
             Some("array")
                 if property
@@ -947,6 +951,18 @@ mod tests {
             "properties": {
                 "filter": {"type": "object"},
                 "path": {"type": "string"}
+            }
+        });
+        assert!(params_from_schema(&schema).is_none());
+    }
+
+    #[test]
+    fn a_fractional_number_switches_to_json_mode() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "temperature": {"type": "number"},
+                "prompt": {"type": "string"}
             }
         });
         assert!(params_from_schema(&schema).is_none());

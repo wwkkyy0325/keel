@@ -34,8 +34,13 @@ Stable within a major version:
   interactions, memory and summary events. `Event` serializes with snake_case
   keys so a host can persist the stream without a second schema. A host may
   call `EventLog::clear` between turns after persisting the stream; sequence
-  numbers stay monotonic within the process.
+  numbers stay monotonic within the process. `ToolFinished` carries a bounded,
+  redacted `output_preview` for a live UI; the field is skipped during
+  serialization, so tool output never reaches the persisted stream.
 - The tool protocol: names, parameter kinds, risk levels and result envelopes.
+  A tool declared `read_only` may only declare read access; the dispatcher
+  rejects a write or execute request before the permission gate runs, so the
+  concurrent read batch cannot hide a mutation.
 - Built-in tool resource bounds: command output is captured as a bounded head
   and tail (64 KiB per stream), `read_file` refuses a file over 8 MiB, and a
   timed-out or cancelled command kills its process tree. A host may wrap the

@@ -117,6 +117,9 @@ cancellation and interjection distinct. See ADR 0010.
 - Tool visibility is a policy decision, not a registry decision.
 - A tool declares its permission requests; the dispatcher asks the permission
   gate before `call` runs. A tool never grants itself access.
+- A tool declared `read_only` may only declare read access. The dispatcher
+  rejects a write or execute request before the gate, because read-only calls
+  run concurrently.
 - In `plan_mode`, only read-only tools are visible; a hidden write tool is
   rejected even if the model calls it.
 

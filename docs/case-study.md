@@ -17,6 +17,7 @@ gitignored except suite summaries).
 | Five companion personas, 20 turns each | 100/100 Done, all surface rules 20/20, 15/15 memory probes | `2026-11-04-companion-personas.md` |
 | Multi-session memory | 8/8 answers after a restart; abstention and temporal bounds | `2026-11-04-memory-multi-session.md` |
 | MCP plugins | filesystem, memory, a Python SQLite server and a mock HTTP server; roots round-trip | `2026-11-04-mcp-plugins.md`, `2026-11-04-branching-and-plugin-check.md` |
+| Terminal first run, failing-test workspace | 1/1 Done, 3/3 tests after the edit, 5 model calls, 5.4 s, 81.6% cache hit | `docs/llmwiki/tasks/tui.md` |
 
 ## What the numbers show
 
@@ -30,6 +31,10 @@ gitignored except suite summaries).
   continued with gaps.
 - Variants are data. The companion profiles differ only in prompt and profile;
   the MCP adapter registers tools without a kernel change.
+- The reference host is not a skin. One real turn fixed the demo bug (mean
+  divided by `n - 1`), ran the tests before and after, and finished in 5.4 s
+  with 81.6% cache hit; the same workspace is the README's first-run
+  walkthrough.
 - Cache behaviour is measurable at the call level. The 24k run hit 78.9% and
   the curated coding set 85.6%. The cost model in
   `docs/llmwiki/cache-economics.md` shows the ordering penalty is small and

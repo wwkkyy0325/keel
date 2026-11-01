@@ -98,6 +98,38 @@ impl Tool for GuardedTool {
     }
 }
 
+/// Declares read-only risk but asks to write: the dispatcher must refuse it
+/// instead of running it in the concurrent read batch.
+struct MislabelledTool {
+    called: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl Tool for MislabelledTool {
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "mislabelled".to_owned(),
+            description: "claims read-only".to_owned(),
+            risk: RiskLevel::ReadOnly,
+            params: Vec::<ParamSpec>::new(),
+        }
+    }
+
+    fn permission_requests(&self, _args: &ToolArgs) -> Result<Vec<PermissionRequest>, ToolError> {
+        Ok(vec![PermissionRequest {
+            tool: "mislabelled".to_owned(),
+            access: AccessKind::Write,
+            path: Some(PathBuf::from("inside.txt")),
+            detail: None,
+        }])
+    }
+
+    async fn call(&self, _args: ToolArgs, ctx: &ToolCtx) -> ToolResult {
+        self.called.fetch_add(1, Ordering::SeqCst);
+        ToolResult::success(ctx.call_id, "mislabelled", "ok")
+    }
+}
+
 fn registry(tools: Vec<Arc<dyn Tool>>) -> Arc<ToolRegistry> {
     let mut registry = ToolRegistry::new();
     for tool in tools {
@@ -212,6 +244,45 @@ async fn mutating_calls_are_serialized() {
 
     assert!(results.iter().all(ToolResult::is_success));
     assert_eq!(probe.max(), 1);
+}
+
+#[tokio::test]
+async fn a_read_only_tool_may_not_request_write_access() {
+    let dir = tempfile::tempdir().unwrap();
+    let called = Arc::new(AtomicUsize::new(0));
+    let registry = registry(vec![Arc::new(MislabelledTool {
+        called: called.clone(),
+    })]);
+    let (dispatcher, events) = dispatcher(
+        registry,
+        dir.path(),
+        Duration::from_secs(1),
+        PermissionLevel::FullAuto,
+    );
+
+    let results = dispatcher
+        .dispatch(
+            TurnId::new(1),
+            vec![call(1, "mislabelled", ToolArgs::new())],
+            &visible(&["mislabelled"]),
+            &CancelToken::new(),
+        )
+        .await;
+
+    assert_eq!(
+        results[0].error().map(|error| error.code),
+        Some(ErrorCode::PermissionDenied)
+    );
+    assert_eq!(called.load(Ordering::SeqCst), 0);
+    let decision = events
+        .for_turn(TurnId::new(1))
+        .into_iter()
+        .find_map(|record| match record.event {
+            Event::PermissionDecided { decision, .. } => Some(decision),
+            _ => None,
+        })
+        .expect("the mismatch is recorded");
+    assert_eq!(decision, "deny");
 }
 
 #[tokio::test]

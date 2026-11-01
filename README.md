@@ -81,6 +81,7 @@ derived project; publishing the kernel is not required for personal use.
 - `crates/` — reusable libraries.
 - `hosts/` — executables (the CLI).
 - `variants/` — composition data: profiles, prompts, plugin selection.
+- `examples/` — a disposable workspace for the terminal walkthrough.
 - `evals/` — capability evidence.
 - `docs/` — specs, ADRs, architecture and the case study.
 
@@ -205,8 +206,11 @@ cargo run -p keel-cli -- --tui --profile variants/coding/profile.deepseek.toml \
   (default: Allow once); `Esc` defers. `d`/`a`/`s`/`f` remain shortcuts.
 - `Shift+Tab` switches `workspace_auto` ↔ `full_auto`; the bottom status line
   shows the current mode. `Ctrl-O` expands or hides the process behind every
-  finished turn, so tool calls and intermediate text stay available without
-  cluttering the default view.
+  finished turn, so tool calls, their output and intermediate text stay
+  available without cluttering the default view.
+- A tool line keeps a bounded, redacted preview of what it returned: the head
+  and tail while the turn runs, the whole preview under `Ctrl-O`. The preview
+  stays in memory and is never written to the store.
 - The transcript keeps every turn; `PgUp`/`PgDn` scroll it and a scrollbar
   appears when it is longer than the viewport.
 - `/help`, `/clear`, `/cost`, `/sessions`, `/cancel`, `/quit`.
@@ -217,14 +221,46 @@ cargo run -p keel-cli -- --tui --profile variants/coding/profile.deepseek.toml \
   shows the workspace, model and permission mode, with key hints on the right.
 
 For a scripted demo with no model key, `--demo` (mock provider only) streams a
-preamble, asks for `shell` permission, runs a two-second command, streams the
-answer piece by piece, then collapses the process into the result:
+preamble, asks for `shell` permission, runs a two-second command that prints
+`check passed`, streams the answer piece by piece, then collapses the process
+into the result:
 
 ```bash
 cargo run -p keel-cli -- --tui --demo --profile variants/coding/profile.toml
 ```
 
 Press `a` in the permission prompt to allow the tool once.
+
+### First real run
+
+`examples/demo-workspace` is a three-test Python module with one failing test.
+Start the UI against it, approve `shell` once, and watch the agent run the
+tests, fix `stats.py` and run them again:
+
+```bash
+cargo run -p keel-cli -- --tui \
+  --workspace examples/demo-workspace \
+  --profile variants/coding/profile.deepseek.toml \
+  --store keel.db --session-id demo
+```
+
+Enter:
+
+> the tests in this directory fail; run them, fix the code, and run them again
+
+1. `python -m unittest -v` asks for `shell` permission. `Enter` allows it
+   once; the tool line keeps the head and tail of the failing output while the
+   turn runs.
+2. `read_file` and `write_file` follow; `write_file` backs up `stats.py` into
+   `.keel/trash` before the overwrite.
+3. The tests run again and pass; the turn collapses to the answer and one
+   aggregate line (`tools · files · tokens · duration`).
+4. `Ctrl-O` expands the process, including the output of both test runs;
+   `Shift+Tab` switches the session to `full_auto`.
+5. Restarting with `--store keel.db --session-id demo` resumes the session.
+
+If the edit is wrong, ask for `restore_file` with `path = "stats.py"`; the
+current version is backed up first, so the restore is itself reversible.
 
 The UI is deliberately small: no markdown rendering, syntax highlighting,
 mouse or model picker. It is a reference host, not a product; see

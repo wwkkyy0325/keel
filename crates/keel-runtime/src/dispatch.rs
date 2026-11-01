@@ -3,9 +3,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use keel_core::{
-    CancelToken, ErrorCode, Event, GrantScope, InteractionKind, InteractionOption,
-    InteractionRequest, InteractionResponse, PermissionDecision, PermissionGate, PermissionRequest,
-    RiskLevel, Tool, ToolArgs, ToolCallId, ToolCallRequest, ToolCtx, ToolError, ToolResult, TurnId,
+    redact_secrets, AccessKind, CancelToken, ErrorCode, Event, GrantScope, InteractionKind,
+    InteractionOption, InteractionRequest, InteractionResponse, PermissionDecision, PermissionGate,
+    PermissionRequest, RiskLevel, Tool, ToolArgs, ToolCallId, ToolCallRequest, ToolCtx, ToolError,
+    ToolResult, TurnId,
 };
 use tokio::task::JoinSet;
 
@@ -170,6 +171,7 @@ impl ToolDispatcher {
                     ok: result.is_success(),
                     error: result.error().map(|error| error.code),
                     duration_ms: elapsed_ms(start.elapsed()),
+                    output_preview: preview_of(&result),
                 });
                 (prepared.index, result)
             });
@@ -236,6 +238,7 @@ impl ToolDispatcher {
                 ok: result.is_success(),
                 error: result.error().map(|error| error.code),
                 duration_ms: elapsed_ms(start.elapsed()),
+                output_preview: preview_of(&result),
             });
             results[prepared.index] = Some(result);
         }
@@ -263,10 +266,29 @@ impl ToolDispatcher {
         args: &ToolArgs,
         cancel: &CancelToken,
     ) -> Result<(), ToolError> {
+        let risk = tool.schema().risk;
         for mut request in tool.permission_requests(args)? {
             // The registered name wins; a tool must not rename itself in an
             // audit record.
             request.tool = tool_name.to_owned();
+            // A read-only tool runs concurrently with other reads, so it must
+            // not declare a write or execute request. Enforce the pairing the
+            // dispatcher's concurrency relies on instead of trusting the label.
+            if risk == RiskLevel::ReadOnly && request.access != AccessKind::Read {
+                let message = format!(
+                    "tool `{tool_name}` is declared read-only but requests {} access",
+                    request.access.as_str()
+                );
+                self.record_permission(
+                    turn_id,
+                    call_id,
+                    tool_name,
+                    &request,
+                    "deny",
+                    Some(&message),
+                );
+                return Err(ToolError::permission_denied(message));
+            }
             match self.permission.check(&request) {
                 PermissionDecision::Allow => {
                     self.record_permission(turn_id, call_id, tool_name, &request, "allow", None);
@@ -404,15 +426,17 @@ impl ToolDispatcher {
             tool: name.clone(),
             risk,
         });
+        let result = ToolResult::failure(call_id, name, error);
         self.events.append(Event::ToolFinished {
             turn_id,
             call_id,
-            tool: name.clone(),
+            tool: result.tool.clone(),
             ok: false,
-            error: Some(error.code),
+            error: result.error().map(|error| error.code),
             duration_ms: 0,
+            output_preview: preview_of(&result),
         });
-        ToolResult::failure(call_id, name, error)
+        result
     }
 }
 
@@ -440,4 +464,77 @@ async fn run_tool(
 
 fn elapsed_ms(duration: Duration) -> u64 {
     duration.as_millis().min(u128::from(u64::MAX)) as u64
+}
+
+/// Bytes of tool output kept for a live UI. The field is skipped during
+/// serialization, so the preview never reaches the persisted event stream.
+const OUTPUT_PREVIEW_BYTES: usize = 4 * 1024;
+
+fn preview_of(result: &ToolResult) -> Option<String> {
+    let text = match result.content() {
+        Some(content) => content,
+        None => result.error()?.message.as_str(),
+    };
+    if text.trim().is_empty() {
+        return None;
+    }
+    let redacted = redact_secrets(text);
+    if redacted.len() <= OUTPUT_PREVIEW_BYTES {
+        return Some(redacted);
+    }
+    let mut end = OUTPUT_PREVIEW_BYTES;
+    while end > 0 && !redacted.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut preview = redacted[..end].to_owned();
+    preview.push_str("\n… truncated");
+    Some(preview)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_successful_call_keeps_its_output() {
+        let result = ToolResult::success(ToolCallId::new(1), "shell", "all tests passed");
+        assert_eq!(preview_of(&result).as_deref(), Some("all tests passed"));
+    }
+
+    #[test]
+    fn a_failed_call_keeps_its_message() {
+        let result = ToolResult::failure(
+            ToolCallId::new(1),
+            "shell",
+            ToolError::invalid_arguments("program `bash` is not allowlisted"),
+        );
+        assert_eq!(
+            preview_of(&result).as_deref(),
+            Some("program `bash` is not allowlisted")
+        );
+    }
+
+    #[test]
+    fn a_preview_is_redacted_and_bounded() {
+        let secret = ToolResult::success(
+            ToolCallId::new(1),
+            "read_file",
+            "-----BEGIN RSA PRIVATE KEY-----\nabc",
+        );
+        assert_eq!(
+            preview_of(&secret).as_deref(),
+            Some("[REDACTED PRIVATE KEY]")
+        );
+
+        let long = ToolResult::success(ToolCallId::new(1), "shell", "a".repeat(5000));
+        let preview = preview_of(&long).expect("preview");
+        assert!(preview.len() < 5000);
+        assert!(preview.ends_with("\n… truncated"));
+    }
+
+    #[test]
+    fn an_empty_result_has_no_preview() {
+        let result = ToolResult::success(ToolCallId::new(1), "shell", "  \n");
+        assert!(preview_of(&result).is_none());
+    }
 }

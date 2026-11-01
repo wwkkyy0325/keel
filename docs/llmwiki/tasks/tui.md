@@ -58,6 +58,20 @@ no markdown rendering, syntax highlighting, mouse or model picker.
       `text_chunks_split_on_char_boundaries`,
       `the_demo_script_runs_a_sleeping_shell_tool`, and a manual run with
       `--tui --demo`.
+- [x] Tool output is visible: `ToolFinished` carries a bounded, redacted
+      `output_preview` that serde skips, so it never reaches the store. A tool
+      line shows the head and tail while its turn runs and the whole preview
+      under `Ctrl-O`. Verify: kernel tests
+      `a_preview_is_redacted_and_bounded`,
+      `a_tool_output_preview_is_not_persisted`; host test
+      `a_running_tool_shows_a_short_output_excerpt`.
+- [x] `examples/demo-workspace` holds a failing-test task for the first-run
+      walkthrough. Verify: `python -m unittest -v` fails before the fix and
+      passes after it.
+- [x] One real turn against `examples/demo-workspace` with
+      `profile.deepseek.toml`: 1/1 Done, `stats.py` changed, 3/3 tests after
+      the edit, 5 model calls, 5.4 s, 81.6% cache hit. The same workspace is
+      the README walkthrough, so the UI is not a scripted shell.
 - [ ] Real-terminal smoke (raw mode restore, resize, Ctrl-C) is manual; CI
       cannot open a TTY.
 

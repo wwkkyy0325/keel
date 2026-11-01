@@ -407,6 +407,7 @@ impl App {
                     tool,
                     ok,
                     duration_ms,
+                    output_preview,
                     ..
                 } => {
                     if let Some(block) = self.blocks.iter_mut().rev().find(|block| {
@@ -417,6 +418,7 @@ impl App {
                             ok: Some(*ok),
                             duration_ms: *duration_ms,
                         };
+                        block.text = output_preview.clone().unwrap_or_default();
                     }
                 }
                 _ => {}
@@ -694,7 +696,7 @@ impl App {
             .filter(|(index, _)| self.show_process || !self.hidden.contains(index))
             .collect();
         let mut lines = Vec::new();
-        for (position, (_, block)) in visible.iter().enumerate() {
+        for (position, (index, block)) in visible.iter().enumerate() {
             let (prefix, text, style) = match &block.kind {
                 BlockKind::User => ("› ", block.text.clone(), Style::default().fg(Color::Cyan)),
                 BlockKind::Assistant => ("", block.text.clone(), Style::default().fg(Color::White)),
@@ -727,6 +729,31 @@ impl App {
             for line in wrap_text(&format!("{prefix}{text}"), width) {
                 lines.push(Line::from(Span::styled(line, style)));
             }
+            if matches!(&block.kind, BlockKind::Tool { .. }) && !block.text.is_empty() {
+                let output: Vec<&str> = block.text.lines().collect();
+                let expanded = self.show_process || self.hidden.contains(index);
+                let preview = Style::default().fg(Color::DarkGray);
+                let (head, tail) = if expanded || output.len() <= EXCERPT_LINES {
+                    (output.len(), 0)
+                } else {
+                    (EXCERPT_HEAD, EXCERPT_TAIL)
+                };
+                let mut push = |line: &str| {
+                    for wrapped in wrap_text(&format!("    {line}"), width) {
+                        lines.push(Line::from(Span::styled(wrapped, preview)));
+                    }
+                };
+                for line in output.iter().take(head) {
+                    push(line);
+                }
+                if tail > 0 {
+                    let hidden = output.len() - head - tail;
+                    push(&format!("… +{hidden} lines (Ctrl-O)"));
+                    for line in &output[output.len() - tail..] {
+                        push(line);
+                    }
+                }
+            }
             let next_is_summary = visible
                 .get(position + 1)
                 .is_some_and(|(_, next)| matches!(&next.kind, BlockKind::Summary));
@@ -737,6 +764,12 @@ impl App {
         lines
     }
 }
+
+/// Lines of tool output shown while a turn runs: the head and tail, with the
+/// middle elided. `Ctrl-O` shows the whole preview.
+const EXCERPT_HEAD: usize = 2;
+const EXCERPT_TAIL: usize = 2;
+const EXCERPT_LINES: usize = EXCERPT_HEAD + EXCERPT_TAIL + 1;
 
 fn wrap_text(text: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
@@ -1224,18 +1257,46 @@ mod tests {
             ok: true,
             error: None,
             duration_ms: 12,
+            output_preview: Some("all tests passed".to_owned()),
         });
 
         app.drain_events(&events);
 
+        let block = app.blocks.last().unwrap();
         assert_eq!(
-            app.blocks.last().unwrap().kind,
+            block.kind,
             BlockKind::Tool {
                 name: "shell".to_owned(),
                 ok: Some(true),
                 duration_ms: 12
             }
         );
+        assert_eq!(block.text, "all tests passed");
+    }
+
+    #[test]
+    fn a_running_tool_shows_a_short_output_excerpt() {
+        let mut app = app();
+        app.start_turn("run the tests".to_owned());
+        app.blocks.push(Block {
+            kind: BlockKind::Tool {
+                name: "shell".to_owned(),
+                ok: Some(false),
+                duration_ms: 5,
+            },
+            text: "one\ntwo\nthree\nfour\nfive\nsix".to_owned(),
+        });
+
+        let running = transcript_text(&app, 80);
+        assert!(running.contains("one"), "{running}");
+        assert!(running.contains("six"), "{running}");
+        assert!(!running.contains("three"), "{running}");
+        assert!(running.contains("+2 lines"), "{running}");
+
+        app.show_process = true;
+        let expanded = transcript_text(&app, 80);
+        assert!(expanded.contains("three"), "{expanded}");
+        assert!(!expanded.contains("+2 lines"), "{expanded}");
     }
 
     fn usage() -> TokenUsage {
@@ -1257,7 +1318,7 @@ mod tests {
                 ok: Some(true),
                 duration_ms: 1,
             },
-            text: String::new(),
+            text: "command output".to_owned(),
         });
         app.turn_tools = 1;
 
@@ -1273,11 +1334,13 @@ mod tests {
         let collapsed = transcript_text(&app, 80);
         assert!(!collapsed.contains("partial"), "{collapsed}");
         assert!(!collapsed.contains("echo"), "{collapsed}");
+        assert!(!collapsed.contains("command output"), "{collapsed}");
 
         app.show_process = true;
         let expanded = transcript_text(&app, 80);
         assert!(expanded.contains("partial"), "{expanded}");
         assert!(expanded.contains("echo"), "{expanded}");
+        assert!(expanded.contains("command output"), "{expanded}");
     }
 
     fn transcript_text(app: &App, width: usize) -> String {

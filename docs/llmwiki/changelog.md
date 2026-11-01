@@ -1598,3 +1598,30 @@
   screenshots.
 - Verify: `shift_tab_requests_a_mode_toggle`, updated goldens, and 342
   workspace tests (270 kernel-only). Task doc: `docs/llmwiki/tasks/tui.md`.
+
+## 2026-11-04 — Tool output preview and first-run workspace
+
+- `ToolFinished` carries a bounded, redacted `output_preview` for a live UI.
+  Serde skips the field, so tool output never reaches the persisted event
+  stream; the event log's excluded-output invariant still holds on disk.
+- The TUI shows the head and tail of a running tool's output and the whole
+  preview under `Ctrl-O`; a finished turn hides the preview with the rest of
+  its process.
+- `examples/demo-workspace` is a three-test Python module with one failing test
+  and a README, used by the first-run walkthrough in the repository README.
+- Verify: `a_preview_is_redacted_and_bounded`,
+  `a_tool_output_preview_is_not_persisted`,
+  `a_running_tool_shows_a_short_output_excerpt`, and the existing suite.
+
+### Tool contract hardening
+
+- MCP `number` properties now switch the whole tool to the single JSON
+  `arguments` mode instead of being flattened to an integer. The kernel models
+  integers only, so a fractional value would have been silently dropped (or
+  rejected at the wire).
+- The dispatcher rejects a tool declared `read_only` that requests write or
+  execute access, before the permission gate and before `call`. Read-only
+  calls run concurrently, so the dispatcher cannot trust the label alone.
+- Verify: `a_fractional_number_switches_to_json_mode`,
+  `a_read_only_tool_may_not_request_write_access`, and the full suite.
+  Task doc: `docs/llmwiki/tasks/tool-contract-hardening.md`.

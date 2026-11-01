@@ -39,6 +39,12 @@ First complete kernel and reference host.
   restore backs up the current version first.
 - `EventLog::clear` lets a host drop records it has persisted; sequence
   numbers stay monotonic within the process.
+- `ToolFinished` carries a bounded, redacted `output_preview` for a live UI.
+  Serde skips the field, so tool output never enters the persisted event
+  stream.
+- A tool declared `read_only` may only declare read access. The dispatcher
+  rejects a write or execute request before the permission gate, so a
+  mislabelled tool cannot hide inside the concurrent read batch.
 
 ### Reference host
 
@@ -78,6 +84,14 @@ First complete kernel and reference host.
   tool calls and intermediate text for the whole history. The transcript is
   no longer truncated; `PgUp`/`PgDn` scroll it and a scrollbar appears when it
   overflows.
+- Tool lines keep the head and tail of their output while a turn runs and the
+  whole bounded preview under `Ctrl-O`; the preview is redacted and never
+  persisted.
+- `examples/demo-workspace` is a failing-test workspace for the first-run
+  walkthrough in the README.
+- MCP `number` parameters no longer flatten to integers. The tool uses the
+  single JSON `arguments` mode instead, so fractional values survive the
+  kernel's integer-only parameter model.
 
 ### Performance
 
