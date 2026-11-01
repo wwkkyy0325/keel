@@ -46,26 +46,41 @@ question is where a plugin lives and how much ceremony surrounds it.
 4. **No review step.** A server that fails to start or handshake is skipped
    with a warning; the session continues. There is no signature or manifest
    approval.
-5. **Flat schemas.** MCP input properties of type string, integer/number,
-   boolean and array become kernel parameters. Nested objects are skipped
-   rather than exposed as a half-working string parameter.
+5. **Flat schemas first, one JSON argument for nesting.** MCP input properties
+   of type string, integer/number, boolean and array become kernel parameters.
+   If any property is a nested object or object array, the whole tool becomes
+   one `arguments` string whose description lists every field with its type and
+   required mark, recurses into arrays, and includes a minimal example. The
+   kernel's parameter model does not grow for MCP.
 6. **Permissions still run.** A tool with `readOnlyHint: true` asks for Read;
    everything else asks for Write, with the workspace root as the path. The
    gate cannot constrain what the server does inside its own process; the trust
    boundary is the user who installed it.
 7. **One process per server, serialized calls.** All tools from a server share
-   a mutex and a 30 s request timeout. Requests are matched by JSON-RPC id;
-   notifications are ignored. Restart the host to reload a plugin file.
+   a mutex and a 30 s request timeout. Requests are matched by JSON-RPC id.
+   Over stdio, server-initiated `ping` and `roots/list` are answered and other
+   methods are refused; over streamable HTTP they are ignored. Sampling is
+   refused: it would spend tokens and send context outside the permission and
+   audit path.
+8. **Configuration is restart-based, with a probe gate.** The plugin file is
+   the source of truth. `--plugins-check [--json]` starts every server,
+   performs the handshake and lists tools before a configuration is saved; a
+   failed probe exits non-zero and the caller keeps the previous file. A host
+   restart applies the change. Restart is safe because session state lives in
+   SQLite and every server is killed as a process tree on drop, so a stale
+   child cannot hold a port or file into the next start.
 
 ## Consequences
 
 - Any MCP server works without a kernel change: filesystem, memory, git,
   databases, browsers.
-- The tool schema is the server's, minus nested objects. A server that relies
-  on nested arguments is only partly usable until the mapping grows.
+- The tool schema is the server's. Nested arguments reach the model as a
+  described JSON string rather than typed parameters, so a complex tool is
+  usable but the model must construct the object.
 - A hung server stalls its tools, not the turn: the request times out.
 - The agent can add a plugin by writing `plugins.toml`; the next process
-  start picks it up. No hot reload.
+  start picks it up. No hot reload; a configuration page probes before saving
+  and asks the supervisor to restart.
 - Permission coverage is coarse: the kernel gates the call, not the server's
   effects.
 

@@ -1198,3 +1198,12 @@
   `--plugins-check` is rejected.
 - Verify: `a_server_status_serializes_for_a_config_page` and a live two-server
   probe that printed one ready entry and one failed entry.
+
+### Plugin configuration contract
+
+- ADR 0013 now records the implementation: one JSON argument for nested
+  schemas with a generated description, stdio answers for `ping`/`roots/list`
+  and refusal for sampling, the restart-based configuration flow with the
+  `--plugins-check` gate, and process-tree cleanup on drop.
+- Live probe: the official memory server listed 9 tools in 2.2 s, and a mock
+  turn loaded all of them through `mcp::load` without a kernel change.
