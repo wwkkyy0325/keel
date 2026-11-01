@@ -37,6 +37,13 @@ no markdown rendering, syntax highlighting, mouse or model picker.
 - [x] The permission prompt is inline above the input rather than a centered
       modal. Verify: `the_permission_prompt_is_inline`, golden
       `tui-prompt.txt`.
+- [x] `--demo` (mock only) gives the UI something to show: a preamble, a
+      `shell` call that waits two seconds, and an answer streamed in six-char
+      pieces. A `Paced` model wrapper delays chunks; `DemoModel` alternates a
+      tool call and an answer so every turn has both phases. Verify:
+      `text_chunks_split_on_char_boundaries`,
+      `the_demo_script_runs_a_sleeping_shell_tool`, and a manual run with
+      `--tui --demo`.
 - [ ] Real-terminal smoke (raw mode restore, resize, Ctrl-C) is manual; CI
       cannot open a TTY.
 

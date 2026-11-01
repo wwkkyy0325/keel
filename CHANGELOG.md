@@ -66,6 +66,9 @@ First complete kernel and reference host.
   of aggregate fields; intermediate text and tool lines are dropped. The
   renderer is tested with `TestBackend` goldens; the kernel has no UI
   dependency.
+- `--demo` (mock provider only) paces a scripted turn: preamble, a `shell`
+  permission prompt, a two-second command, then an answer streamed piece by
+  piece, so the streaming and approval paths can be seen without a model key.
 
 ### Performance
 

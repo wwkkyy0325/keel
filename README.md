@@ -208,6 +208,16 @@ cargo run -p keel-cli -- --tui --profile variants/coding/profile.deepseek.toml \
 - Start with `--store` and `--session-id` to resume; the header shows the
   profile, model, session and permission level.
 
+For a scripted demo with no model key, `--demo` (mock provider only) streams a
+preamble, asks for `shell` permission, runs a two-second command, streams the
+answer piece by piece, then collapses the process into the result:
+
+```bash
+cargo run -p keel-cli -- --tui --demo --profile variants/coding/profile.toml
+```
+
+Press `a` in the permission prompt to allow the tool once.
+
 The UI is deliberately small: no markdown rendering, syntax highlighting,
 mouse or model picker. It is a reference host, not a product; see
 `docs/llmwiki/tasks/tui.md`.

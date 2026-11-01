@@ -1534,3 +1534,18 @@
   `a_finished_turn_renders_only_the_result_and_its_fields`,
   `the_permission_prompt_is_inline`, and 336 workspace tests (270
   kernel-only). Task doc: `docs/llmwiki/tasks/tui.md`.
+
+### Paced mock demo
+
+- `--demo` (mock provider only) makes the TUI demonstrable without a model
+  key: a preamble is streamed, a `shell` call asks for permission, runs
+  `python -c "import time; time.sleep(2)"`, and the answer is streamed in
+  six-character pieces before the turn collapses to its result.
+- `DemoModel` alternates a tool-call response and an answer response, so
+  every turn shows both phases. A host-side `Paced` wrapper delays chunks and
+  is only used with `--demo`; it forwards the same chunks to the driver, so
+  the kernel is untouched.
+- Verify: `text_chunks_split_on_char_boundaries`,
+  `the_demo_script_runs_a_sleeping_shell_tool`, and 338 workspace tests (270
+  kernel-only). The demo needs a terminal, so the end-to-end check is manual.
+  Task doc: `docs/llmwiki/tasks/tui.md`.
