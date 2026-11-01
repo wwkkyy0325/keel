@@ -52,7 +52,7 @@ claim of failure.
 |---|---|---|---|
 | Information extraction | Fact scope tests, record extraction | 24-turn, 15-chapter, two-process memory eval | `不要` instructions still parse as constraints |
 | Multi-session reasoning | Snapshot restore test | Two-process eval: 3/3 stored facts answered | One scenario set, one model |
-| Temporal reasoning | None | Not tested | No event-time model |
+| Temporal reasoning | None | Two-process eval: "before" answered, absolute time refused | No event-time model in the prompt |
 | Knowledge updates | Contradiction, supersede, forget tests | Memo rewrite; eval answered 海鸥 after the update | No subject-level supersede; both rows remain |
 | Abstention | Unrelated recall test | Two-process eval refused a car plate | Answer-level check is model-dependent |
 

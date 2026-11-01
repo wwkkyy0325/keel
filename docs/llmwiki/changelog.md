@@ -1003,8 +1003,10 @@
   refusal for a car plate). The first run stored 16 facts, eight of them
   `verified: <question>`; verified segments now record a fact only when they
   produced artifacts. The rerun stored 8 facts with the same answers.
-  Remaining: `不要` imperative noise, subject-level supersede, temporal
-  untested. Report: `evals/reports/2026-11-04-memory-multi-session.md`.
+  Remaining: `不要` imperative noise and subject-level supersede. A temporal
+  probe answered "before" as `蓝鲸` and refused to invent a change time
+  (`fact_history.changed_at` is stored but not in the prompt). Report:
+  `evals/reports/2026-11-04-memory-multi-session.md`.
 - `docs/llmwiki/frontend-contract.md` fixes the read path: canonical queries,
   the current-state view, and the rule that a frontend never parses the resume
   snapshot or writes to the database. It names the three answer layers (turn

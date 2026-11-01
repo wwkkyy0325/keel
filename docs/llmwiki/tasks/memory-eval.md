@@ -22,8 +22,10 @@ external memory adapter can be measured separately once one exists.
       all three answered.
 - [x] Multi-session: the second process restored facts, memo and segments
       through the SQLite store. Verify: `history` and facts present; 3/3.
-- [ ] Temporal: ask "what was true before X"; record that Keel has no
-      event-time model; do not claim temporal memory.
+- [x] Temporal: ask "what was true before X". Verify: answered `蓝鲸` for
+      "before"; asked when it changed, the model abstained ("没记下日期")
+      instead of inventing a time. `fact_history.changed_at` is stored but not
+      in the prompt.
 - [x] Knowledge updates: state a fact, update it, ask which is current.
       Verify: answered 海鸥 after the update; both fact rows remain.
 - [x] Abstention: ask about something never stated; require a refusal.

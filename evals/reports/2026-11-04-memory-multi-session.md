@@ -74,6 +74,20 @@ because the memo was rewritten and the newer fact is more recent in the block.
 Same-key replacement is covered by the `a_contradiction_demotes_the_promoted_fact`
 unit test, but subject-level supersede is not implemented.
 
+## Temporal probe
+
+Two questions on the same store after the update:
+
+| Question | Answer |
+|---|---|
+| What was the code name before? | 你的项目代号以前是蓝鲸。 |
+| When was it changed? | 我不记得具体是什么时候改的——我只记得你先告诉我代号是蓝鲸，后来改成了海鸥，但没记下改动的日期或时间。 |
+
+Relative order works because the memo carries both statements in order. The
+kernel has no event time in the context, and the model abstained instead of
+inventing a date. `fact_history.changed_at` exists in the store, but it is not
+projected into the prompt; wiring it in is future work.
+
 ## Limits
 
 - One model, one prompt set; no repeated runs.
