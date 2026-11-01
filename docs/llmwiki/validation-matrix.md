@@ -43,7 +43,7 @@ claim of failure.
 | Local 26B micro-slice | same, explicit state instruction | 1/2 chapters; turn 2 missing `ch-002.md` while task 2 completed; acceptance caught; stopped |
 | Full 50 first attempt | DeepSeek, 24k, per-turn acceptance | 10 turns: 9 Done, 1 provider timeout; 10 chapters, no gaps, tasks 9/50, acceptance 9/9 |
 | Full 50 second attempt | DeepSeek, 24k, `--retry-errors 2` | 11 turns: replayed a completed chapter, wrote chapter 9 for a chapter-8 request, acceptance caught it; stopped |
-| Full 50 third attempt | DeepSeek, 24k, checklist between retries, 300 s deadline | Running |
+| Full 50 third attempt | DeepSeek, 24k, checklist between retries, 300 s deadline | **57/57 Done, 50/50 chapters, 50/50 tasks closed, 57/57 acceptance, 0 overflow, 78.9% cache hit, 43 min** |
 
 ## Memory abilities
 
@@ -57,11 +57,15 @@ claim of failure.
 
 ## Known gaps
 
-- The 57-turn fusion run is a negative result: the host loop advanced after
+- The 57-turn 16k fusion is a negative result: the host loop advanced after
   errors and silent skips, acceptance checked only the latest chapter, the
   locked task plan was not sequential, and 16k was too small for three bible
-  reads plus a chapter write. It did not combine the mechanisms successfully;
-  fixes are listed in `tasks/fusion-run.md`.
+  reads plus a chapter write. Its fixes are listed in `tasks/fusion-run.md`.
+- The 24k fusion completed once: 57/57 Done, 50/50 chapters, 50/50 tasks,
+  57/57 acceptance, 0 overflow, 1 recall turn with 2 hits. It is a single
+  successful run; model variance is not separated.
+- The memo fallback fired on 22 of 56 revisions (20 empty, 2 short); the
+  structured path held, but model-written memo quality is the next target.
 - One run per ablation arm; model variance is not separated.
 - The 15-chapter protocol's state file carries the story, so memo and recall are
   not load-bearing there.

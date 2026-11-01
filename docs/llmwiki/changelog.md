@@ -925,3 +925,20 @@
   1M prefix costs as much as the whole bounded run, which is why a rebuild
   design must stay in a small working set.
 - Verification: 247 tests; fmt and clippy clean.
+
+### Fusion run completed at 24k
+
+- The full 57-turn novel finished on DeepSeek with the 24k profile, per-turn
+  acceptance, a 300 s turn deadline and two retries available: 57/57 Done,
+  0 Error, 0 retries, 50/50 chapters with no gaps, 50/50 tasks closed in order,
+  57/57 acceptance passes, 0 overflow, context peak 15,853 / 23,739.
+- Recall fired once in 57 turns, on the chapter-8 memory probe, with 2 hits and
+  907 tokens; probes 55 and 56 came from the memo without recall. The narrowed
+  gate kept 50 chapter briefs from pulling old segments.
+- The memo fallback fired on 22 of 56 revisions (20 empty, 2 short) and kept
+  the pipeline alive; probe answers still passed. A 39% fallback rate is the
+  next quality target.
+- 4,485,612 input and 337,820 output tokens over 43 minutes; 78.9% weighted
+  cache hit (per-turn median 78.0%); about ¥2.37 at off-peak prices.
+- Report: `evals/reports/2026-11-03-fusion-run.md`.
+- Verification: 247 tests; fmt and clippy clean.

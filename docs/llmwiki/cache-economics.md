@@ -64,6 +64,12 @@ Measured on the first two turns of the 24k novel run:
 So the rate is driven by within-turn reuse and by the number of calls per turn,
 not by cross-turn reuse.
 
+The completed 57-turn run: 314 calls, 4,485,612 input, 3,539,840 cached
+(78.9% weighted); per-turn hit rate min 21.6%, median 78.0%, mean 74.5%, max
+90.3%. The first call of a turn hits only the stable head (about 2.4k tokens);
+later calls in the same turn hit 80–99%. The scenario table below uses a
+conservative 75%.
+
 ### What inversion would cost
 
 Moving `task_state` (and the memo inside history) after the history means:

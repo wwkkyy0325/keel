@@ -71,8 +71,18 @@ host is shared, so the run uses the remote DeepSeek endpoint.
       Verify: three CLI tests for the recovery predicate.
 - [x] Add `--turn-timeout-ms` (host-owned; the policy default is 180 s) and make
       a session that stops on an unrecovered failure exit non-zero.
-- [ ] Run the full 50 again from a clean workspace with
+- [x] Run the full 50 again from a clean workspace with
       `--turn-timeout-ms 300000`, per-turn acceptance and two retries.
+      Verify: **57/57 Done, 0 Error, 0 retries; 50/50 chapters, no gaps;
+      50/50 tasks closed `completed`; 57/57 acceptance; 0 overflow; context peak
+      15,853 / 23,739; 1 recall turn with 2 hits; 4.49M input / 338k output;
+      78.9% cache hit; 43 min; about ¥2.37 off-peak.** The memo fallback fired
+      on 22 of 56 revisions and held.
+- [x] Add per-call cache telemetry and a cost model. Verify: `call:` lines,
+      `cache-economics.md`, 246 tests.
+- [ ] Probe the 39% memo fallback rate (20 empty summaries, 2 short). The
+      structured fallback kept the run alive, but the model-written memo was
+      absent on those turns.
 - [ ] Consider evidence-gating host task completion: a task marked `completed`
       without the expected artifact, or a turn that fails acceptance, should
       not leave the list closed as `completed`. Host-side revert or kernel

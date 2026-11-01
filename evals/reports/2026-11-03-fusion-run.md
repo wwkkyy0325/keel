@@ -246,6 +246,54 @@ predicate.
 The third run uses a clean workspace, `--turn-timeout-ms 300000` and the same
 two retries.
 
+## Full 50 third run: completed
+
+A clean workspace, the 24k profile, per-turn acceptance, `--retry-errors 2`,
+`--turn-timeout-ms 300000` and per-call cache telemetry. The session finished
+all 57 turns with no error and no retry.
+
+| Metric | Value |
+|---|---|
+| Turns | 57 (50 chapters, 7 probes) |
+| Done / Error | 57 / 0 |
+| Retries | 0 |
+| Acceptance | 57 / 57 passed |
+| Chapters | 50 / 50, no gaps |
+| Chapter length | min 1,349, mean 2,077, max 2,873 CJK |
+| State Last chapter | 50 |
+| Tasks | 50 / 50, list closed `completed` |
+| Context peak / budget | 15,853 / 23,739 |
+| Overflows | 0 |
+| Recall turns | 1 (probe 57), 2 hits, 907 tokens |
+| Memo revisions | 56 |
+| Memo fallbacks | 22 (20 empty, 2 short), 39% |
+| Model calls | 314 (5.5 per turn) |
+| Input / output tokens | 4,485,612 / 337,820 |
+| Cache hit | 3,539,840 cached, 78.9% weighted; per-turn median 78.0% |
+| Duration | 43 min, 44.7 s per turn average, 74 s max |
+| Cost at off-peak prices | about ¥2.37 |
+
+What this establishes:
+
+- The mechanisms compose. Tools, a locked 50-item task plan, the rolling memo,
+  recall, the budget governor and per-turn acceptance ran together for 57 turns
+  without an overflow, an error or a silent skip.
+- Acceptance is the right seam. Every turn's checker verified the requested
+  chapter, all earlier chapters and the state; it passed 57 times. In the 16k
+  run the same workload produced 16 silent skips.
+- The task list closed exactly once, in order, at item 50.
+- Recall is precise rather than noisy. It fired on one of 57 turns, the
+  memory-only probe about chapter 8, and answered from segments with 2 hits.
+  Probes 55 and 56 were answered from the memo without recall. The narrowed
+  gate kept the 50 chapter briefs from pulling old segments.
+- The memo fallback is load-bearing. The summariser returned no usable text on
+  22 of 56 revisions; the structured fallback kept the memory pipeline alive,
+  and the probes still passed.
+
+Remaining quality issue: a 39% summary fallback rate is high. The fallback is
+deterministic and safe, but it means the model-written memo is absent on those
+turns. The summariser prompt or the empty-text handling deserves a probe.
+
 ## Local 26B attempt
 
 The local Gemma 4 26B was run at 32k server context and a 20k working set with
@@ -281,25 +329,35 @@ What this shows:
 
 ## Verdict
 
-The kernel mechanisms work individually and in smaller runs, but the 57-turn
-fusion is **not coherent** at 16k with a blind host loop. The failures are
-mostly at the seams: host orchestration, acceptance scope, task ordering and
-budget. This is a useful negative result; it does not justify calling the
-fusion complete, and it does not justify moving vector or graph memory into the
-kernel.
+The 16k, blind-host-loop attempt was **not coherent**: its failures were at the
+seams (host orchestration, acceptance scope, task ordering, budget). After those
+seams were fixed, the 24k run completed the full 57 turns: 50/50 chapters, 50/50
+tasks closed in order, 57/57 acceptance passes, zero overflow, zero errors and
+zero retries. The fusion is coherent on this workload at 24k.
+
+The result does not justify moving vector or graph memory into the kernel. The
+memory that carried the run was the kernel's own: memo, records, the state file
+and one targeted recall. It also sets the floor: 16k was too small for three
+bible reads plus a chapter write, and the memo fallback rate (39%) is the next
+quality target.
 
 ## Limits
 
-- One run, one model, one quantisation; DeepSeek remote, no local GPU.
-- The CLI binary predated the summary floor; the memo results are not the final
-  kernel behavior.
-- The 50-turn prompt is the older in-progress protocol; the 15-chapter prompt
-  uses the derived-current protocol.
-- The acceptance checker is host code; the kernel's acceptance contract is
-  sound, but the checker was too weak for this run.
+- One successful run, one model, one quantisation; DeepSeek remote, no local
+  GPU. It is not repeated, so model variance is not separated.
+- The 57-turn 16k run used a binary that predated the summary floor; its memo
+  numbers are not current behavior. The 24k run includes every fix.
+- The 50-turn prompt still uses the older in-progress protocol; the
+  15-chapter prompt uses the derived-current protocol.
+- The acceptance checker is host code. It was weak for the 16k run and strict
+  for the 24k run (requested chapter, all chapters, state).
 
 ## Artifacts
 
-- Log: `D:\workspace-new\wwkkyy0325\fusion-run\runs\fusion-50.log`.
-- Workspace: `D:\workspace-new\wwkkyy0325\fusion-run\workspace`.
-- Acceptance: `fusion-run/acceptance.toml`, `fusion-tools/check_latest.py`.
+- Completed run: `D:\workspace-new\wwkkyy0325\fusion-run\final-50-retry\final-50-retry4.log`.
+- Workspace: `D:\workspace-new\wwkkyy0325\fusion-run\final-50-retry\workspace`.
+- Acceptance: `fusion-run/acceptance-final-50-retry.toml`,
+  `fusion-tools/check_turn.py`.
+- Earlier failed runs: `fusion-run/runs/fusion-50.log`,
+  `fusion-run/final-50/final-50.log`, `final-50-retry/final-50-retry.log`,
+  `final-50-retry/final-50-retry2.log`.
