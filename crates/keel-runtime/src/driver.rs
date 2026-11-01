@@ -9,8 +9,8 @@ use keel_core::{
     CancelToken, CommitCtx, CommitDecision, ErrorCode, Event, EventSink, InteractionId,
     InteractionRequest, InteractionResponse, KernelError, Message, MessageRole, ModelChunk,
     ModelError, ModelProvider, ModelRequest, ModelRole, OnTimeout, Policy, ReasoningLevel,
-    SecretKind, SegmentRecord, Session, TodoList, TodoState, ToolArgs, ToolCallId, ToolOutcome,
-    TurnEvent, TurnRecord, TurnState, VerificationMode, VerificationReport,
+    SecretKind, SegmentRecord, Session, SessionSnapshot, TodoList, TodoState, ToolArgs, ToolCallId,
+    ToolOutcome, TurnEvent, TurnRecord, TurnState, VerificationMode, VerificationReport,
 };
 
 use crate::context::ContextBuilder;
@@ -225,6 +225,21 @@ impl<M: ModelProvider> TurnDriver<M> {
             items,
             max_reprompts,
         });
+        self
+    }
+
+    /// Captures the session for a host store. The kernel stays unaware of the
+    /// backend; the host decides where the snapshot lives.
+    pub fn session_snapshot(&self) -> SessionSnapshot {
+        self.session
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .snapshot()
+    }
+
+    /// Continues a stored session instead of starting an empty one.
+    pub fn with_session(mut self, session: Session) -> Self {
+        self.session = Mutex::new(session);
         self
     }
 

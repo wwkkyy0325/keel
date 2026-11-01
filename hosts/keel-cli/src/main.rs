@@ -1,4 +1,5 @@
 mod acceptance;
+mod store;
 mod terminal;
 
 use std::path::PathBuf;
@@ -8,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use keel_core::{
     AcceptanceItem, ArgValue, CancelToken, Event, KernelError, ModelError, ModelProvider,
-    ModelRequest, ModelStream, Policy, TodoList, ToolArgs,
+    ModelRequest, ModelStream, Policy, Session, TodoList, ToolArgs,
 };
 use keel_model_openai::{OpenAiConfig, OpenAiProvider};
 use keel_runtime::{
@@ -63,27 +64,45 @@ async fn run() -> Result<ExitCode, KernelError> {
         config.permission_level,
     )?);
 
+    let mut store = match &args.store {
+        Some(path) => Some(store::Store::open(path)?),
+        None => None,
+    };
+    let stored = match &store {
+        Some(store) => store.load(&args.session_id)?,
+        None => None,
+    };
+    let (restored_session, restored_todos) = match stored {
+        Some(stored) => (Some(stored.snapshot), stored.todos),
+        None => (None, None),
+    };
+    let had_stored_todos = restored_todos.is_some();
+
     let todos = if args.no_todo {
         None
     } else {
-        Some(Arc::new(Mutex::new(TodoList::new())))
+        Some(Arc::new(Mutex::new(
+            restored_todos.unwrap_or_else(TodoList::new),
+        )))
     };
-    if let (Some(todos), Some(path)) = (&todos, &args.todo_file) {
-        let text = std::fs::read_to_string(path).map_err(|error| KernelError::Io {
-            message: format!("{}: {error}", path.display()),
-        })?;
-        let mut list = todos
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        for line in text.lines() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
+    if !had_stored_todos {
+        if let (Some(todos), Some(path)) = (&todos, &args.todo_file) {
+            let text = std::fs::read_to_string(path).map_err(|error| KernelError::Io {
+                message: format!("{}: {error}", path.display()),
+            })?;
+            let mut list = todos
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            for line in text.lines() {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                list.add_host(line)
+                    .map_err(|error| invalid_config(error.to_string()))?;
             }
-            list.add_host(line)
-                .map_err(|error| invalid_config(error.to_string()))?;
+            list.lock();
         }
-        list.lock();
     }
 
     let mut registry = ToolRegistry::new();
@@ -164,6 +183,10 @@ async fn run() -> Result<ExitCode, KernelError> {
         Some(items) => driver.with_acceptance(items.clone(), 2),
         None => driver,
     };
+    let driver = match restored_session {
+        Some(snapshot) => driver.with_session(Session::restore(snapshot)),
+        None => driver,
+    };
 
     if args.session {
         return run_session(
@@ -176,6 +199,8 @@ async fn run() -> Result<ExitCode, KernelError> {
             args.retry_errors,
             acceptance_items.as_deref(),
             &workspace_root,
+            store.as_mut(),
+            &args.session_id,
         )
         .await;
     }
@@ -183,6 +208,16 @@ async fn run() -> Result<ExitCode, KernelError> {
     let outcome = driver.run(&args.input, CancelToken::new()).await;
     print_outcome(&config, &events, &outcome);
     print_todos(todos.as_ref());
+    if let Some(store) = store.as_mut() {
+        save_turn(
+            store,
+            &args.session_id,
+            &driver,
+            todos.as_ref(),
+            &args.input,
+            &outcome,
+        )?;
+    }
     done_or_error(outcome)?;
     Ok(ExitCode::SUCCESS)
 }
@@ -199,6 +234,8 @@ async fn run_session(
     retry_errors: u32,
     acceptance: Option<&[AcceptanceItem]>,
     workspace_root: &std::path::Path,
+    mut store: Option<&mut store::Store>,
+    session_id: &str,
 ) -> Result<ExitCode, KernelError> {
     use std::io::{BufRead, IsTerminal, Write};
 
@@ -272,6 +309,9 @@ async fn run_session(
         if outcome.is_cancelled() {
             break;
         }
+        if let Some(store) = store.as_deref_mut() {
+            save_turn(store, session_id, driver, todos, input, &outcome)?;
+        }
         if stop_on_error && !outcome.is_done() && !recovered {
             stopped = true;
             break;
@@ -291,6 +331,41 @@ fn revert_tasks(todos: Option<&Arc<Mutex<TodoList>>>, snapshot: Option<&TodoList
         return;
     };
     *list.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = snapshot.clone();
+}
+
+/// Writes the session snapshot, the task list and one transcript row.
+fn save_turn(
+    store: &mut store::Store,
+    session_id: &str,
+    driver: &TurnDriver<HostModel>,
+    todos: Option<&Arc<Mutex<TodoList>>>,
+    input: &str,
+    outcome: &TurnOutcome,
+) -> Result<(), KernelError> {
+    let todo_snapshot = todos.map(|list| {
+        list.lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    });
+    let usage = format!(
+        "{{\"input\":{},\"output\":{},\"cached\":{}}}",
+        outcome.usage.input_tokens, outcome.usage.output_tokens, outcome.usage.cached_input_tokens
+    );
+    let state = outcome.state.to_string();
+    let seq = store.next_turn_seq(session_id)?;
+    store.save(
+        session_id,
+        &driver.session_snapshot(),
+        todo_snapshot.as_ref(),
+        Some(store::StoredTurn {
+            seq,
+            input,
+            state: &state,
+            answer: &outcome.answer.body,
+            usage_json: &usage,
+            duration_ms: outcome.duration_ms,
+        }),
+    )
 }
 
 /// A failed turn that still passes its checklist has done its work. The host
@@ -647,6 +722,10 @@ struct Args {
     retry_errors: u32,
     /// Host-owned turn deadline override; the policy default is 180 s.
     turn_timeout_ms: Option<u64>,
+    /// SQLite file for session persistence.
+    store: Option<PathBuf>,
+    /// Session id inside the store.
+    session_id: String,
 }
 
 fn parse_args() -> Result<Args, KernelError> {
@@ -664,6 +743,8 @@ fn parse_args() -> Result<Args, KernelError> {
     let mut stop_on_error = false;
     let mut retry_errors = 0u32;
     let mut turn_timeout_ms = None;
+    let mut store = None;
+    let mut session_id = "default".to_owned();
     let mut workspace = std::env::current_dir().map_err(|error| KernelError::Io {
         message: error.to_string(),
     })?;
@@ -746,6 +827,17 @@ fn parse_args() -> Result<Args, KernelError> {
                     invalid_config("`--retry-errors` must be a non-negative integer")
                 })?;
             }
+            "--store" => {
+                store =
+                    Some(PathBuf::from(args.next().ok_or_else(|| {
+                        invalid_config("missing value for `--store`")
+                    })?));
+            }
+            "--session-id" => {
+                session_id = args
+                    .next()
+                    .ok_or_else(|| invalid_config("missing value for `--session-id`"))?;
+            }
             "--turn-timeout-ms" => {
                 let value = args
                     .next()
@@ -782,6 +874,8 @@ fn parse_args() -> Result<Args, KernelError> {
         stop_on_error,
         retry_errors,
         turn_timeout_ms,
+        store,
+        session_id,
     })
 }
 

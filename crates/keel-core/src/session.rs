@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
+
 use crate::context::is_cjk;
 use crate::secret::redact_secrets;
 
@@ -133,7 +135,7 @@ const RECALL_MARKERS: &[&str] = &[
 ];
 
 /// Lifecycle of one topic segment.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SegmentState {
     Open,
     Sealed,
@@ -176,7 +178,7 @@ impl ToolSummary {
 }
 
 /// Where a fact lives.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FactScope {
     Session,
     Workspace,
@@ -213,7 +215,7 @@ struct Candidate {
 }
 
 /// One durable statement extracted from a sealed segment.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Fact {
     pub key: String,
     pub statement: String,
@@ -223,7 +225,7 @@ pub struct Fact {
 }
 
 /// Compressed form of a sealed segment.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SegmentRecord {
     pub goal: String,
     pub result: String,
@@ -243,7 +245,7 @@ pub struct SegmentRecord {
 /// One field, rewritten at every segment seal. The structured records and the
 /// transcript stay in storage; this is the only compressed view of the older
 /// history that enters the context.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionSummary {
     pub text: String,
     pub revision: u32,
@@ -288,6 +290,46 @@ pub struct Segment {
     pub verified: bool,
     /// Present only when the sufficiency gate passed.
     pub record: Option<SegmentRecord>,
+}
+
+/// A serializable view of one session, for a host store.
+///
+/// The snapshot carries the planes the kernel needs to continue a session:
+/// segments, entries, records, the memo and facts. Fact candidates are
+/// transient extraction state and are not carried.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SessionSnapshot {
+    pub segments: Vec<SegmentSnapshot>,
+    pub next_segment_id: u32,
+    pub last_verified: bool,
+    pub facts: Vec<Fact>,
+    pub workspace_facts: Vec<Fact>,
+    pub global_facts: Vec<Fact>,
+    pub summary: Option<SessionSummary>,
+    pub next_summary_revision: u32,
+    pub summary_missing: bool,
+}
+
+/// One segment inside a session snapshot.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SegmentSnapshot {
+    pub id: u32,
+    pub topic: String,
+    pub state: SegmentState,
+    pub entries: Vec<EntrySnapshot>,
+    pub turns: u32,
+    pub terms: Vec<String>,
+    pub artifacts: Vec<String>,
+    pub pending: Vec<String>,
+    pub verified: bool,
+    pub record: Option<SegmentRecord>,
+}
+
+/// One message inside a segment snapshot.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntrySnapshot {
+    pub role: String,
+    pub content: String,
 }
 
 /// A segment that could not be compressed.
@@ -343,6 +385,96 @@ pub struct Session {
 impl Session {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Captures the state a host needs to continue this session in another
+    /// process.
+    pub fn snapshot(&self) -> SessionSnapshot {
+        SessionSnapshot {
+            segments: self
+                .segments
+                .iter()
+                .map(|segment| SegmentSnapshot {
+                    id: segment.id,
+                    topic: segment.topic.clone(),
+                    state: segment.state,
+                    entries: segment
+                        .entries
+                        .iter()
+                        .map(|entry| EntrySnapshot {
+                            role: match entry.message.role {
+                                MessageRole::User => "user",
+                                MessageRole::Assistant => "assistant",
+                                MessageRole::System => "system",
+                                MessageRole::Tool => "tool",
+                            }
+                            .to_owned(),
+                            content: entry.message.content.clone(),
+                        })
+                        .collect(),
+                    turns: segment.turns,
+                    terms: segment.terms.iter().cloned().collect(),
+                    artifacts: segment.artifacts.iter().cloned().collect(),
+                    pending: segment.pending.clone(),
+                    verified: segment.verified,
+                    record: segment.record.clone(),
+                })
+                .collect(),
+            next_segment_id: self.next_segment_id,
+            last_verified: self.last_verified,
+            facts: self.facts.clone(),
+            workspace_facts: self.workspace_facts.clone(),
+            global_facts: self.global_facts.clone(),
+            summary: self.summary.clone(),
+            next_summary_revision: self.next_summary_revision,
+            summary_missing: self.summary_missing,
+        }
+    }
+
+    /// Rebuilds a session from a host store snapshot.
+    pub fn restore(snapshot: SessionSnapshot) -> Self {
+        let segments: Vec<Segment> = snapshot
+            .segments
+            .into_iter()
+            .map(|segment| Segment {
+                id: segment.id,
+                topic: segment.topic,
+                state: segment.state,
+                entries: segment
+                    .entries
+                    .into_iter()
+                    .map(|entry| Entry {
+                        message: Arc::new(match entry.role.as_str() {
+                            "user" => Message::user(entry.content),
+                            "system" => Message::system(entry.content),
+                            "tool" => Message::new(MessageRole::Tool, entry.content),
+                            _ => Message::assistant(entry.content),
+                        }),
+                    })
+                    .collect(),
+                turns: segment.turns,
+                terms: segment.terms.into_iter().collect(),
+                artifacts: segment.artifacts.into_iter().collect(),
+                pending: segment.pending,
+                verified: segment.verified,
+                record: segment.record,
+            })
+            .collect();
+        let next_segment_id = snapshot
+            .next_segment_id
+            .max(segments.iter().map(|segment| segment.id).max().unwrap_or(0));
+        Self {
+            segments,
+            next_segment_id,
+            last_verified: snapshot.last_verified,
+            facts: snapshot.facts,
+            workspace_facts: snapshot.workspace_facts,
+            global_facts: snapshot.global_facts,
+            candidates: BTreeMap::new(),
+            summary: snapshot.summary,
+            next_summary_revision: snapshot.next_summary_revision,
+            summary_missing: snapshot.summary_missing,
+        }
     }
 
     /// Decides the segment boundary for an input before the turn runs.
@@ -1455,6 +1587,23 @@ mod tests {
             pending: &[],
             verified: false,
         });
+    }
+
+    #[test]
+    fn a_snapshot_restores_the_derived_state() {
+        let mut session = Session::new();
+        record(&mut session, "fix the parser", "done");
+        session.set_summary("memo text", &[1], 256);
+
+        let restored = Session::restore(session.snapshot());
+
+        assert_eq!(restored.segments().len(), session.segments().len());
+        assert_eq!(restored.history().len(), session.history().len());
+        assert_eq!(restored.segments()[0].entries.len(), 2);
+        assert_eq!(
+            restored.summary().map(|summary| summary.text.as_str()),
+            Some("memo text")
+        );
     }
 
     #[test]

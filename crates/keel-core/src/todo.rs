@@ -7,13 +7,15 @@
 
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
 /// Maximum number of items in one list.
 pub const TODO_MAX_ITEMS: usize = 100;
 /// Maximum characters in one item.
 pub const TODO_MAX_TEXT_CHARS: usize = 200;
 
 /// Lifecycle of one task.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TodoStatus {
     Pending,
     InProgress,
@@ -56,7 +58,7 @@ impl TodoStatus {
 }
 
 /// Lifecycle of the whole list.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TodoState {
     #[default]
     Active,
@@ -81,7 +83,7 @@ impl TodoState {
 }
 
 /// Who created the item.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TodoSource {
     Host,
     Model,
@@ -97,7 +99,7 @@ impl TodoSource {
 }
 
 /// One task with a stable id.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TodoItem {
     pub id: u32,
     pub text: String,
@@ -106,7 +108,7 @@ pub struct TodoItem {
 }
 
 /// One session's task list.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TodoList {
     pub items: Vec<TodoItem>,
     pub revision: u32,

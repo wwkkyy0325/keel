@@ -46,8 +46,9 @@ pub use policy::{
 };
 pub use secret::{detect_secret, redact_secrets, SecretKind};
 pub use session::{
-    CompressionSkip, Entry, Fact, FactScope, RecalledSegment, Segment, SegmentChange,
-    SegmentRecord, SegmentState, Session, SessionSummary, ToolSummary, TurnRecord,
+    CompressionSkip, Entry, EntrySnapshot, Fact, FactScope, RecalledSegment, Segment,
+    SegmentChange, SegmentRecord, SegmentSnapshot, SegmentState, Session, SessionSnapshot,
+    SessionSummary, ToolSummary, TurnRecord,
 };
 pub use state::{TurnEvent, TurnState};
 pub use todo::{
