@@ -243,6 +243,20 @@ impl ContextStage for TaskStateStage {
     }
 }
 
+/// Room kept for the tool results of the current turn.
+///
+/// History is assembled before any tool runs. A round of bounded results is
+/// roughly 1,000–2,000 tokens, so history must not consume the whole working
+/// set: the first tool round would overflow before the model could answer.
+/// The floor keeps small windows usable and the cap keeps large windows from
+/// reserving more than a round needs.
+fn tool_headroom(budget_tokens: u32) -> u32 {
+    if budget_tokens < 2048 {
+        return 0;
+    }
+    (budget_tokens / 6).clamp(512, 4096)
+}
+
 /// Emits recorded history, keeping the newest messages that fit.
 ///
 /// History runs before `latest`, so it leaves room for the current input.
@@ -280,8 +294,12 @@ impl ContextStage for HistoryStage {
         {
             return None;
         }
-        // Never spend the room the current input needs.
-        let available = ctx.budget_tokens.checked_sub(estimate_tokens(ctx.input))?;
+        // Never spend the room the current input needs, and keep room for the
+        // tool results the turn will append. Without the second reserve a large
+        // prior turn can fill the working set and the first tool round
+        // overflows before the model can answer.
+        let reserved = estimate_tokens(ctx.input).saturating_add(tool_headroom(ctx.budget_tokens));
+        let available = ctx.budget_tokens.checked_sub(reserved)?;
         if available == 0 {
             return None;
         }
@@ -659,5 +677,18 @@ impl ContextStage for MemoryStage {
             role: MessageRole::System,
             text,
         }])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_headroom_scales_and_stays_bounded() {
+        assert_eq!(tool_headroom(1_000), 0);
+        assert_eq!(tool_headroom(8_192), 1_365);
+        assert_eq!(tool_headroom(24_576), 4_096);
+        assert_eq!(tool_headroom(200_000), 4_096);
     }
 }
