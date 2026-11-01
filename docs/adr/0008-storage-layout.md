@@ -50,7 +50,7 @@ schema_version(version integer primary key, applied_at text)
 sessions(id text primary key, started_at text, metadata_json text,
          parent_session_id text, fork_turn_seq integer)
 turns(id text primary key, session_id text, seq integer, input text,
-      state text, answer text, answer_json text, usage_json text,
+      state text, answer text, answer_json text, error text, usage_json text,
       duration_ms integer, created_at text)
 messages(id text primary key, turn_id text, seq integer, role text,
          content text, tool_call_id text, created_at text)
@@ -93,6 +93,10 @@ context_snapshots(turn_id text primary key, session_id text,
                   estimate integer, budget integer, stages_json text,
                   messages_json text, created_at text)
 
+events(session_id text, turn_seq integer, seq integer, name text,
+       payload_json text, created_at text,
+       primary key(session_id, turn_seq, seq))
+
 session_checkpoints(session_id text, turn_seq integer, snapshot_json text,
                     todos_json text, created_at text,
                     primary key(session_id, turn_seq))
@@ -104,6 +108,9 @@ in one column; they are read as whole values and never queried inside.
 ### Invariants
 
 - Raw planes are append-only. No API hard-deletes a message, turn or event.
+- Kernel events are persisted per turn in emission order, inside the turn
+  transaction, with the serialized event as `payload_json`. `turns.error`
+  keeps the kernel error text and code for a turn that did not finish.
 - Compression only changes derived rows: a record gets `folded = 1`, a new
   summary revision is inserted, `summary_covers` lists the segments it
   absorbed, and each absorbed record gets `absorbed_in = revision`.

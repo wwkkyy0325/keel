@@ -25,9 +25,9 @@ claim of failure.
 | Prompt cache reuse | Per-call usage lines | 24k novel, 2 turns (67–83%) | Stable-prefix rule not started | No |
 | Persona affordances | None | Not measured | None (no A/B) | No |
 | Interjections | None | None | None | No (ADR 0010 only) |
-| Session persistence (host store) | Snapshot round-trip, projection replace, history, context snapshot, fault injection (failed save rolls back) | Two-process resume | None | No |
+| Session persistence (host store) | Snapshot round-trip, projection replace, history, context snapshot, event stream, turn error, fault injection (failed save rolls back) | Two-process resume | None | No |
 | Branching / deletion | Checkpoint per turn, fork restore, pruning with pinned fork points, fork/delete errors | Mock parent/branch/delete and a retention smoke | None | No |
-| Frontend views | Composed panels, ordering, decoded answer/usage/context, typed memory timeline, turn paging, golden file, real-binary contract tests | CLI smoke of session, turn, memory and two-page session views | None | No |
+| Frontend views | Composed panels, ordering, decoded answer/usage/context, typed memory timeline, event stream, turn paging, golden file, real-binary contract tests | CLI smoke of session, turn, memory, events and two-page session views | None | No |
 | Companion personas | Per-turn rule checks, three memory probes | Five personas, 20 turns each, one process per persona | None | No |
 | M4 plugins | Schema mapping and description, roots/ping replies over stdio and HTTP, mock HTTP MCP server, process-tree kill | Filesystem, memory, Python SQLite probe and call with a roots round-trip | None | No |
 

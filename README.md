@@ -179,6 +179,7 @@ cargo run -p keel-cli -- --store keel.db --view sessions
 cargo run -p keel-cli -- --store keel.db --view session --session-id mem --limit 20
 cargo run -p keel-cli -- --store keel.db --view turn --session-id mem --turn 3
 cargo run -p keel-cli -- --store keel.db --view memory --session-id mem
+cargo run -p keel-cli -- --store keel.db --view events --session-id mem --limit 5
 ```
 
 ## Plugins

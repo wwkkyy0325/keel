@@ -15,6 +15,7 @@ keel-cli --store keel.db --view sessions
 keel-cli --store keel.db --view session --session-id mem
 keel-cli --store keel.db --view turn --session-id mem --turn 3
 keel-cli --store keel.db --view memory --session-id mem
+keel-cli --store keel.db --view events --session-id mem --limit 5
 ```
 
 - `sessions` is an array ordered by `updated_at` descending, then `id`.
@@ -25,11 +26,17 @@ keel-cli --store keel.db --view memory --session-id mem
 - `turns[].answer_model` is the decoded structured answer and
   `turns[].usage` is the decoded token row. The UI never parses `answer_json`
   or `usage_json`.
-- `turn` is one turn plus `context`: the captured turn-start message list with
-  decoded `stages` and `messages`.
+- `turn` is one turn plus `context` (the captured turn-start message list with
+  decoded `stages` and `messages`) and `events` (the kernel events emitted
+  during that turn). `turn.error` carries the kernel error text and code when
+  the turn did not finish.
 - `memory` is the typed timeline: every `fact_history` row with
   `added`/`superseded`/`forgotten`, and every `todo_history` revision with
   decoded items.
+- `events` is the persisted kernel event stream for one session: `turn`, `seq`,
+  `name`, decoded `payload` and `created_at`. It pages by turns with the same
+  `--limit`/`--before` cursor as `session`, so a debugging screen does not read
+  SQL or parse log lines.
 - A missing session or turn is an error with a non-zero exit, not an empty
   screen.
 - Long sessions page turns backward: `--limit N` returns the newest N turns
@@ -188,6 +195,19 @@ truncation, with secrets redacted. It is not the transcript; a later
 reconstruction from segments can differ. Turns run without the flag have no
 row.
 
+Kernel events, one row per event in emission order:
+
+```sql
+SELECT turn_seq, seq, name, payload_json, created_at
+FROM events
+WHERE session_id = ?1
+ORDER BY turn_seq, seq;
+```
+
+`payload_json` is the serialized kernel `Event` with snake_case keys; `name`
+matches the event name inside it. The `--view events` command is the supported
+read path.
+
 ## Branches
 
 A branch is a normal session with a parent. There is no branch table:
@@ -245,5 +265,6 @@ level. The resume snapshot (`snapshot_json`) remains current state only.
 ## Versioning
 
 `schema_version` lists applied migrations. A frontend should refuse to open a
-database whose highest version it does not know. Version 8 adds per-turn
-checkpoints and the branch columns.
+database whose highest version it does not know. Version 9 adds the `events`
+table and `turns.error`; version 8 added per-turn checkpoints and the branch
+columns.

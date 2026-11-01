@@ -29,7 +29,7 @@ the context governor, segment records, fact folding, the rolling memo, lexical
 recall, three-tier facts, task state, acceptance and the turn `Answer` artifact
 are implemented. The host adds persistence, branches, MCP plugins and composed
 read models. Evidence: 20/20 curated coding cases, five companion personas
-(100 turns), and a 50-turn novel with 0 overflow. 297 tests pass (253 in the
+(100 turns), and a 50-turn novel with 0 overflow. 301 tests pass (254 in the
 kernel crates alone).
 
 The repository is kernel-first: `crates/` is the distributable kernel and

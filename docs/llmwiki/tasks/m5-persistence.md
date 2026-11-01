@@ -55,6 +55,12 @@ The kernel exposes a snapshot; the host decides where it lives.
       session in one transaction; branches survive. Verify:
       `deleting_a_session_removes_its_rows_but_not_its_branches` and a live
       delete of the branch from the smoke store.
+- [x] Persist the kernel event stream and the turn error: one `events` row per
+      event in emission order, `turns.error` for a failed turn, written in the
+      same transaction; `--view events` pages them by turns. Verify:
+      `events_and_errors_are_stored_with_the_turn`,
+      `a_failed_turn_exposes_its_error_text`,
+      `the_events_view_pages_with_the_turn_window`.
 - [x] Checkpoint retention: `--keep-checkpoints N` prunes to the newest N per
       session inside the same transaction as the turn; `0` keeps every turn.
       Every turn a branch was forked from is kept regardless of age. Verify:

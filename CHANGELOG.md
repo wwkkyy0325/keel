@@ -22,15 +22,18 @@ First complete kernel and reference host.
 - `PermissionDecided` events record every gate decision (`allow`, `deny`,
   `confirm`) with tool, access, path and reason, so a UI or audit log does not
   have to infer it.
+- `Event` implements `Serialize` with snake_case keys, so a host can persist
+  the kernel event stream as structured data.
 - Versioned session snapshots (`SNAPSHOT_VERSION = 1`); a newer format is
   refused rather than misread.
 
 ### Reference host
 
 - SQLite store: resume, per-turn checkpoints, branches, deletion, projection,
-  fact/task history and context snapshots.
-- Composed frontend views: sessions, session, turn and memory, with turn
-  paging and a golden file.
+  fact/task history, context snapshots, the kernel event stream and
+  `turns.error`.
+- Composed frontend views: sessions, session, turn, memory and events, with
+  turn paging and a golden file.
 - MCP plugins over stdio and streamable HTTP, schema mapping, roots/ping
   replies, process-tree cleanup and `--plugins-check [--json]`.
 - Cache and usage telemetry; cost model in `docs/llmwiki/cache-economics.md`.
@@ -46,4 +49,4 @@ First complete kernel and reference host.
 - 20 curated coding cases: 20/20.
 - Five companion personas, 20 turns each: 100/100.
 - Kernel contract tests, including the full event order for a tool turn, and
-  297 Rust tests (253 in the kernel crates).
+  301 Rust tests (254 in the kernel crates).

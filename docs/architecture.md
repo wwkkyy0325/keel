@@ -78,6 +78,8 @@ The host store is SQLite in WAL mode. One transaction per turn writes:
 - `turns` — the transcript row with the structured answer;
 - normalized projection tables (`segments`, `records`, `facts`, `todos`, ...);
 - append-only history (`fact_history`, `todo_history`, memo revisions);
+- `events` — the kernel event stream for the turn, and `turns.error` when the
+  turn did not finish;
 - `session_checkpoints` — the state after the turn, used for branches.
 
 `session_current` and the other tables are derived; there is no stored status

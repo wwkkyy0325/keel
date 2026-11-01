@@ -1392,3 +1392,20 @@
   optional.
 - Verify: 297 workspace tests, 253 kernel-only, `cargo run -p keel-runtime
   --example minimal_turn`.
+
+### Persisted kernel events and turn errors
+
+- `Event` and the field types it carries implement `Serialize`; variant names
+  are snake_case, so the persisted payload and the event name agree. The hosts
+  no longer need their own event schema.
+- The SQLite store (schema 9) adds `events` (one row per event, in emission
+  order, in the turn transaction) and `turns.error` (kernel error text and
+  code). Re-saving a turn replaces its event stream; a branch copies the events
+  of the turns it copies; deleting a session removes them.
+- `--view events --session-id <id>` pages the stream by turns with
+  `--limit`/`--before`; `--view turn` now includes `events` and `turn.error`.
+- Verify: `events_serialize_for_persistence`,
+  `events_and_errors_are_stored_with_the_turn`,
+  `a_failed_turn_exposes_its_error_text`,
+  `the_events_view_pages_with_the_turn_window`, the CLI events assertion, and
+  301 workspace tests (254 kernel-only).

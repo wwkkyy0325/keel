@@ -31,7 +31,8 @@ Stable within a major version:
   `EventSink`, `KernelError`, `ErrorCode`.
 - The event enum is the live UI/audit feed: turn and state changes, context
   builds, tool starts/finishes, `PermissionDecided` for every gate decision,
-  interactions, memory and summary events.
+  interactions, memory and summary events. `Event` serializes with snake_case
+  keys so a host can persist the stream without a second schema.
 - The tool protocol: names, parameter kinds, risk levels and result envelopes.
 - The profile schema loaded by `keel-policy`; unknown fields are errors.
 - The snapshot JSON written by `Session::snapshot`; `format_version` is
