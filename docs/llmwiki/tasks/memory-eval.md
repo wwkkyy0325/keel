@@ -11,7 +11,7 @@ external memory adapter can be measured separately once one exists.
 | Information extraction | Covered | Unit tests for fact scopes and provenance; two-process eval stored three constraints and answered all three. |
 | Multi-session reasoning | Covered | Two processes on one store: facts, memo and segments restored; 3/3 questions answered. Report: `2026-11-04-memory-multi-session.md`. |
 | Temporal reasoning | Pending | Facts carry `segment_id` but no event time; the event log has turn order only. |
-| Knowledge updates | Partly covered | `a_contradiction_demotes_the_promoted_fact`, `forget_removes_a_promoted_fact`; the eval update was answered through the memo, not a subject-level supersede. |
+| Knowledge updates | Covered | `an_update_replaces_the_fact_for_the_same_subject` plus the contradiction and forget tests; the rerun kept one current `项目代号` fact; the state before an update stays in `fact_history` and the memo. |
 | Abstention | Covered | The two-process eval refused a car plate it was never given. Kernel unit test: `unrelated_input_recalls_nothing`. |
 
 ## Plan
@@ -35,10 +35,27 @@ external memory adapter can be measured separately once one exists.
 - [x] Fix the verified-Q&A fact noise found by the eval: a verified segment
       records a fact only when it produced artifacts. Verify: 16 facts became
       8 with the same 6/6 answers.
-- [ ] Subject-level supersede: the update lands as a new fact key; the model
-      relies on the memo. Same-key replacement is unit-tested only.
-- [ ] Simplify the `不要` cue so turn instructions are not stored as durable
-      constraints.
+- [x] Subject-level supersede: an explicit update cue ("改成", "changed to",
+      ...) replaces every fact whose key starts with the subject before the
+      cue. Verify: `an_update_replaces_the_fact_for_the_same_subject` keeps one
+      workspace fact and its statement carries the new value.
+- [x] Keep reply instructions out of the fact table: sentences that ask for
+      an answer now ("直接回答", "just answer") are not constraints even when
+      they open with `不要`. Verify: `a_reply_instruction_is_not_a_constraint`
+      for the Chinese eval sentence and its English form.
+
+## Rerun 2026-11-04 (after supersede and reply filtering)
+
+- Three processes on one store: 3 extraction turns, 6 question/update turns,
+  2 temporal probes. 11 turns, 11 Done, 11 acceptance passes, no overflow.
+- Answers 8/8: three stored facts, update acknowledged, 海鸥 after the update,
+  car plate refused, previous code name 蓝鲸, change date refused.
+- Facts: 3 current, all real; 0 reply instructions (the first run had four).
+  History: the pre-update fact is `forgotten` because the host diffs keys, and
+  both versions stay in storage.
+- The "before" answer still works from the memo, so current facts and ordered
+  history do not compete.
+- Report section: `evals/reports/2026-11-04-memory-multi-session.md`.
 
 ## Run 2026-11-04
 

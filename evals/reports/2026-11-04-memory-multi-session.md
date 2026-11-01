@@ -94,7 +94,8 @@ projected into the prompt; wiring it in is future work.
 - Acceptance forces a seal every turn, which is denser than a normal
   conversation. Without acceptance, seals depend on topic change or the turn
   cap, and facts appear later.
-- Temporal reasoning (when did X change) was not tested.
+- Temporal reasoning has one probe pair in the first run and one in the
+  rerun; it is not repeated across models.
 - The small 679-token memo budget rejected a short model summary on one turn
   and fell back to the structured memo; the answers were unaffected.
 
@@ -103,3 +104,35 @@ projected into the prompt; wiring it in is future work.
 - Logs: `D:\workspace-new\wwkkyy0325\fusion-run\memory-eval\session1.log`,
   `session2.log`.
 - Store: `D:\workspace-new\wwkkyy0325\fusion-run\memory-eval\memory.db`.
+
+## Rerun after subject supersede (2026-11-04)
+
+Same profile and store shape; the kernel now filters reply instructions and
+replaces a subject's value on an explicit update cue. Three processes: the
+three extraction turns, the six-question session, then two temporal probes in
+a third process.
+
+| Ability | Turn | Expected | Answer |
+|---|---|---|---|
+| Extraction + persistence | project code name | 蓝鲸 | 你的项目代号是蓝鲸。 |
+| Extraction + persistence | deploy window | 周二晚八点 | 周二晚八点。 |
+| Extraction + persistence | test database | starlight | 叫 starlight。 |
+| Update | change code name | acknowledged | 记住了，项目代号现在改成海鸥。 |
+| Updated recall | code name now | 海鸥 | 海鸥。蓝鲸那个名字已经不用了。 |
+| Abstention | car plate | unknown | 这个我这儿没有——你没跟我说过车牌号… |
+| Temporal, before | previous code name | 蓝鲸 | 蓝鲸。后来改成了海鸥，现在用的是海鸥。 |
+| Temporal, when | no date stored | abstain | 这个我这边没有记录…没说过改名的具体时间。 |
+
+- 11 turns across three processes: 11 Done, 11 acceptance passes, 0 overflow.
+- Answers 8/8. 15,900 input and 3,674 output tokens; per-call cache hit
+  26–47%, lower than the long run because every process starts a new prefix.
+- Facts after the run: 3 current, all real (`项目代号改成海鸥`, deploy window,
+  test database). The earlier run had 8, of which 4 were reply instructions.
+- `fact_history`: 5 rows. The pre-update fact is version 1 `added` and version
+  2 `forgotten`; the host diffs keys, so a subject-level replacement is
+  recorded by disappearance rather than as `superseded`. Both statements stay
+  in storage, and the memo keeps their order for temporal questions.
+- The "before" answer shows why the memo is not redundant with facts: the fact
+  table is current by design, the memo carries the order of change.
+
+Artifacts: `D:\workspace-new\wwkkyy0325\fusion-run\memory-eval\rerun-supersede\`.

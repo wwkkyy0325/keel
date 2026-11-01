@@ -189,6 +189,8 @@ pub enum FactScope {
 struct FactCandidate {
     key: String,
     statement: String,
+    /// Subject stated by an update cue, when the fact replaces an older value.
+    subject: Option<String>,
     durable: bool,
     explicit: bool,
     workspace: bool,
@@ -201,6 +203,7 @@ struct FactCandidate {
 /// One parsed constraint and the scope hints it carries.
 struct Constraint {
     key: String,
+    subject: Option<String>,
     durable: bool,
     explicit: bool,
     workspace: bool,
@@ -726,6 +729,20 @@ impl Session {
                 FactScope::Session
             };
 
+            // An explicit update replaces the fact for the same subject, which
+            // may have a different key: "项目代号是蓝鲸" then
+            // "项目代号改成海鸥". History keeps both statements in storage.
+            if let Some(subject) = &candidate.subject {
+                let prefix = format!("constraint:{subject}");
+                for facts in [
+                    &mut self.facts,
+                    &mut self.workspace_facts,
+                    &mut self.global_facts,
+                ] {
+                    facts.retain(|existing| !existing.key.starts_with(&prefix));
+                }
+            }
+
             let fact = Fact {
                 key: candidate.key,
                 statement: candidate.statement,
@@ -1231,6 +1248,40 @@ const GLOBAL_CUES: &[&str] = &[
 /// Phrases that retract a fact.
 const FORGET_MARKERS: &[&str] = &["forget about", "forget", "忘记", "忘掉", "不要记住"];
 
+/// Phrases that ask for an answer now rather than state a durable preference.
+///
+/// "不要查文件，直接回答：我的项目代号是什么" opens with a constraint cue but
+/// is about this turn's reply. Storing it would record the user's question as
+/// a fact, which the multi-session evaluation observed four times.
+const REPLY_MARKERS: &[&str] = &[
+    "直接回答",
+    "只回答",
+    "回答我",
+    "告诉我",
+    "just answer",
+    "only answer",
+    "answer me",
+    "tell me",
+];
+
+/// Phrases that state a new value for an existing subject.
+///
+/// The text before the phrase is the subject. A fact whose key starts with the
+/// same subject is replaced, which is what "项目代号改成海鸥" needs: without
+/// it the old value and the new one both stay in the fact table.
+const UPDATE_MARKERS: &[&str] = &[
+    "改成",
+    "改为",
+    "换成",
+    "现在叫",
+    "更名为",
+    "changed to",
+    "renamed to",
+    "now called",
+    "is now",
+    "now is",
+];
+
 /// Cues that make a constraint durable, so it may become global.
 const DURABLE_CUES: &[&str] = &[
     "always",
@@ -1298,6 +1349,7 @@ fn extract_facts(segment: &Segment) -> Vec<FactCandidate> {
                     existing.explicit |= constraint.explicit;
                     existing.workspace |= constraint.workspace;
                     existing.global |= constraint.global;
+                    existing.subject = existing.subject.take().or(constraint.subject);
                 } else {
                     existing.statement = statement;
                     existing.occurrences = 1;
@@ -1305,11 +1357,13 @@ fn extract_facts(segment: &Segment) -> Vec<FactCandidate> {
                     existing.explicit = constraint.explicit;
                     existing.workspace = constraint.workspace;
                     existing.global = constraint.global;
+                    existing.subject = constraint.subject;
                 }
             } else {
                 candidates.push(FactCandidate {
                     key,
                     statement,
+                    subject: constraint.subject,
                     durable: constraint.durable,
                     explicit: constraint.explicit,
                     workspace: constraint.workspace,
@@ -1328,6 +1382,7 @@ fn extract_facts(segment: &Segment) -> Vec<FactCandidate> {
             FactCandidate {
                 key: format!("artifact:{path}"),
                 statement: format!("modified {path}"),
+                subject: None,
                 durable: false,
                 explicit: false,
                 workspace: false,
@@ -1349,6 +1404,7 @@ fn extract_facts(segment: &Segment) -> Vec<FactCandidate> {
             FactCandidate {
                 key: format!("verified:{}", segment.topic),
                 statement: format!("verified: {}", segment.topic),
+                subject: None,
                 durable: false,
                 explicit: false,
                 workspace: false,
@@ -1449,6 +1505,14 @@ fn parse_constraint(sentence: &str) -> Option<Constraint> {
     if !CONSTRAINT_CUES.iter().any(|cue| lower.starts_with(*cue)) {
         return None;
     }
+    // "Do not read files, just answer: what is my code name" constrains this
+    // reply, not the session.
+    if REPLY_MARKERS
+        .iter()
+        .any(|marker| contains_marker(lower, marker))
+    {
+        return None;
+    }
     let durable = DURABLE_CUES.iter().any(|cue| lower.starts_with(*cue));
     let explicit = EXPLICIT_MARKERS.iter().any(|cue| lower.starts_with(*cue));
     let workspace = WORKSPACE_CUES.iter().any(|cue| contains_marker(lower, cue));
@@ -1460,21 +1524,68 @@ fn parse_constraint(sentence: &str) -> Option<Constraint> {
     for cue in WORKSPACE_CUES.iter().chain(GLOBAL_CUES.iter()) {
         rest = rest.replace(cue, " ");
     }
-    let key = rest
-        .split(|character: char| !character.is_alphanumeric())
-        .filter(|token| token.chars().count() >= 3)
-        .collect::<Vec<_>>()
-        .join(" ");
+    let subject = fact_subject(&rest);
+    let key = tokens(&rest);
     if key.is_empty() {
         return None;
     }
     Some(Constraint {
         key,
+        subject,
         durable,
         explicit,
         workspace,
         global,
     })
+}
+
+/// The subject of a statement that names a new value, normalized like a key.
+fn fact_subject(rest: &str) -> Option<String> {
+    let mut earliest: Option<usize> = None;
+    for marker in UPDATE_MARKERS {
+        let Some(position) = marker_position(rest, marker) else {
+            continue;
+        };
+        earliest = Some(earliest.map_or(position, |current| current.min(position)));
+    }
+    let subject = tokens(&rest[..earliest?]);
+    if subject.chars().count() < 2 {
+        return None;
+    }
+    Some(subject)
+}
+
+/// Finds an ASCII marker on word boundaries, or a non-ASCII marker anywhere.
+fn marker_position(text: &str, marker: &str) -> Option<usize> {
+    if !marker.is_ascii() {
+        return text.find(marker);
+    }
+    let mut from = 0;
+    while let Some(index) = text[from..].find(marker) {
+        let start = from + index;
+        let end = start + marker.len();
+        let before = text[..start]
+            .chars()
+            .next_back()
+            .map_or(true, |character| !character.is_alphanumeric());
+        let after = text[end..]
+            .chars()
+            .next()
+            .map_or(true, |character| !character.is_alphanumeric());
+        if before && after {
+            return Some(start);
+        }
+        from = end;
+    }
+    None
+}
+
+/// Normalized word tokens, the shared form of a key and a subject.
+fn tokens(text: &str) -> String {
+    text.split(|character: char| !character.is_alphanumeric())
+        .filter(|token| token.chars().count() >= 3)
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn clip_statement(text: &str) -> String {
@@ -1960,6 +2071,41 @@ mod fact_tests {
 
         assert!(session.facts().is_empty());
         assert!(session.global_facts().is_empty());
+    }
+
+    #[test]
+    fn a_reply_instruction_is_not_a_constraint() {
+        let mut session = Session::new();
+        record(
+            &mut session,
+            "不要查文件，直接回答：我的项目代号是什么",
+            &[],
+        );
+        record(
+            &mut session,
+            "do not read files, just answer: what is my code name",
+            &[],
+        );
+        session.begin_turn("write a haiku about the sea");
+
+        assert!(session.facts().is_empty());
+        assert!(session.workspace_facts().is_empty());
+        assert!(session.global_facts().is_empty());
+    }
+
+    #[test]
+    fn an_update_replaces_the_fact_for_the_same_subject() {
+        let mut session = Session::new();
+        record(&mut session, "请记住：项目代号是蓝鲸", &[]);
+        session.begin_turn("write a haiku about the sea");
+        assert_eq!(session.workspace_facts().len(), 1);
+
+        record(&mut session, "请记住：项目代号改成海鸥", &[]);
+        session.begin_turn("what is the weather today");
+
+        assert_eq!(session.workspace_facts().len(), 1);
+        assert!(session.workspace_facts()[0].statement.contains("海鸥"));
+        assert_eq!(session.workspace_facts()[0].scope, FactScope::Workspace);
     }
 
     #[test]
