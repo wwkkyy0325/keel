@@ -19,6 +19,9 @@ First complete kernel and reference host.
   with reprompts.
 - Permission gate, trash port, interaction port, event sink and summarizer
   port.
+- `PermissionDecided` events record every gate decision (`allow`, `deny`,
+  `confirm`) with tool, access, path and reason, so a UI or audit log does not
+  have to infer it.
 - Versioned session snapshots (`SNAPSHOT_VERSION = 1`); a newer format is
   refused rather than misread.
 
@@ -37,4 +40,4 @@ First complete kernel and reference host.
 - 50-chapter novel: 57/57 turns, 0 overflow, 78.9% cache hit.
 - 20 curated coding cases: 20/20.
 - Five companion personas, 20 turns each: 100/100.
-- Kernel contract tests and 295 Rust tests.
+- Kernel contract tests and 296 Rust tests (252 in the kernel crates).

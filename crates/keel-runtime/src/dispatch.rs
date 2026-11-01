@@ -4,8 +4,8 @@ use std::time::{Duration, Instant};
 
 use keel_core::{
     CancelToken, ErrorCode, Event, GrantScope, InteractionKind, InteractionOption,
-    InteractionRequest, InteractionResponse, PermissionDecision, PermissionGate, RiskLevel, Tool,
-    ToolArgs, ToolCallId, ToolCallRequest, ToolCtx, ToolError, ToolResult, TurnId,
+    InteractionRequest, InteractionResponse, PermissionDecision, PermissionGate, PermissionRequest,
+    RiskLevel, Tool, ToolArgs, ToolCallId, ToolCallRequest, ToolCtx, ToolError, ToolResult, TurnId,
 };
 use tokio::task::JoinSet;
 
@@ -258,11 +258,29 @@ impl ToolDispatcher {
             // audit record.
             request.tool = tool_name.to_owned();
             match self.permission.check(&request) {
-                PermissionDecision::Allow => {}
+                PermissionDecision::Allow => {
+                    self.record_permission(turn_id, call_id, tool_name, &request, "allow", None);
+                }
                 PermissionDecision::Deny { code, message } => {
+                    self.record_permission(
+                        turn_id,
+                        call_id,
+                        tool_name,
+                        &request,
+                        "deny",
+                        Some(&message),
+                    );
                     return Err(ToolError::new(code, message, false));
                 }
                 PermissionDecision::Confirm { reason } => {
+                    self.record_permission(
+                        turn_id,
+                        call_id,
+                        tool_name,
+                        &request,
+                        "confirm",
+                        Some(&reason),
+                    );
                     let Some(interactions) = &self.interactions else {
                         return Err(ToolError::permission_denied(format!(
                             "confirmation required: {reason}"
@@ -329,6 +347,28 @@ impl ToolDispatcher {
             }
         }
         Ok(())
+    }
+
+    /// Records one gate decision for a UI or an audit log.
+    #[allow(clippy::too_many_arguments)]
+    fn record_permission(
+        &self,
+        turn_id: TurnId,
+        call_id: ToolCallId,
+        tool: &str,
+        request: &PermissionRequest,
+        decision: &str,
+        reason: Option<&str>,
+    ) {
+        self.events.append(Event::PermissionDecided {
+            turn_id,
+            call_id,
+            tool: tool.to_owned(),
+            access: request.access,
+            path: request.path.as_ref().map(|path| path.display().to_string()),
+            decision: decision.to_owned(),
+            reason: reason.map(str::to_owned),
+        });
     }
 
     fn tool_ctx(&self, turn_id: TurnId, call_id: ToolCallId, cancel: CancelToken) -> ToolCtx {

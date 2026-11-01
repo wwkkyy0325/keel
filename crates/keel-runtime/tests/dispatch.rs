@@ -8,9 +8,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use keel_core::{
-    ArgValue, CancelToken, ErrorCode, GrantScope, InteractionPolicy, InteractionResponse,
-    ParamSpec, PermissionLevel, PermissionRequest, RiskLevel, Tool, ToolArgs, ToolCallId,
-    ToolCallRequest, ToolCtx, ToolError, ToolResult, ToolSchema, TurnId,
+    AccessKind, ArgValue, CancelToken, ErrorCode, Event, GrantScope, InteractionPolicy,
+    InteractionResponse, ParamSpec, PermissionLevel, PermissionRequest, RiskLevel, Tool, ToolArgs,
+    ToolCallId, ToolCallRequest, ToolCtx, ToolError, ToolResult, ToolSchema, TurnId,
 };
 use keel_runtime::{
     EchoTool, EventLog, InteractionBroker, PermissionEngine, ToolDispatcher, ToolRegistry,
@@ -375,6 +375,106 @@ async fn dispatcher_enforces_permissions_before_calling_a_tool() {
         Some(ErrorCode::PermissionDenied)
     );
     assert_eq!(called_outside.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn permission_decisions_are_recorded_as_events() {
+    let dir = tempfile::tempdir().unwrap();
+    let inside = registry(vec![Arc::new(GuardedTool {
+        path: dir.path().join("inside.txt"),
+        called: Arc::new(AtomicUsize::new(0)),
+    })]);
+    let (allowed_dispatcher, events) = dispatcher(
+        inside,
+        dir.path(),
+        Duration::from_secs(1),
+        PermissionLevel::WorkspaceAuto,
+    );
+    let _ = allowed_dispatcher
+        .dispatch(
+            TurnId::new(1),
+            vec![call(1, "guarded", ToolArgs::new())],
+            &visible(&["guarded"]),
+            &CancelToken::new(),
+        )
+        .await;
+    let decisions: Vec<(String, AccessKind, Option<String>)> = events
+        .for_turn(TurnId::new(1))
+        .into_iter()
+        .filter_map(|record| match record.event {
+            Event::PermissionDecided {
+                decision,
+                access,
+                path,
+                ..
+            } => Some((decision, access, path)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(decisions.len(), 1);
+    assert_eq!(decisions[0].0, "allow");
+    assert_eq!(decisions[0].1, AccessKind::Write);
+    assert!(decisions[0]
+        .2
+        .as_deref()
+        .unwrap_or_default()
+        .ends_with("inside.txt"));
+
+    let outside = registry(vec![Arc::new(GuardedTool {
+        path: dir.path().join("..").join("outside.txt"),
+        called: Arc::new(AtomicUsize::new(0)),
+    })]);
+    let (confirm_dispatcher, events) = dispatcher(
+        outside,
+        dir.path(),
+        Duration::from_secs(1),
+        PermissionLevel::WorkspaceAuto,
+    );
+    let _ = confirm_dispatcher
+        .dispatch(
+            TurnId::new(2),
+            vec![call(2, "guarded", ToolArgs::new())],
+            &visible(&["guarded"]),
+            &CancelToken::new(),
+        )
+        .await;
+    let decision = events
+        .for_turn(TurnId::new(2))
+        .into_iter()
+        .find_map(|record| match record.event {
+            Event::PermissionDecided { decision, .. } => Some(decision),
+            _ => None,
+        })
+        .expect("a confirmation request is recorded");
+    assert_eq!(decision, "confirm");
+
+    let secret = registry(vec![Arc::new(GuardedTool {
+        path: dir.path().join(".ssh").join("id_rsa"),
+        called: Arc::new(AtomicUsize::new(0)),
+    })]);
+    let (denied_dispatcher, events) = dispatcher(
+        secret,
+        dir.path(),
+        Duration::from_secs(1),
+        PermissionLevel::WorkspaceAuto,
+    );
+    let _ = denied_dispatcher
+        .dispatch(
+            TurnId::new(3),
+            vec![call(3, "guarded", ToolArgs::new())],
+            &visible(&["guarded"]),
+            &CancelToken::new(),
+        )
+        .await;
+    let decision = events
+        .for_turn(TurnId::new(3))
+        .into_iter()
+        .find_map(|record| match record.event {
+            Event::PermissionDecided { decision, .. } => Some(decision),
+            _ => None,
+        })
+        .expect("a denied request is recorded");
+    assert_eq!(decision, "deny");
 }
 
 #[tokio::test]

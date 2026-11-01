@@ -2,6 +2,7 @@ use crate::error::ErrorCode;
 use crate::ids::{InteractionId, ToolCallId, TurnId};
 use crate::interaction::InteractionOutcome;
 use crate::model::TokenUsage;
+use crate::permission::AccessKind;
 use crate::state::{TurnEvent, TurnState};
 use crate::tool::RiskLevel;
 
@@ -176,6 +177,19 @@ pub enum Event {
         error: Option<ErrorCode>,
         duration_ms: u64,
     },
+    /// One permission request and the engine's decision. A confirmation also
+    /// produces `InteractionRequested`/`InteractionResolved`; the final
+    /// outcome is visible in `ToolFinished`.
+    PermissionDecided {
+        turn_id: TurnId,
+        call_id: ToolCallId,
+        tool: String,
+        access: AccessKind,
+        path: Option<String>,
+        /// `allow`, `deny` or `confirm`.
+        decision: String,
+        reason: Option<String>,
+    },
     TurnFinished {
         turn_id: TurnId,
         state: TurnState,
@@ -238,6 +252,7 @@ impl Event {
             | Self::ModelFinished { turn_id, .. }
             | Self::ToolStarted { turn_id, .. }
             | Self::ToolFinished { turn_id, .. }
+            | Self::PermissionDecided { turn_id, .. }
             | Self::TurnFinished { turn_id, .. }
             | Self::TurnCancelled { turn_id, .. }
             | Self::InteractionRequested { turn_id, .. }
@@ -275,6 +290,7 @@ impl Event {
             Self::ModelFinished { .. } => "model_finished",
             Self::ToolStarted { .. } => "tool_started",
             Self::ToolFinished { .. } => "tool_finished",
+            Self::PermissionDecided { .. } => "permission_decided",
             Self::TurnFinished { .. } => "turn_finished",
             Self::TurnCancelled { .. } => "turn_cancelled",
             Self::InteractionRequested { .. } => "interaction_requested",
