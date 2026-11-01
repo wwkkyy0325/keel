@@ -900,5 +900,10 @@
 - `--turn-timeout-ms` overrides the host-owned 180 s turn deadline; the second
   run hit it three times during peak hours. A session that stops on an
   unrecovered failure now exits non-zero.
+- `TokenUsage` now carries `cached_input_tokens`. The OpenAI-compatible
+  provider reads DeepSeek's `prompt_cache_hit_tokens` and OpenAI's
+  `prompt_tokens_details.cached_tokens`; the CLI prints `cached=` and the hit
+  rate on the usage line. Cache hits are billed at a small fraction of misses,
+  so the rate is a first-class cost metric for long runs.
 - Report: `evals/reports/2026-11-03-fusion-run.md`.
-- Verification: 245 tests; fmt and clippy clean.
+- Verification: 246 tests; fmt and clippy clean.
