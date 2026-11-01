@@ -18,7 +18,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use keel_core::{KernelError, SessionSnapshot, TodoList};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 /// One stored session.
 pub struct StoredSession {
@@ -136,11 +136,15 @@ impl Store {
                  position INTEGER NOT NULL,
                  PRIMARY KEY (session_id, item_id)
              );
-             CREATE VIEW IF NOT EXISTS session_current AS
+             DROP VIEW IF EXISTS session_current;
+             CREATE VIEW session_current AS
              SELECT s.id AS session_id,
                     s.updated_at AS updated_at,
                     (SELECT MAX(seq) FROM turns t WHERE t.session_id = s.id)
                         AS last_turn_seq,
+                    (SELECT state FROM turns t WHERE t.session_id = s.id
+                      ORDER BY seq DESC LIMIT 1)
+                        AS last_turn_state,
                     (SELECT COUNT(*) FROM turns t WHERE t.session_id = s.id)
                         AS turns,
                     (SELECT revision FROM session_summaries m
@@ -531,5 +535,15 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM turns", [], |row| row.get(0))
             .unwrap();
         assert_eq!(count, 1);
+
+        let state: String = store
+            .conn
+            .query_row(
+                "SELECT last_turn_state FROM session_current WHERE session_id = 's'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(state, "done");
     }
 }
