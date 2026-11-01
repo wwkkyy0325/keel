@@ -40,10 +40,17 @@ no markdown rendering, syntax highlighting, mouse or model picker.
 - [x] Prompt options are a vertical list: `↑`/`↓` selects, `Enter` confirms,
       the default is Allow once, and letters remain shortcuts. Verify:
       `arrows_select_a_scope_and_enter_confirms_it`.
-- [x] `Tab`/`Shift+Tab` switches the session mode; the header is the single
-      place that shows it. The driver exposes `escalate_full_auto` and
+- [x] `Tab` switches the session mode; the header is the single place that
+      shows it. The driver exposes `escalate_full_auto` and
       `revoke_permission_grants`. Verify: `tab_requests_a_mode_toggle`; the
-      grant primitives are covered by the permission tests.
+      grant primitives are covered by the permission tests. The UI mode uses a
+      session-long TTL and is never shown as a notice.
+- [x] The transcript keeps every turn. Finished turns hide their process as
+      blocks; `Ctrl-O` reveals or hides them for the whole history. Verify:
+      `a_finished_turn_hides_its_process`, `ctrl_o_toggles_process_details`.
+- [x] Scrolling starts from the current bottom instead of jumping to the top,
+      and a scrollbar appears when the transcript overflows. Verify:
+      `page_up_starts_at_the_bottom_and_page_down_returns_to_it`.
 - [x] `--demo` (mock only) gives the UI something to show: a preamble, a
       `shell` call that waits two seconds, and an answer streamed in six-char
       pieces. A `Paced` model wrapper delays chunks; `DemoModel` alternates a

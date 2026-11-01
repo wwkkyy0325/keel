@@ -203,8 +203,12 @@ cargo run -p keel-cli -- --tui --profile variants/coding/profile.deepseek.toml \
   `PgUp`/`PgDn` scroll; `Ctrl-L` clears the transcript.
 - In a permission prompt, `↑`/`↓` selects an option and `Enter` confirms
   (default: Allow once); `Esc` defers. `d`/`a`/`s`/`f` remain shortcuts.
-- `Tab` or `Shift+Tab` switches `workspace_auto` ↔ `full_auto`; the header
-  shows the current mode.
+- `Tab` switches `workspace_auto` ↔ `full_auto`; the header shows the current
+  mode. `Ctrl-O` expands or hides the process behind every finished turn, so
+  tool calls and intermediate text stay available without cluttering the
+  default view.
+- The transcript keeps every turn; `PgUp`/`PgDn` scroll it and a scrollbar
+  appears when it is longer than the viewport.
 - `/help`, `/clear`, `/cost`, `/sessions`, `/cancel`, `/quit`.
 - While a turn runs, streamed text and tool lines are visible. When it
   finishes they collapse to the answer plus one aggregate line (`tools ·

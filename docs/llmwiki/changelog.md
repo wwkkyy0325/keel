@@ -1564,3 +1564,23 @@
   `tab_requests_a_mode_toggle`, `the_permission_prompt_is_inline`, updated
   goldens, and 340 workspace tests (270 kernel-only). Task doc:
   `docs/llmwiki/tasks/tui.md`.
+
+### Scrollable history, expandable process and session mode
+
+- The transcript keeps every turn. A finished turn's process (streamed text,
+  tool lines, notices) is stored as hidden blocks instead of being deleted;
+  `Ctrl-O` shows or hides those blocks for the whole history, and the footer
+  shows the hint only when something is hidden.
+- Scrolling no longer jumps to the top on the first `PgUp`: it starts from the
+  current bottom, and a scrollbar appears when the transcript overflows.
+- `Tab` is the single mode key; `Shift+Tab` is not bound. The mode uses a
+  session-long TTL (30 days, cleared on exit) and is shown only in the header,
+  with no notice and no duplicate interaction line. The permission prompt's
+  Full auto option uses the same TTL.
+- The footer is two columns (status/usage left, keys right) so it fits an
+  80-column terminal without truncation.
+- Verify: `a_finished_turn_hides_its_process`,
+  `ctrl_o_toggles_process_details`,
+  `page_up_starts_at_the_bottom_and_page_down_returns_to_it`,
+  `tab_requests_a_mode_toggle`, updated goldens, and 342 workspace tests (270
+  kernel-only). Task doc: `docs/llmwiki/tasks/tui.md`.

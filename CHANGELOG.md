@@ -70,10 +70,14 @@ First complete kernel and reference host.
   permission prompt, a two-second command, then an answer streamed piece by
   piece, so the streaming and approval paths can be seen without a model key.
 - Permission prompts list every option vertically; `↑`/`↓` selects and `Enter`
-  confirms, with the default on Allow once. `Tab`/`Shift+Tab` switches the
-  session between `workspace_auto` and `full_auto`, reflected in the header;
-  the driver exposes `escalate_full_auto` and `revoke_permission_grants` for
-  that host switch.
+  confirms, with the default on Allow once. `Tab` switches the session between
+  `workspace_auto` and `full_auto`, reflected in the header; the driver
+  exposes `escalate_full_auto` and `revoke_permission_grants` for that host
+  switch.
+- Finished turns keep their process as hidden blocks: `Ctrl-O` shows or hides
+  tool calls and intermediate text for the whole history. The transcript is
+  no longer truncated; `PgUp`/`PgDn` scroll it and a scrollbar appears when it
+  overflows.
 
 ### Performance
 
