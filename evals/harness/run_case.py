@@ -29,13 +29,19 @@ def parse_field(text: str, name: str) -> str | None:
 
 
 def parse_usage(text: str) -> dict[str, int] | None:
-    match = re.search(r"^usage: input=(\d+) output=(\d+) total=(\d+)$", text, re.M)
+    match = re.search(
+        r"^usage: (?:calls=\d+ )?input=(\d+) output=(\d+)"
+        r"(?: cached=(\d+) hit=[\d.]+%)? total=(\d+)$",
+        text,
+        re.M,
+    )
     if not match:
         return None
     return {
         "input_tokens": int(match.group(1)),
         "output_tokens": int(match.group(2)),
-        "total_tokens": int(match.group(3)),
+        "cached_tokens": int(match.group(3) or 0),
+        "total_tokens": int(match.group(4)),
     }
 
 
