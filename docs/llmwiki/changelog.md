@@ -1012,6 +1012,18 @@
   task status; `fact_history` and `todo_history` are not projected yet).
 - Verification: 255 tests; fmt and clippy clean.
 
+### Fact and task history
+
+- `fact_history` versions every fact with `added`, `superseded` or
+  `forgotten` (and `active = 0` for the last one). `todo_history` stores the
+  full task list for every revision that changed it.
+- The projection diffs the previous rows before replacing them, so the history
+  tables see the values that are about to be overwritten. A database migrated
+  from an earlier slice backfills version 1 on its next save; the live memory
+  database now has 9 facts and 9 history rows.
+- `frontend-contract.md` documents the transition queries.
+- Verification: 259 tests; fmt and clippy clean.
+
 ### Fusion run completed at 24k
 
 - The full 57-turn novel finished on DeepSeek with the 24k profile, per-turn

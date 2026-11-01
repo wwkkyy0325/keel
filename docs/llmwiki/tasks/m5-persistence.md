@@ -24,8 +24,11 @@ The kernel exposes a snapshot; the host decides where it lives.
       `facts`, `todos`, and the `session_current` view. Verify: a live turn
       projected 1 segment, 8 entries, 2 tasks and a correct view row; a second
       save replaces rows without duplication.
-- [ ] `fact_history` and `todo_history`; today the snapshot keeps current state,
-      not the superseded history.
+- [x] `fact_history` and `todo_history`: facts are versioned with reason
+      `added`/`superseded`/`forgotten`; each task revision that changes the
+      list stores the full snapshot. Migrated databases backfill version 1 on
+      the next save. Verify: unit tests for fact supersede/forget and for a
+      task status change; the live memory DB backfilled its facts.
 - [ ] Fault injection: a crash mid-turn leaves the previous turn intact; a
       corrupt snapshot fails with a typed error, not a panic.
 - [ ] Multi-session memory evaluation on top of the store (LongMemEval-style

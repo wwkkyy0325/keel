@@ -114,6 +114,24 @@ WHERE session_id = ?1
 ORDER BY position;
 ```
 
+Transitions:
+
+```sql
+SELECT scope, key, version, statement, active, reason, changed_at
+FROM fact_history
+WHERE session_id = ?1
+ORDER BY scope, key, version;
+
+SELECT revision, snapshot_json, created_at
+FROM todo_history
+WHERE session_id = ?1
+ORDER BY revision;
+```
+
+`reason` is `added`, `superseded` or `forgotten`. `active = 0` marks the
+forgotten version. `todo_history.snapshot_json` is the full `TodoList` at that
+revision.
+
 ## What not to do
 
 - Do not parse `sessions.snapshot_json` or `sessions.todos_json`. They exist so
@@ -126,23 +144,20 @@ ORDER BY position;
 
 ## Overwritten history
 
-Two axes keep only the current value today:
+`facts` and `todos` hold current state. Their transitions are kept in
+`fact_history` and `todo_history`:
 
-- **Facts.** A superseded or forgotten fact leaves the current vector, and the
-  projection rewrites the table. The previous statement and the reason are
-  gone.
-- **Task status.** A row is rewritten on every change; the previous status and
-  the moment it changed are gone.
+- A fact that appears is version 1 with reason `added`; a changed statement
+  appends `superseded`; a fact that leaves the set appends `forgotten` with
+  `active = 0`.
+- Every task revision that changes the list appends the full list snapshot.
 
-ADR 0008 specifies `fact_history` and `todo_history` for exactly these. Neither
-is projected yet, and the resume snapshot also carries current state only.
-Turn answers, segment records and memo revisions are not overwritten: the first
-two are append-only per turn/segment, the third is append-only per revision.
+Turn answers, segment records and memo revisions are append-only at their own
+level. The resume snapshot (`snapshot_json`) remains current state only.
 
 ## Not available yet
 
-- `fact_history` and `todo_history`: superseded facts and past task revisions
-  are not projected.
+- `context_snapshots`: the exact message list the model saw on a turn.
 - `context_snapshots`: the exact message list the model saw on a turn. It is
   designed in ADR 0008 but not written.
 - Events: the audit plane lands with the frontend milestone.

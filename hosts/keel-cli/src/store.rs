@@ -12,13 +12,14 @@
 //! no stored `session.status`: status is derived from turns, tasks and the
 //! latest summary revision, so a stale column cannot contradict them.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use keel_core::{KernelError, SessionSnapshot, TodoList};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 /// One stored session.
 pub struct StoredSession {
@@ -140,6 +141,24 @@ impl Store {
                  source TEXT NOT NULL,
                  position INTEGER NOT NULL,
                  PRIMARY KEY (session_id, item_id)
+             );
+             CREATE TABLE IF NOT EXISTS fact_history (
+                 session_id TEXT NOT NULL,
+                 scope TEXT NOT NULL,
+                 key TEXT NOT NULL,
+                 version INTEGER NOT NULL,
+                 statement TEXT NOT NULL,
+                 active INTEGER NOT NULL,
+                 reason TEXT NOT NULL,
+                 changed_at INTEGER NOT NULL,
+                 PRIMARY KEY (session_id, scope, key, version)
+             );
+             CREATE TABLE IF NOT EXISTS todo_history (
+                 session_id TEXT NOT NULL,
+                 revision INTEGER NOT NULL,
+                 snapshot_json TEXT NOT NULL,
+                 created_at INTEGER NOT NULL,
+                 PRIMARY KEY (session_id, revision)
              );
              DROP VIEW IF EXISTS session_current;
              CREATE VIEW session_current AS
@@ -291,6 +310,13 @@ impl Store {
 
 /// Rewrites the normalized read model from the snapshot. The rows are a
 /// projection, so a full replace cannot leave a stale segment or task behind.
+/// The rows that the next projection is about to replace.
+struct PreviousState {
+    facts: BTreeMap<(String, String), String>,
+    fact_versions: BTreeMap<(String, String), i64>,
+    todos: Vec<(i64, String, String, String, i64)>,
+}
+
 fn project(
     tx: &Transaction<'_>,
     session_id: &str,
@@ -298,6 +324,65 @@ fn project(
     todos: Option<&TodoList>,
     now: i64,
 ) -> rusqlite::Result<()> {
+    // Read the previous projection before replacing it: the history tables
+    // need the values that are about to be overwritten.
+    let mut old_facts: BTreeMap<(String, String), String> = BTreeMap::new();
+    {
+        let mut stmt =
+            tx.prepare("SELECT scope, key, statement FROM facts WHERE session_id = ?1")?;
+        let rows = stmt.query_map(params![session_id], |row| {
+            Ok((
+                (row.get::<_, String>(0)?, row.get::<_, String>(1)?),
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+        for row in rows {
+            let (key, statement) = row?;
+            old_facts.insert(key, statement);
+        }
+    }
+    let mut versions: BTreeMap<(String, String), i64> = BTreeMap::new();
+    {
+        let mut stmt = tx.prepare(
+            "SELECT scope, key, MAX(version) FROM fact_history
+             WHERE session_id = ?1 GROUP BY scope, key",
+        )?;
+        let rows = stmt.query_map(params![session_id], |row| {
+            Ok((
+                (row.get::<_, String>(0)?, row.get::<_, String>(1)?),
+                row.get::<_, i64>(2)?,
+            ))
+        })?;
+        for row in rows {
+            let (key, version) = row?;
+            versions.insert(key, version);
+        }
+    }
+    let mut old_todos: Vec<(i64, String, String, String, i64)> = Vec::new();
+    {
+        let mut stmt = tx.prepare(
+            "SELECT item_id, text, status, source, position FROM todos
+             WHERE session_id = ?1 ORDER BY position",
+        )?;
+        let rows = stmt.query_map(params![session_id], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, i64>(4)?,
+            ))
+        })?;
+        for row in rows {
+            old_todos.push(row?);
+        }
+    }
+    let previous = PreviousState {
+        facts: old_facts,
+        fact_versions: versions,
+        todos: old_todos,
+    };
+
     for table in ["segment_entries", "segments", "records", "facts", "todos"] {
         tx.execute(
             &format!("DELETE FROM {table} WHERE session_id = ?1"),
@@ -419,6 +504,92 @@ fn project(
                     item.source.as_str(),
                     (position + 1) as i64,
                 ],
+            )?;
+        }
+    }
+
+    record_history(tx, session_id, &previous, snapshot, todos, now)
+}
+
+/// Appends the fact and task history rows. The projection keeps current state;
+/// these tables keep the transitions that would otherwise be overwritten.
+fn record_history(
+    tx: &Transaction<'_>,
+    session_id: &str,
+    previous: &PreviousState,
+    snapshot: &SessionSnapshot,
+    todos: Option<&TodoList>,
+    now: i64,
+) -> rusqlite::Result<()> {
+    let mut new_facts: BTreeMap<(String, String), String> = BTreeMap::new();
+    for (scope, facts) in [
+        ("session", &snapshot.facts),
+        ("workspace", &snapshot.workspace_facts),
+        ("global", &snapshot.global_facts),
+    ] {
+        for fact in facts {
+            new_facts.insert((scope.to_owned(), fact.key.clone()), fact.statement.clone());
+        }
+    }
+
+    for (key, statement) in &new_facts {
+        // A fact with no history row is seeded as its first version, even if
+        // it was already in the current table (a migrated database).
+        let changed = if !previous.fact_versions.contains_key(key) {
+            Some("added")
+        } else {
+            match previous.facts.get(key) {
+                None => Some("added"),
+                Some(old) if old != statement => Some("superseded"),
+                Some(_) => None,
+            }
+        };
+        if let Some(reason) = changed {
+            let version = previous.fact_versions.get(key).copied().unwrap_or(0) + 1;
+            tx.execute(
+                "INSERT INTO fact_history
+                 (session_id, scope, key, version, statement, active, reason, changed_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?7)",
+                params![session_id, key.0, key.1, version, statement, reason, now],
+            )?;
+        }
+    }
+    for (key, statement) in &previous.facts {
+        if new_facts.contains_key(key) {
+            continue;
+        }
+        let version = previous.fact_versions.get(key).copied().unwrap_or(0) + 1;
+        tx.execute(
+            "INSERT INTO fact_history
+             (session_id, scope, key, version, statement, active, reason, changed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 0, 'forgotten', ?6)",
+            params![session_id, key.0, key.1, version, statement, now],
+        )?;
+    }
+
+    // The task list keeps one snapshot per revision that changed it.
+    if let Some(todos) = todos {
+        let new_todos: Vec<(i64, String, String, String, i64)> = todos
+            .items
+            .iter()
+            .enumerate()
+            .map(|(position, item)| {
+                (
+                    i64::from(item.id),
+                    item.text.clone(),
+                    item.status.as_str().to_owned(),
+                    item.source.as_str().to_owned(),
+                    (position + 1) as i64,
+                )
+            })
+            .collect();
+        if new_todos.as_slice() != previous.todos.as_slice() {
+            let snapshot_json = serde_json::to_string(todos).unwrap_or_else(|_| "{}".to_owned());
+            tx.execute(
+                "INSERT OR REPLACE INTO todo_history
+                 (session_id, revision, snapshot_json, created_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![session_id, todos.revision, snapshot_json, now],
             )?;
         }
     }
@@ -548,6 +719,83 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM segments", [], |row| row.get(0))
             .unwrap();
         assert_eq!(segments, 1, "the projection must not duplicate rows");
+    }
+
+    #[test]
+    fn fact_changes_are_appended_to_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&dir.path().join("keel.db")).unwrap();
+        let session = keel_core::Session::new();
+        let mut snapshot = session.snapshot();
+        snapshot.facts.push(keel_core::Fact {
+            key: "project".to_owned(),
+            statement: "project is blue whale".to_owned(),
+            scope: keel_core::FactScope::Session,
+            confirmed: true,
+            segment_id: 0,
+        });
+        store.save("s", &snapshot, None, None).unwrap();
+
+        snapshot.facts[0].statement = "project is seagull".to_owned();
+        store.save("s", &snapshot, None, None).unwrap();
+
+        snapshot.facts.clear();
+        store.save("s", &snapshot, None, None).unwrap();
+
+        let mut stmt = store
+            .conn
+            .prepare(
+                "SELECT version, reason, active FROM fact_history
+                 WHERE session_id = 's' ORDER BY version",
+            )
+            .unwrap();
+        let rows: Vec<(i64, String, i64)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                (1, "added".to_owned(), 1),
+                (2, "superseded".to_owned(), 1),
+                (3, "forgotten".to_owned(), 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn task_changes_are_appended_to_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&dir.path().join("keel.db")).unwrap();
+        let session = keel_core::Session::new();
+        let mut todos = TodoList::default();
+        let item = todos.add_host("write chapter one").unwrap();
+        store
+            .save("s", &session.snapshot(), Some(&todos), None)
+            .unwrap();
+
+        todos
+            .update_status(item, keel_core::TodoStatus::Completed)
+            .unwrap();
+        store
+            .save("s", &session.snapshot(), Some(&todos), None)
+            .unwrap();
+
+        let count: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM todo_history", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 2);
+        let latest: String = store
+            .conn
+            .query_row(
+                "SELECT snapshot_json FROM todo_history ORDER BY revision DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(latest.contains("Completed"));
     }
 
     #[test]
