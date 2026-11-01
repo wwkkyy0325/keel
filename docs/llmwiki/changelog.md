@@ -907,3 +907,19 @@
   so the rate is a first-class cost metric for long runs.
 - Report: `evals/reports/2026-11-03-fusion-run.md`.
 - Verification: 246 tests; fmt and clippy clean.
+
+### Cache observability and cost model
+
+- The CLI now prints one `call:` line per main model call with `input`,
+  `cached`, `hit` and `tools`, so cross-turn and within-turn reuse can be told
+  apart. The turn aggregate line already carried `cached=` and `hit=`.
+- Added `variants/coding/profile.deepseek.novel-24k.cache.toml`, which moves
+  `history` before `memory` and `task_state` so volatile blocks sit last. It is
+  an ablation arm, not the default; acceptance and task compliance are the
+  guardrail.
+- `docs/llmwiki/cache-economics.md` fixes the pricing arithmetic: at DeepSeek's
+  50:1 hit-to-miss ratio the current order costs about one yuan more per
+  50-turn run than the best alternative, while output tokens and window size
+  dominate the real decision. An append-only transcript only wins near a 98%
+  hit rate and needs a 1M window.
+- Verification: 247 tests; fmt and clippy clean.

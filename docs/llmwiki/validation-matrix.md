@@ -22,6 +22,7 @@ claim of failure.
 | Interactions | Unit tests | None in the novel workload | None | No |
 | Permissions / trash / audit | M2 unit tests | None in the novel workload | None | No |
 | Provider compatibility | 14B/26B probes | 24-turn, local chapter | None | No |
+| Prompt cache reuse | Per-call usage lines | 24k novel, 2 turns (67–83%) | Cache-order profile pending | No |
 | Persona affordances | None | Not measured | None (no A/B) | No |
 | Interjections | None | None | None | No (ADR 0010 only) |
 | M4 plugins / M5 persistence | Not started | Not started | Not started | Not started |
@@ -68,6 +69,9 @@ claim of failure.
   DeepSeek 8k run, not by a repeated long run or the local 26B.
 - Acceptance is wired into the CLI but was not part of a long run before the
   fusion run.
+- Cache reuse is measured on two turns only. The cost model in
+  `cache-economics.md` predicts a small ordering penalty; the cache-order
+  profile exists but has not run.
 - Persona affordances have no A/B measurement.
 - Interjections are a contract only; M4 and M5 are not started.
 
