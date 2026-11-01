@@ -195,19 +195,19 @@ async fn run() -> Result<ExitCode, KernelError> {
     };
 
     if args.session {
-        return run_session(
-            &driver,
-            &config,
-            &events,
-            todos.as_ref(),
-            args.turn_input.as_deref(),
-            args.stop_on_error,
-            args.retry_errors,
-            acceptance_items.as_deref(),
-            &workspace_root,
-            store.as_mut(),
-            &args.session_id,
-        )
+        return run_session(SessionHost {
+            driver: &driver,
+            config: &config,
+            events: &events,
+            todos: todos.as_ref(),
+            turn_input: args.turn_input.as_deref(),
+            stop_on_error: args.stop_on_error,
+            retry_errors: args.retry_errors,
+            acceptance: acceptance_items.as_deref(),
+            workspace_root: &workspace_root,
+            store: store.as_mut(),
+            session_id: &args.session_id,
+        })
         .await;
     }
 
@@ -228,21 +228,23 @@ async fn run() -> Result<ExitCode, KernelError> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Reads inputs from stdin until EOF, keeping one session across turns.
-#[allow(clippy::too_many_arguments)]
-async fn run_session(
-    driver: &TurnDriver<HostModel>,
-    config: &RuntimeConfig,
-    events: &Arc<EventLog>,
-    todos: Option<&Arc<Mutex<TodoList>>>,
-    turn_input: Option<&std::path::Path>,
+/// Host services one interactive session needs.
+struct SessionHost<'a> {
+    driver: &'a TurnDriver<HostModel>,
+    config: &'a RuntimeConfig,
+    events: &'a Arc<EventLog>,
+    todos: Option<&'a Arc<Mutex<TodoList>>>,
+    turn_input: Option<&'a std::path::Path>,
     stop_on_error: bool,
     retry_errors: u32,
-    acceptance: Option<&[AcceptanceItem]>,
-    workspace_root: &std::path::Path,
-    mut store: Option<&mut store::Store>,
-    session_id: &str,
-) -> Result<ExitCode, KernelError> {
+    acceptance: Option<&'a [AcceptanceItem]>,
+    workspace_root: &'a std::path::Path,
+    store: Option<&'a mut store::Store>,
+    session_id: &'a str,
+}
+
+/// Reads inputs from stdin until EOF, keeping one session across turns.
+async fn run_session(mut host: SessionHost<'_>) -> Result<ExitCode, KernelError> {
     use std::io::{BufRead, IsTerminal, Write};
 
     let stdin = std::io::stdin();
@@ -269,15 +271,15 @@ async fn run_session(
             continue;
         }
         // A long-run host needs to know what this turn asked for. The file is
-        // read by the acceptance checker; it is written before the turn runs.
-        if let Some(path) = turn_input {
+        // read by the host.acceptance checker; it is written before the turn runs.
+        if let Some(path) = host.turn_input {
             std::fs::write(path, input).map_err(|error| KernelError::Io {
                 message: format!("cannot write turn input `{}`: {error}", path.display()),
             })?;
         }
         // The model marks host tasks completed. If the turn fails and its
         // artifact is missing, the list would advance without evidence.
-        let task_snapshot = todos.map(|list| {
+        let task_snapshot = host.todos.map(|list| {
             list.lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .clone()
@@ -285,23 +287,23 @@ async fn run_session(
         let mut retries = 0u32;
         let mut recovered = false;
         let outcome = loop {
-            let outcome = driver.run(input, CancelToken::new()).await;
-            print_outcome(config, events, &outcome);
-            print_todos(todos);
+            let outcome = host.driver.run(input, CancelToken::new()).await;
+            print_outcome(host.config, host.events, &outcome);
+            print_todos(host.todos);
             if outcome.is_done() || outcome.is_cancelled() {
                 break outcome;
             }
             // A failed turn may already have written the artifact. The
             // checklist is the evidence; re-running the same input after the
             // world moved would write the next chapter for a stale request.
-            if recovered_by_checklist(acceptance, workspace_root).await {
+            if recovered_by_checklist(host.acceptance, host.workspace_root).await {
                 println!("recovered: acceptance passed after a failed turn");
                 recovered = true;
                 break outcome;
             }
-            revert_tasks(todos, task_snapshot.as_ref());
-            print_todos(todos);
-            if retries >= retry_errors {
+            revert_tasks(host.todos, task_snapshot.as_ref());
+            print_todos(host.todos);
+            if retries >= host.retry_errors {
                 break outcome;
             }
             retries = retries.saturating_add(1);
@@ -310,15 +312,22 @@ async fn run_session(
                 .as_ref()
                 .map(|error| format!("{error}"))
                 .unwrap_or_else(|| "turn did not finish".to_owned());
-            println!("retry: {retries}/{retry_errors} after {reason}");
+            println!("retry: {retries}/{} after {reason}", host.retry_errors);
         };
         if outcome.is_cancelled() {
             break;
         }
-        if let Some(store) = store.as_deref_mut() {
-            save_turn(store, session_id, driver, todos, input, &outcome)?;
+        if let Some(store) = host.store.as_deref_mut() {
+            save_turn(
+                store,
+                host.session_id,
+                host.driver,
+                host.todos,
+                input,
+                &outcome,
+            )?;
         }
-        if stop_on_error && !outcome.is_done() && !recovered {
+        if host.stop_on_error && !outcome.is_done() && !recovered {
             stopped = true;
             break;
         }
