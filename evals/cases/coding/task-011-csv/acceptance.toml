@@ -1,0 +1,8 @@
+[[items]]
+id = "task-011-csv-acceptance"
+description = "Parse quoted CSV fields"
+required = true
+kind = "command"
+program = "python"
+args = ["-c", "from csvlite import parse; assert parse('a,\"b,c\"\\n') == [['a', 'b,c']]"]
+expected_exit = 0

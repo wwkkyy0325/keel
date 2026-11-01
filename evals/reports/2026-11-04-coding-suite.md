@@ -52,10 +52,44 @@ report carried `usage: null`. It now parses
 ```bash
 python evals/harness/import_public.py --dataset humaneval --download --limit 20
 python evals/harness/import_public.py --dataset mbpp --download --limit 30
-python evals/harness/run_suite.py --filter coding   # curated ten only
+python evals/harness/run_suite.py --filter coding   # curated set only
 python evals/harness/run_suite.py --max-total-tokens 300000
 ```
 
 Seeds are fixed per case; the model provider is not seeded, so reruns can
 differ. A case passes only when the CLI exits zero, the turn is `Done` and
 `verify.sh` exits zero.
+
+## Curated set after five additions (2026-11-04)
+
+Five self-authored cases were added, bringing the curated set to 15:
+`task-011-csv` (quoted CSV), `task-012-lru` (LRU eviction), `task-013-toc`
+(table of contents outside code fences), `task-014-semver` (numeric version
+comparison) and `task-015-wrap` (word wrapping). Each was validated twice
+before the model ran: the setup fails `verify.sh`, and the reference solution
+passes it.
+
+```bash
+python evals/harness/run_suite.py --filter coding --max-total-tokens 200000
+```
+
+| Metric | Value |
+|---|---|
+| Cases | 15 curated |
+| Passed | 14 |
+| Tokens | 189,069 (24,560 uncached, 138,624 cached, 25,885 output) |
+| Cache hit | 84.9% |
+| Cost | about ¥0.26 at peak prices |
+
+`task-013-toc` failed its first model run on the empty-heading boundary; the
+task text did not state that a heading with no title is ignored. The sentence
+was added to the prompt and the case passed on rerun. That is a prompt clarity
+fix, not a hidden-test relaxation.
+
+`task-008-greeting` failed in this run with `state=Error` and `verification did
+not run`, although `verify.sh` passed on the final workspace. The trace shows
+six tool rounds and no final text round: the model wrote both files and stopped
+without closing the turn. The same case passed in the earlier 46-case run, so
+this is model variance and a turn-closure weakness, not a case defect. A turn
+that ends without an answer is reported as Error by design; the host recovery
+checks the checklist but does not relabel the turn.

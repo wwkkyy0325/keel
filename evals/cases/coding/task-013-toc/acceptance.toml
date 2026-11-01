@@ -1,0 +1,8 @@
+[[items]]
+id = "task-013-toc-acceptance"
+description = "Build a table of contents outside code fences"
+required = true
+kind = "command"
+program = "python"
+args = ["-c", "from docs import toc; assert toc('# Title\\n```\\n# skip\\n```\\n## Part\\n') == [(1, 'Title'), (2, 'Part')]"]
+expected_exit = 0

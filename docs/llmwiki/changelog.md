@@ -1292,3 +1292,15 @@
 - This is the frontend contract at the same boundary a UI uses, so a frontend
   test can reuse the commands without starting the app.
 - Verify: 294 tests; fmt, clippy and deny clean.
+
+### Five more curated coding cases
+
+- Added `task-011-csv`, `task-012-lru`, `task-013-toc`, `task-014-semver` and
+  `task-015-wrap` through `evals/harness/scaffold_cases.py`. Each was validated
+  as setup-fails and reference-passes before any model run.
+- Curated suite: 14/15 passed, 189,069 tokens, 84.9% cache hit, about ¥0.26.
+  `task-013-toc` needed one prompt clarification (empty heading ignored) and
+  passed on rerun; `task-008-greeting` failed once with `state=Error` and no
+  final answer while its workspace tests passed, matching the model-variance
+  category from the first suite. Report: `2026-11-04-coding-suite.md`.
+- The curated set is now 15 of the M6 target of 20.

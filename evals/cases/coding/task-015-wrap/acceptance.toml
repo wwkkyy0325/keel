@@ -1,0 +1,8 @@
+[[items]]
+id = "task-015-wrap-acceptance"
+description = "Wrap text on word boundaries"
+required = true
+kind = "command"
+program = "python"
+args = ["-c", "from textwrap_lite import wrap; assert wrap('one two three', 7) == 'one two\\nthree'"]
+expected_exit = 0

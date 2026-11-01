@@ -1,0 +1,8 @@
+[[items]]
+id = "task-014-semver-acceptance"
+description = "Compare dotted versions numerically"
+required = true
+kind = "command"
+program = "python"
+args = ["-c", "from versions import compare; assert compare('1.2.10', '1.2.9') == 1"]
+expected_exit = 0

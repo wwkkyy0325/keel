@@ -633,6 +633,384 @@ if __name__ == "__main__":
             "assert total(p) == 2; os.unlink(p)"
         ),
     },
+    {
+        "id": "task-011-csv",
+        "title": "Parse quoted CSV fields",
+        "description": (
+            "`csvlite.parse(text)` splits every line on commas, which breaks "
+            "quoted fields. Parse the text into rows with quoted fields, "
+            "doubled quotes inside a quoted field, and commas or newlines "
+            "inside quotes. A trailing newline does not add a row."
+        ),
+        "setup": {
+            "csvlite.py": """def parse(text):
+    rows = []
+    for line in text.splitlines():
+        if line.strip():
+            rows.append(line.split(","))
+    return rows
+"""
+        },
+        "reference": {
+            "csvlite.py": """def parse(text):
+    rows = []
+    row = []
+    field = []
+    quoted = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if quoted:
+            if char == '"':
+                if index + 1 < len(text) and text[index + 1] == '"':
+                    field.append('"')
+                    index += 1
+                else:
+                    quoted = False
+            else:
+                field.append(char)
+        elif char == '"':
+            quoted = True
+        elif char == ",":
+            row.append("".join(field))
+            field = []
+        elif char in "\\r\\n":
+            if char == "\\r" and index + 1 < len(text) and text[index + 1] == "\\n":
+                index += 1
+            row.append("".join(field))
+            field = []
+            rows.append(row)
+            row = []
+        else:
+            field.append(char)
+        index += 1
+    if field or row:
+        row.append("".join(field))
+        rows.append(row)
+    return rows
+"""
+        },
+        "tests": """import unittest
+
+from csvlite import parse
+
+
+class ParseTests(unittest.TestCase):
+    def test_simple_rows(self):
+        self.assertEqual(parse("a,b\\nc,d\\n"), [["a", "b"], ["c", "d"]])
+
+    def test_quoted_comma(self):
+        self.assertEqual(parse('a,"b,c"\\n'), [["a", "b,c"]])
+
+    def test_doubled_quote(self):
+        self.assertEqual(parse('"a""b",c\\n'), [['a"b', "c"]])
+
+    def test_newline_inside_quotes(self):
+        self.assertEqual(parse('"line1\\nline2",x\\n'), [["line1\\nline2", "x"]])
+
+    def test_no_trailing_newline(self):
+        self.assertEqual(parse("a,b"), [["a", "b"]])
+
+
+if __name__ == "__main__":
+    unittest.main()
+""",
+        "acceptance": (
+            "from csvlite import parse; "
+            "assert parse('a,\"b,c\"\\n') == [['a', 'b,c']]"
+        ),
+    },
+    {
+        "id": "task-012-lru",
+        "title": "Make the LRU cache evict the least recent key",
+        "description": (
+            "`cache.LRUCache` stores values but never evicts and `get` does "
+            "not refresh recency. Keep at most `capacity` keys, evict the "
+            "least recently used (a read counts as use), and reject a "
+            "capacity that is not a positive integer."
+        ),
+        "setup": {
+            "cache.py": """class LRUCache:
+    def __init__(self, capacity):
+        self.capacity = capacity
+        self.data = {}
+
+    def get(self, key):
+        return self.data.get(key)
+
+    def put(self, key, value):
+        self.data[key] = value
+        while len(self.data) > self.capacity:
+            self.data.pop(next(iter(self.data)))
+"""
+        },
+        "reference": {
+            "cache.py": """from collections import OrderedDict
+
+
+class LRUCache:
+    def __init__(self, capacity):
+        if not isinstance(capacity, int) or isinstance(capacity, bool) or capacity <= 0:
+            raise ValueError("capacity must be positive")
+        self.capacity = capacity
+        self.data = OrderedDict()
+
+    def get(self, key):
+        if key not in self.data:
+            return None
+        self.data.move_to_end(key)
+        return self.data[key]
+
+    def put(self, key, value):
+        if key in self.data:
+            self.data.move_to_end(key)
+        self.data[key] = value
+        while len(self.data) > self.capacity:
+            self.data.popitem(last=False)
+"""
+        },
+        "tests": """import unittest
+
+from cache import LRUCache
+
+
+class CacheTests(unittest.TestCase):
+    def test_evicts_least_recent(self):
+        cache = LRUCache(2)
+        cache.put("a", 1)
+        cache.put("b", 2)
+        cache.put("c", 3)
+        self.assertIsNone(cache.get("a"))
+        self.assertEqual(cache.get("b"), 2)
+        self.assertEqual(cache.get("c"), 3)
+
+    def test_get_refreshes_recency(self):
+        cache = LRUCache(2)
+        cache.put("a", 1)
+        cache.put("b", 2)
+        self.assertEqual(cache.get("a"), 1)
+        cache.put("c", 3)
+        self.assertIsNone(cache.get("b"))
+        self.assertEqual(cache.get("a"), 1)
+
+    def test_update_keeps_one_entry(self):
+        cache = LRUCache(2)
+        cache.put("a", 1)
+        cache.put("a", 2)
+        self.assertEqual(cache.get("a"), 2)
+        self.assertEqual(len(cache.data), 1)
+
+    def test_invalid_capacity(self):
+        for value in (0, -1, 1.5, True):
+            with self.assertRaises(ValueError):
+                LRUCache(value)
+
+
+if __name__ == "__main__":
+    unittest.main()
+""",
+        "acceptance": (
+            "from cache import LRUCache; c = LRUCache(2); c.put('a', 1); "
+            "c.put('b', 2); c.put('c', 3); assert c.get('a') is None and c.get('c') == 3"
+        ),
+    },
+    {
+        "id": "task-013-toc",
+        "title": "Build a table of contents outside code fences",
+        "description": (
+            "`docs.toc(markdown)` treats every line starting with `#` as a "
+            "heading, including lines inside fenced code blocks and tags such "
+            "as `#hashtag`. Return `(level, title)` for headings of level 1-3 "
+            "that have a space after the markers; a heading whose title is "
+            "empty after the markers is ignored. Skip fenced blocks."
+        ),
+        "setup": {
+            "docs.py": """def toc(markdown):
+    entries = []
+    for line in markdown.splitlines():
+        if line.startswith("#"):
+            level = len(line) - len(line.lstrip("#"))
+            entries.append((level, line[level:].strip()))
+    return entries
+"""
+        },
+        "reference": {
+            "docs.py": """def toc(markdown):
+    entries = []
+    fenced = False
+    for line in markdown.splitlines():
+        if line.strip().startswith("```"):
+            fenced = not fenced
+            continue
+        if fenced:
+            continue
+        level = 0
+        while level < len(line) and line[level] == "#":
+            level += 1
+        if 1 <= level <= 3 and level < len(line) and line[level] == " ":
+            title = line[level:].strip()
+            if title:
+                entries.append((level, title))
+    return entries
+"""
+        },
+        "tests": """import unittest
+
+from docs import toc
+
+
+class TocTests(unittest.TestCase):
+    def test_levels(self):
+        text = "# Title\\n## Part\\ntext\\n### Detail\\n"
+        self.assertEqual(toc(text), [(1, "Title"), (2, "Part"), (3, "Detail")])
+
+    def test_code_fence_is_skipped(self):
+        text = "# Title\\n```\\n# not a heading\\n```\\n## Real\\n"
+        self.assertEqual(toc(text), [(1, "Title"), (2, "Real")])
+
+    def test_hashtag_is_not_a_heading(self):
+        self.assertEqual(toc("#hashtag\\n# Real\\n"), [(1, "Real")])
+
+    def test_level_four_is_ignored(self):
+        self.assertEqual(toc("#### Deep\\n## Shallow\\n"), [(2, "Shallow")])
+
+    def test_empty_title_is_ignored(self):
+        self.assertEqual(toc("# \\n# Real\\n"), [(1, "Real")])
+
+
+if __name__ == "__main__":
+    unittest.main()
+""",
+        "acceptance": (
+            "from docs import toc; "
+            "assert toc('# Title\\n```\\n# skip\\n```\\n## Part\\n') == [(1, 'Title'), (2, 'Part')]"
+        ),
+    },
+    {
+        "id": "task-014-semver",
+        "title": "Compare dotted versions numerically",
+        "description": (
+            "`versions.compare(left, right)` compares the strings themselves, "
+            "so `1.2.10` sorts before `1.2.9`. Compare the first three "
+            "numeric components of each version numerically, treat missing "
+            "components as zero, and ignore non-numeric suffixes."
+        ),
+        "setup": {
+            "versions.py": """def compare(left, right):
+    return (left > right) - (left < right)
+"""
+        },
+        "reference": {
+            "versions.py": """def compare(left, right):
+    def parts(version):
+        values = []
+        for piece in version.split("."):
+            digits = "".join(character for character in piece if character.isdigit())
+            values.append(int(digits) if digits else 0)
+        while len(values) < 3:
+            values.append(0)
+        return values[:3]
+
+    left_parts = parts(left)
+    right_parts = parts(right)
+    return (left_parts > right_parts) - (left_parts < right_parts)
+"""
+        },
+        "tests": """import unittest
+
+from versions import compare
+
+
+class CompareTests(unittest.TestCase):
+    def test_numeric_not_lexical(self):
+        self.assertEqual(compare("1.2.10", "1.2.9"), 1)
+        self.assertEqual(compare("1.9.9", "1.10.0"), -1)
+
+    def test_equal(self):
+        self.assertEqual(compare("1.2.3", "1.2.3"), 0)
+
+    def test_missing_component_is_zero(self):
+        self.assertEqual(compare("1.2", "1.2.0"), 0)
+
+    def test_suffix_ignored(self):
+        self.assertEqual(compare("2.0.0-beta", "2.0.0"), 0)
+
+
+if __name__ == "__main__":
+    unittest.main()
+""",
+        "acceptance": "from versions import compare; assert compare('1.2.10', '1.2.9') == 1",
+    },
+    {
+        "id": "task-015-wrap",
+        "title": "Wrap text on word boundaries",
+        "description": (
+            "`textwrap_lite.wrap(text, width)` cuts every line at a fixed "
+            "width, splitting words. Wrap at spaces instead, keep words "
+            "longer than the width intact, preserve explicit newlines, and "
+            "raise `ValueError` for a non-positive width."
+        ),
+        "setup": {
+            "textwrap_lite.py": """def wrap(text, width):
+    if width <= 0:
+        raise ValueError("width must be positive")
+    return "\\n".join(
+        text[index : index + width] for index in range(0, len(text), width)
+    )
+"""
+        },
+        "reference": {
+            "textwrap_lite.py": """def wrap(text, width):
+    if width <= 0:
+        raise ValueError("width must be positive")
+    lines = []
+    for paragraph in text.split("\\n"):
+        words = paragraph.split()
+        if not words:
+            lines.append("")
+            continue
+        current = words[0]
+        for word in words[1:]:
+            if len(current) + 1 + len(word) <= width:
+                current += " " + word
+            else:
+                lines.append(current)
+                current = word
+        lines.append(current)
+    return "\\n".join(lines)
+"""
+        },
+        "tests": """import unittest
+
+from textwrap_lite import wrap
+
+
+class WrapTests(unittest.TestCase):
+    def test_wraps_on_spaces(self):
+        self.assertEqual(wrap("one two three", 7), "one two\\nthree")
+
+    def test_long_word_stays_intact(self):
+        self.assertEqual(wrap("abcdefghij", 3), "abcdefghij")
+
+    def test_explicit_newlines_are_kept(self):
+        self.assertEqual(wrap("a\\nb", 10), "a\\nb")
+
+    def test_fits_on_one_line(self):
+        self.assertEqual(wrap("a b c", 10), "a b c")
+
+    def test_invalid_width(self):
+        with self.assertRaises(ValueError):
+            wrap("a", 0)
+
+
+if __name__ == "__main__":
+    unittest.main()
+""",
+        "acceptance": (
+            "from textwrap_lite import wrap; "
+            "assert wrap('one two three', 7) == 'one two\\nthree'"
+        ),
+    },
 ]
 
 

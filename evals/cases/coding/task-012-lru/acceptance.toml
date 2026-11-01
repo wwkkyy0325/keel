@@ -1,0 +1,8 @@
+[[items]]
+id = "task-012-lru-acceptance"
+description = "Make the LRU cache evict the least recent key"
+required = true
+kind = "command"
+program = "python"
+args = ["-c", "from cache import LRUCache; c = LRUCache(2); c.put('a', 1); c.put('b', 2); c.put('c', 3); assert c.get('a') is None and c.get('c') == 3"]
+expected_exit = 0
