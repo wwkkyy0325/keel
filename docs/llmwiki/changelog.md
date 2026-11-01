@@ -1,6 +1,6 @@
 # Changelog
 
-## 2026-11-02
+## 2026-10-31
 
 - Started M1: workspace with `keel-core`, `keel-runtime` and `hosts/keel-cli`.
 - Added the core contracts, turn FSM, mock model, tool dispatch, context
@@ -17,7 +17,7 @@
 - `keel-cli` runs one turn for both the coding and companion profiles.
 - `cargo deny check` remains pending until `cargo-deny` is installed.
 
-## 2026-11-02 — Permission and interaction refactor
+## 2026-10-31 — Permission and interaction refactor
 
 - Reduced permission levels to `WorkspaceAuto` and `FullAuto`; removed
   `read_only` and `manual`; internalized the sandbox and plan mode.
@@ -49,7 +49,7 @@
 - Installed `cargo-deny v0.20.2`; `cargo deny check` passes. Pinned path
   workspace dependencies to `0.1.0` to satisfy the wildcard ban.
 
-## 2026-11-02 — M2 OpenAI-compatible provider
+## 2026-10-31 — M2 OpenAI-compatible provider
 
 - Added `keel-model-openai` with typed request/message/tool mapping, streamed
   tool-call accumulation and the reserved `keel_interact` control tool.
@@ -190,7 +190,7 @@
   external hidden tests passed 4/4.
 - Shell attempts were denied in the non-terminal run; the model reported the
   fix as unverified instead of claiming a test run.
-- Report: `evals/reports/2026-11-02-task-001-deepseek.md`.
+- Report: `evals/reports/2026-10-31-task-001-deepseek.md`.
 - Verification: 124 tests; clippy, fmt and `cargo deny check`.
 
 ### Usage and latency reporting
@@ -292,11 +292,11 @@
 - Fixed MBPP entry-point selection (test-referenced function, not the first
   helper) and generated a setup skeleton from the canonical signature.
 - Fixed suite filters to compare POSIX paths on Windows.
-- Report: `evals/reports/2026-11-02-public-suite.md`.
+- Report: `evals/reports/2026-10-31-public-suite.md`.
 - Added a 300,000-token suite stop; 20 + 20 is the regression baseline and a
   50 + 50 expansion was deferred for cost.
 
-## 2026-11-02 — M3 history design
+## 2026-10-31 — M3 history design
 
 - Recorded ADR 0006: session, segment and entry model; kernel-owned topic
   segmentation; budget-driven assembly; `L0`–`L4` compression ladder with only
@@ -547,7 +547,7 @@
 - The run found that `write_file` could not create a missing parent directory.
   It now creates parent directories inside the workspace, with a test.
 - Added `variants/coding/profile.deepseek.session.toml` for headless sessions
-  and `evals/reports/2026-11-03-coding-20-turn.md`.
+  and `evals/reports/2026-11-01-coding-20-turn.md`.
 
 ### M3 model segment summaries
 
@@ -609,7 +609,7 @@
 - Real 24-turn companion run: 24/24 `Done`, 20 memo revisions (484-2679
   characters, budget 675-677), context 843-1479 tokens, and recall recovered
   `config/marlin.toml` and the pasta recipe on the final probes. Report:
-  `evals/reports/2026-11-03-companion-24-turn-recall.md`.
+  `evals/reports/2026-11-01-companion-24-turn-recall.md`.
 - M3 is closed. Vector recall stays deferred.
 - Verification: 220 tests; fmt and clippy clean.
 
@@ -627,7 +627,7 @@
   cap. The cap was bypassed because the first hit was always admitted; that is
   fixed. The per-block allocation data shows the governor was not the
   bottleneck.
-- Report: `evals/reports/2026-11-03-novel-50-turn-pilot.md`.
+- Report: `evals/reports/2026-11-01-novel-50-turn-pilot.md`.
 - Verification: 220 tests; fmt and clippy clean.
 
 ### Task state (ADR 0009)
@@ -685,7 +685,7 @@
 
 - Ran five fifteen-chapter arms under one fixed protocol: full, no-todo,
   no-recall, no-memo and unbounded. Report:
-  `evals/reports/2026-11-03-kernel-ablation.md`.
+  `evals/reports/2026-11-01-kernel-ablation.md`.
 - Bounding live tool results is load-bearing: the-four bounded arms had zero
   overflow; unbounded needed three elisions and still overflowed once.
 - The task list buys tracking and closure but costs the most observed overhead:
@@ -751,7 +751,7 @@
 - The kernel's failure paths worked (typed overflow, 17 elisions, recall
   answered the chapter-8 probe correctly), but the seams did not. Fixes are
   listed in `tasks/fusion-run.md`; no kernel code was changed by this run.
-- Report: `evals/reports/2026-11-03-fusion-run.md`.
+- Report: `evals/reports/2026-11-01-fusion-run.md`.
 
 ### Memory boundary and evaluation plan
 
@@ -820,7 +820,7 @@
   retained `aglio e olio`. A novel chapter through the same endpoint used six
   model calls, wrote 1,184 CJK characters, updated the state and closed task 1,
   so domain tools work locally.
-- Report: `evals/reports/2026-11-03-local-model-context.md`.
+- Report: `evals/reports/2026-11-01-local-model-context.md`.
 - Verification: 234 tests; fmt and clippy clean.
 
 ### Kernel affordances in personas
@@ -846,7 +846,7 @@
 - A secondary 12-setting probe with the 1,170-token memo budget answered
   correctly with and without recall: the memo already carried the details.
   Memo budget relative to the sealed segment decides whether recall is needed.
-- Report: `evals/reports/2026-11-03-recall-probe.md`.
+- Report: `evals/reports/2026-11-01-recall-probe.md`.
 
 ### Derived current task and model-call telemetry
 
@@ -905,7 +905,7 @@
   `prompt_tokens_details.cached_tokens`; the CLI prints `cached=` and the hit
   rate on the usage line. Cache hits are billed at a small fraction of misses,
   so the rate is a first-class cost metric for long runs.
-- Report: `evals/reports/2026-11-03-fusion-run.md`.
+- Report: `evals/reports/2026-11-01-fusion-run.md`.
 - Verification: 246 tests; fmt and clippy clean.
 
 ### Cache observability and cost model
@@ -1006,7 +1006,7 @@
   Remaining: `不要` imperative noise and subject-level supersede. A temporal
   probe answered "before" as `蓝鲸` and refused to invent a change time
   (`fact_history.changed_at` is stored but not in the prompt). Report:
-  `evals/reports/2026-11-04-memory-multi-session.md`.
+  `evals/reports/2026-11-01-memory-multi-session.md`.
 - `docs/llmwiki/frontend-contract.md` fixes the read path: canonical queries,
   the current-state view, and the rule that a frontend never parses the resume
   snapshot or writes to the database. It names the three answer layers (turn
@@ -1053,7 +1053,7 @@
   next quality target.
 - 4,485,612 input and 337,820 output tokens over 43 minutes; 78.9% weighted
   cache hit (per-turn median 78.0%); about ¥2.37 at off-peak prices.
-- Report: `evals/reports/2026-11-03-fusion-run.md`.
+- Report: `evals/reports/2026-11-01-fusion-run.md`.
 - Verification: 247 tests; fmt and clippy clean.
 
 ### MCP plugins
@@ -1081,7 +1081,7 @@
   remote MCP; a live test needs a streamable-HTTP deployment URL and, for most
   services, a key. A DSH bridge or Dify/Coze adapter is a separate integration.
 - Remaining: hot reload, server-initiated requests, deeper schema mapping.
-  Report: `evals/reports/2026-11-04-mcp-plugins.md`; task doc:
+  Report: `evals/reports/2026-11-01-mcp-plugins.md`; task doc:
   `tasks/m4-plugins.md`.
 - Verification: 268 tests; fmt and clippy clean.
 
@@ -1122,7 +1122,7 @@
   both versions remain in `fact_history`.
 - Validation matrix: knowledge updates now list subject supersede; the
   extraction gap is narrowed to other imperative phrasing. Report:
-  `evals/reports/2026-11-04-memory-multi-session.md`.
+  `evals/reports/2026-11-01-memory-multi-session.md`.
 
 ### Branching and session deletion
 
@@ -1140,7 +1140,7 @@
 - Schema version 8. Verify: checkpoint-per-turn, fork restore, fork errors,
   delete rows, branch survival, plus a two-process mock smoke and a live
   branch delete. 278 tests; report:
-  `evals/reports/2026-11-04-branching-and-plugin-check.md`.
+  `evals/reports/2026-11-01-branching-and-plugin-check.md`.
 
 ### Plugin probe and restart
 
@@ -1227,7 +1227,7 @@
 - Full `deepseek-flash` suite: 43/46 cases, 302,068 tokens, 82.4% weighted
   cache hit, about ¥0.36 at peak prices. Curated coding 10/10, HumanEval+ 20/20,
   MBPP+ 13/16; four MBPP cases skipped at the 300k budget. Report:
-  `evals/reports/2026-11-04-coding-suite.md`.
+  `evals/reports/2026-11-01-coding-suite.md`.
 - The two reproducible failures are benchmark boundaries: one lowercase word
   counts as valid in MBPP 16, and `True` counts as `1` in MBPP 20. MBPP 3 failed
   once with a test-runner error and passed on rerun.
@@ -1302,7 +1302,7 @@
   `task-013-toc` needed one prompt clarification (empty heading ignored) and
   passed on rerun; `task-008-greeting` failed once with `state=Error` and no
   final answer while its workspace tests passed, matching the model-variance
-  category from the first suite. Report: `2026-11-04-coding-suite.md`.
+  category from the first suite. Report: `2026-11-01-coding-suite.md`.
 - The curated set is now 15 of the M6 target of 20.
 
 ### Curated set reaches twenty cases
@@ -1314,7 +1314,7 @@
   ¥0.42; the slowest case took 37 s. `task-008-greeting` passed in this run,
   confirming the earlier failure as model variance.
 - M6 now has the twenty coding cases; the companion personas, reproducible
-  report and license audit remain. Report: `2026-11-04-coding-suite.md`.
+  report and license audit remain. Report: `2026-11-01-coding-suite.md`.
 
 ### Companion persona evaluation
 
@@ -1326,7 +1326,7 @@
   from SQLite. It checks persona rules every turn and three durable facts in
   turns 17-19, prints per-persona failures and writes a JSON report.
 - Results: 5/5 personas, 100/100 turns `Done`, all rule counters 20/20, 15/15
-  memory probes, 231,519 tokens. Report: `2026-11-04-companion-personas.md`.
+  memory probes, 231,519 tokens. Report: `2026-11-01-companion-personas.md`.
 - The first run flagged an engineer memory miss for `周二 20:00`; the checker
   required the literal “八点”. It now accepts equivalent time spellings and
   the rerun passed. This normalised the checker, not the memory bar.
@@ -1422,7 +1422,7 @@
   kernel never emits per-token events, so the stream is per boundary.
 - Results: turn 0.015/0.060 ms, context 1.835/3.197 ms, dispatch
   0.004/0.020 ms, recall 0.090/0.169 ms; 500 turns in 13.8 ms. Report:
-  `evals/reports/2026-11-04-kernel-performance.md`; task doc:
+  `evals/reports/2026-11-01-kernel-performance.md`; task doc:
   `docs/llmwiki/tasks/performance.md`.
 
 ### Resource bounds for tool execution
@@ -1599,7 +1599,7 @@
 - Verify: `shift_tab_requests_a_mode_toggle`, updated goldens, and 342
   workspace tests (270 kernel-only). Task doc: `docs/llmwiki/tasks/tui.md`.
 
-## 2026-11-04 — Tool output preview and first-run workspace
+## 2026-11-01 — Tool output preview and first-run workspace
 
 - `ToolFinished` carries a bounded, redacted `output_preview` for a live UI.
   Serde skips the field, so tool output never reaches the persisted event

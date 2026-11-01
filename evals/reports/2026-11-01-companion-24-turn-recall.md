@@ -1,4 +1,4 @@
-# Companion 24-turn run with recall probes — 2026-11-03
+# Companion 24-turn run with recall probes — 2026-11-01
 
 This run checks the rolling session memo and the deterministic recall path on a
 real model. The question is not whether the session fits: the budget does. The
@@ -57,7 +57,7 @@ and whether recall can bring it back when the memo has dropped it.
 ## Limits
 
 - One provider, one run, scripted topics. The model-level A/B with recall
-  disabled is now in `2026-11-03-recall-probe.md`: without recall the model
+  disabled is now in `2026-11-01-recall-probe.md`: without recall the model
   denied that the early project existed.
 - Lexical recall needs a shared term. Paraphrase and synonymy will miss; that is
   the known cost of not having vectors.

@@ -62,4 +62,4 @@ unchanged. MCP is the structured path; the shell tool is the unstructured one.
 
 ## Reports
 
-- `evals/reports/2026-11-04-mcp-plugins.md`.
+- `evals/reports/2026-11-01-mcp-plugins.md`.

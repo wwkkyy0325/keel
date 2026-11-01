@@ -1,4 +1,4 @@
-# Novel 50-chapter pilot — 2026-11-03
+# Novel 50-chapter pilot — 2026-11-01
 
 This run asked whether Keel can carry a long-form generation project: a Chinese
 novel written chapter by chapter, with a story bible and a continuity state

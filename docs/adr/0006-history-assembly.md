@@ -172,7 +172,7 @@ to `max_output_tokens`, current input about 200 tokens. That leaves roughly:
 Below the floor the config is rejected with a clear error rather than running
 and thrashing. The 8k no-tool floor has real-model evidence: a 20-turn
 DeepSeek companion run at 8k finished 20/20 with no overflow
-(`evals/reports/2026-11-03-companion-20-turn.md`). The 16k coding floor has
+(`evals/reports/2026-11-01-companion-20-turn.md`). The 16k coding floor has
 real single-turn evidence but no real 20-turn run; the synthetic matrix
 (`docs/llmwiki/window-matrix.md`) verifies the machinery, not the tokenizer.
 The output reserve is a cap, not a constant charge: a tool-call turn reserves

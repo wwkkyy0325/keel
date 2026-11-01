@@ -1,6 +1,6 @@
 # License and asset audit
 
-Date: 2026-11-04. This is an engineering audit, not legal advice.
+Date: 2026-11-01. This is an engineering audit, not legal advice.
 
 ## Project license
 

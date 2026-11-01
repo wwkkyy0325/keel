@@ -3,7 +3,7 @@
 Chronological record of implementation steps, verification commands and
 commits. Design decisions live in `docs/adr/`; this file is the working trail.
 
-## 2026-11-02
+## 2026-10-31
 
 ### M1 kernel
 
@@ -221,7 +221,7 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
   `calc.py`; `verify.sh` passed 4/4 hidden tests.
 - Shell calls were denied because stdin was not a terminal. The model stated
   the fix was unverified by execution rather than fabricating a test run.
-- Report: `evals/reports/2026-11-02-task-001-deepseek.md`.
+- Report: `evals/reports/2026-10-31-task-001-deepseek.md`.
 - Verification: 124 tests; clippy, fmt and `cargo deny check`.
 - Commit: `feat: pass reasoning effort to the provider`.
 
@@ -318,7 +318,7 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 - MBPP+: 19/20, 105,723 tokens, 119 s; `Mbpp/16` is an ambiguous public prompt.
 - Fixed MBPP entry-point selection and setup skeleton; fixed Windows suite
   filtering.
-- Report: `evals/reports/2026-11-02-public-suite.md`.
+- Report: `evals/reports/2026-10-31-public-suite.md`.
 - Commit: `fix: select MBPP entry points and add public suite report`.
 - Added a 300,000-token suite stop; 20 + 20 is the regression baseline and a
   50 + 50 expansion was deferred for cost.
@@ -667,7 +667,7 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
 - Recall fired on 40 turns at 620 tokens on average. The first hit could
   bypass the 400-token cap; the stage now skips oversized hits. The pilot
   showed the task protocol, not the context governor, is the binding limit.
-- Report: `evals/reports/2026-11-03-novel-50-turn-pilot.md`.
+- Report: `evals/reports/2026-11-01-novel-50-turn-pilot.md`.
 - Verification: 220 tests; fmt and clippy clean.
 
 ### Task state (ADR 0009)
@@ -717,7 +717,7 @@ commits. Design decisions live in `docs/adr/`; this file is the working trail.
   The task list is the clearest overhead: two tool round-trips per chapter.
   Memo/recall effects are hidden by the state file, so this workload cannot
   show their value.
-- Report: `evals/reports/2026-11-03-kernel-ablation.md`.
+- Report: `evals/reports/2026-11-01-kernel-ablation.md`.
 
 ### Structured memo fallback
 

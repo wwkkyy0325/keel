@@ -31,7 +31,7 @@ host is shared, so the run uses the remote DeepSeek endpoint.
       8 overflow, 28/50 chapters, 17 missing, 28/50 tasks, 50 recall events,
       16 summary failures.
 - [x] Write the report and update the validation matrix and changelog.
-      Report: `evals/reports/2026-11-03-fusion-run.md`.
+      Report: `evals/reports/2026-11-01-fusion-run.md`.
 - [x] Fix the host loop: `--stop-on-error` stops instead of advancing after an
       error; `--turn-input` writes the current input for the external checker.
       A same-input retry loop is still a follow-up.

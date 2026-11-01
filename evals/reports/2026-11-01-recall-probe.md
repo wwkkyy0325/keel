@@ -1,6 +1,6 @@
 # Recall probe — memo sufficiency and the recall counterfactual
 
-This run closes the limit named in `2026-11-03-companion-24-turn-recall.md`:
+This run closes the limit named in `2026-11-01-companion-24-turn-recall.md`:
 that report had recall enabled but no arm with recall disabled, so it could not
 show that recall changed an answer. This run uses the same mechanism with a
 model-level A/B.

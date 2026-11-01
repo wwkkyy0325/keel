@@ -1,6 +1,6 @@
 # MCP plugin adapter
 
-Date: 2026-11-04. Two real MCP servers, both installed from npm, driven by the
+Date: 2026-11-01. Two real MCP servers, both installed from npm, driven by the
 coding profile through the CLI. The point is compatibility: can a mainstream
 plugin be connected without a kernel change?
 

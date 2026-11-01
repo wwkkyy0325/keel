@@ -3,7 +3,7 @@
 Kernel crates and the reference host share the workspace version. A derived
 project pins a version and updates deliberately; see `docs/kernel-contract.md`.
 
-## 0.1.0 — 2026-11-04
+## 0.1.0 — 2026-11-01
 
 First complete kernel and reference host.
 
@@ -100,7 +100,7 @@ First complete kernel and reference host.
 - Event persistence adds about 0.37 ms at p50 to a turn with 50 events;
   serialization is 0.003 ms and enqueue is under a microsecond. The kernel emits
   no per-token events.
-- Report: `evals/reports/2026-11-04-kernel-performance.md`.
+- Report: `evals/reports/2026-11-01-kernel-performance.md`.
 
 ### Examples
 

@@ -57,7 +57,7 @@ three-tier fact store and deterministic lexical recall; vector recall is
 deferred. Real evidence: companion 20/20 at 8k, coding 20/20 at 16k, and a
 24-turn companion session whose memo rewrites stayed under budget and whose
 recall probes recovered early details
-(`evals/reports/2026-11-03-companion-24-turn-recall.md`). M3 is closed.
+(`evals/reports/2026-11-01-companion-24-turn-recall.md`). M3 is closed.
 
 ## M4 — Plugins (2-3 weeks)
 

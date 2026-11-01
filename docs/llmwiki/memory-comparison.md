@@ -1,6 +1,6 @@
 # Memory systems: Keel and the public landscape
 
-Last updated: 2026-11-03. This is a comparison note, not a design input copied
+Last updated: 2026-11-01. This is a comparison note, not a design input copied
 from another implementation. No code was read or copied; the sources are public
 papers, documentation and package pages. Public sources used here are recorded
 in `docs/spec/05-provenance.md`.

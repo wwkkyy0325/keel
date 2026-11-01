@@ -1,6 +1,6 @@
 # Validation matrix
 
-Last updated: 2026-11-04. A mechanism can be covered by unit tests, synthetic
+Last updated: 2026-11-01. A mechanism can be covered by unit tests, synthetic
 runs, real runs and ablations; one column being empty is a known gap, not a
 claim of failure.
 

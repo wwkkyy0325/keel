@@ -1,10 +1,10 @@
-# Synthetic window matrix — 2026-11-03
+# Synthetic window matrix — 2026-11-01
 
 Run of `crates/keel-runtime/tests/window_matrix.rs`. It verifies the kernel
 machinery deterministically: budget arithmetic, digests, records, wrap-up and
 overflow branches. It does **not** prove real token counts or model behaviour;
 the provider-specific evidence lives in
-`evals/reports/2026-11-03-companion-20-turn.md`.
+`evals/reports/2026-11-01-companion-20-turn.md`.
 
 ## Setup
 

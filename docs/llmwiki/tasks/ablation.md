@@ -49,7 +49,7 @@ removed at a time.
 
 ## Results
 
-See `evals/reports/2026-11-03-kernel-ablation.md`. The short version:
+See `evals/reports/2026-11-01-kernel-ablation.md`. The short version:
 
 - bounding live tool results is load-bearing: bounded arms had zero overflow,
   unbounded still overflowed after three elisions;
@@ -76,7 +76,7 @@ See `evals/reports/2026-11-03-kernel-ablation.md`. The short version:
       without recall. Both 24/24 `Done`, 21 memo revisions, 0 overflow; the
       full arm answered `config/marlin.toml` from segment 0, the no-recall arm
       denied the project. A "pasta recipe" probe missed because the segment
-      lacks `recipe`. Report: `evals/reports/2026-11-03-recall-probe.md`.
+      lacks `recipe`. Report: `evals/reports/2026-11-01-recall-probe.md`.
 - [ ] Memo probe with a short absorbed segment and early details removed from
       the state, to test the 126-character memo case.
 

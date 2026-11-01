@@ -9,7 +9,7 @@ external memory adapter can be measured separately once one exists.
 | Ability | Status | Evidence |
 |---|---|---|
 | Information extraction | Covered | Unit tests for fact scopes and provenance; two-process eval stored three constraints and answered all three. |
-| Multi-session reasoning | Covered | Two processes on one store: facts, memo and segments restored; 3/3 questions answered. Report: `2026-11-04-memory-multi-session.md`. |
+| Multi-session reasoning | Covered | Two processes on one store: facts, memo and segments restored; 3/3 questions answered. Report: `2026-11-01-memory-multi-session.md`. |
 | Temporal reasoning | Pending | Facts carry `segment_id` but no event time; the event log has turn order only. |
 | Knowledge updates | Covered | `an_update_replaces_the_fact_for_the_same_subject` plus the contradiction and forget tests; the rerun kept one current `项目代号` fact; the state before an update stays in `fact_history` and the memo. |
 | Abstention | Covered | The two-process eval refused a car plate it was never given. Kernel unit test: `unrelated_input_recalls_nothing`. |
@@ -31,7 +31,7 @@ external memory adapter can be measured separately once one exists.
 - [x] Abstention: ask about something never stated; require a refusal.
       Verify: "我不知道你的车牌号——你之前没跟我提过这个。"
 - [ ] Run full, `--no-recall` and `--no-memo` where the ability allows it.
-- [x] Write `evals/reports/2026-11-04-memory-multi-session.md` with results.
+- [x] Write `evals/reports/2026-11-01-memory-multi-session.md` with results.
 - [x] Fix the verified-Q&A fact noise found by the eval: a verified segment
       records a fact only when it produced artifacts. Verify: 16 facts became
       8 with the same 6/6 answers.
@@ -44,7 +44,7 @@ external memory adapter can be measured separately once one exists.
       they open with `不要`. Verify: `a_reply_instruction_is_not_a_constraint`
       for the Chinese eval sentence and its English form.
 
-## Rerun 2026-11-04 (after supersede and reply filtering)
+## Rerun 2026-11-01 (after supersede and reply filtering)
 
 - Three processes on one store: 3 extraction turns, 6 question/update turns,
   2 temporal probes. 11 turns, 11 Done, 11 acceptance passes, no overflow.
@@ -55,9 +55,9 @@ external memory adapter can be measured separately once one exists.
   both versions stay in storage.
 - The "before" answer still works from the memo, so current facts and ordered
   history do not compete.
-- Report section: `evals/reports/2026-11-04-memory-multi-session.md`.
+- Report section: `evals/reports/2026-11-01-memory-multi-session.md`.
 
-## Run 2026-11-04
+## Run 2026-11-01
 
 - Two processes, one store, companion 8k, no tools: 9 turns, 9 Done, 9
   acceptance passes.

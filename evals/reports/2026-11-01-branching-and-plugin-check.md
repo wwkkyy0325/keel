@@ -1,6 +1,6 @@
 # Branching and plugin checks
 
-Date: 2026-11-04. Two host-layer slices: fork/delete on the SQLite store, and a
+Date: 2026-11-01. Two host-layer slices: fork/delete on the SQLite store, and a
 plugin probe that gates a restart-based configuration flow. No kernel change.
 
 ## Branching

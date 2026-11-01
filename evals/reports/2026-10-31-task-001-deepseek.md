@@ -1,6 +1,6 @@
 # task-001 — real model run
 
-- Date: 2026-11-02
+- Date: 2026-10-31
 - Profile: `variants/coding/profile.deepseek.toml`
 - Provider: DeepSeek, OpenAI-compatible
 - Model: `deepseek-flash`

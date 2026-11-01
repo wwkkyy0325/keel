@@ -23,7 +23,7 @@ gates; CI timing on shared runners is too noisy for hard assertions.
 
 ## Results
 
-See `evals/reports/2026-11-04-kernel-performance.md`.
+See `evals/reports/2026-11-01-kernel-performance.md`.
 
 - Turn p50 0.015 ms / p99 0.060 ms; context 1.835/3.197 ms; dispatch
   0.004/0.020 ms; recall 0.090/0.169 ms; enqueue under a microsecond.

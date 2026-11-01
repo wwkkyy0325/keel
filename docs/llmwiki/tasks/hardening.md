@@ -10,7 +10,7 @@ failures observable before memory and compaction change the system.
       write a JSON report — verify: run `task-001`
 - [x] 3. Self-authored agentic cases: multi-file, permission, verification
       failure, context pressure and tool errors — verify: suite report
-      (10/10 passed on 2026-11-02)
+      (10/10 passed on 2026-10-31)
 - [x] 4. Public permissive cases (HumanEval+/MBPP+) as code-correctness smoke
       tests, downloaded locally and never vendored — verify: importer and
       provenance (local-file path tested; HumanEval+ 20/20 and MBPP+ 19/20

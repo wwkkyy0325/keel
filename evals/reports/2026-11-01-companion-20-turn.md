@@ -1,4 +1,4 @@
-# Companion 20-turn real run — 2026-11-03
+# Companion 20-turn real run — 2026-11-01
 
 This run exists because the synthetic window matrix could not answer the real
 questions: actual token counts, whether compression fires with real text, and

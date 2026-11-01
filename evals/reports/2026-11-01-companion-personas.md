@@ -1,6 +1,6 @@
 # Companion personas
 
-Date: 2026-11-04. Five personas, twenty turns each, `deepseek-flash` with the
+Date: 2026-11-01. Five personas, twenty turns each, `deepseek-flash` with the
 companion profile (8k window, no tools, 7,168 working set). One process per
 persona on one SQLite store; per-turn acceptance forces a segment seal so fact
 extraction and the memo run.

@@ -1,6 +1,6 @@
 # Multi-session memory eval
 
-Date: 2026-11-04. Two processes, one SQLite store, the companion profile (8k
+Date: 2026-11-01. Two processes, one SQLite store, the companion profile (8k
 working set, no tools). The goal is the M3/M5 seam: does memory survive a
 process restart, and does it support extraction, update and abstention.
 
@@ -105,7 +105,7 @@ projected into the prompt; wiring it in is future work.
   `session2.log`.
 - Store: `D:\workspace-new\wwkkyy0325\fusion-run\memory-eval\memory.db`.
 
-## Rerun after subject supersede (2026-11-04)
+## Rerun after subject supersede (2026-11-01)
 
 Same profile and store shape; the kernel now filters reply instructions and
 replaces a subject's value on an explicit update cue. Three processes: the

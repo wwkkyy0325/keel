@@ -14,8 +14,8 @@ milestone criteria pass, not that the system survives daily use.
 | Kernel acceptance runs a real `python -c` check | Interaction defer/timeout/approve | Real 429, retry and backoff |
 | Adaptive reasoning `Low -> High` on invalid tool arguments | Acceptance failure reprompt loop | Real failing-task recovery |
 | Usage and turn duration | Tool concurrency and serialization | Different languages and repositories |
-| 10 self-authored cases pass with real kernel verification (2026-11-02) | Fault injection for provider and filesystem failures | Long-running or concurrent use |
-| HumanEval+ 20/20 and MBPP+ 19/20 with the real model (2026-11-02) | Repository-level tasks and multiple seeds | Different languages and providers |
+| 10 self-authored cases pass with real kernel verification (2026-10-31) | Fault injection for provider and filesystem failures | Long-running or concurrent use |
+| HumanEval+ 20/20 and MBPP+ 19/20 with the real model (2026-10-31) | Repository-level tasks and multiple seeds | Different languages and providers |
 | | Soft delete and overwrite backup | Interactive terminal approval end-to-end |
 | | Mock and local-server provider paths | Cost, concurrency and long-running use |
 

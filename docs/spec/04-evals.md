@@ -35,7 +35,7 @@ Gate: all pass in CI. Kernel overhead budgets:
 Implemented as ignored release tests in
 `crates/keel-runtime/tests/performance.rs`; the host measures event
 persistence in its own ignored test. Results:
-`evals/reports/2026-11-04-kernel-performance.md`.
+`evals/reports/2026-11-01-kernel-performance.md`.
 
 ## 2. Coding variant
 

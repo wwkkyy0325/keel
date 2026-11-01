@@ -1,4 +1,4 @@
-# Hardening suite — 2026-11-02
+# Hardening suite — 2026-10-31
 
 ## Setup
 

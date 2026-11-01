@@ -1,6 +1,6 @@
 # Coding suite
 
-Date: 2026-11-04. Model: `deepseek-flash`, `variants/coding/profile.eval.toml`
+Date: 2026-11-01. Model: `deepseek-flash`, `variants/coding/profile.eval.toml`
 (16k working set, four file tools, no shell). Command:
 
 ```bash
@@ -60,7 +60,7 @@ Seeds are fixed per case; the model provider is not seeded, so reruns can
 differ. A case passes only when the CLI exits zero, the turn is `Done` and
 `verify.sh` exits zero.
 
-## Curated set after five additions (2026-11-04)
+## Curated set after five additions (2026-11-01)
 
 Five self-authored cases were added, bringing the curated set to 15:
 `task-011-csv` (quoted CSV), `task-012-lru` (LRU eviction), `task-013-toc`
@@ -94,7 +94,7 @@ this is model variance and a turn-closure weakness, not a case defect. A turn
 that ends without an answer is reported as Error by design; the host recovery
 checks the checklist but does not relabel the turn.
 
-## Twenty-case curated set (2026-11-04)
+## Twenty-case curated set (2026-11-01)
 
 The last five cases were added: `task-016-query` (query strings),
 `task-017-ranges` (interval merging), `task-018-fsm` (state machine errors),

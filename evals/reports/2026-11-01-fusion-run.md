@@ -1,6 +1,6 @@
 # Fusion run — 57-turn novel with tools, tasks, memo, recall and acceptance
 
-Date: 2026-11-03. This is the first run that puts the main mechanisms in one
+Date: 2026-11-01. This is the first run that puts the main mechanisms in one
 session: file tools, a host-locked 50-task plan, the rolling memo, lexical
 recall, mid-turn elision and an acceptance checklist. It used the remote
 DeepSeek endpoint; the shared GPU was not used.

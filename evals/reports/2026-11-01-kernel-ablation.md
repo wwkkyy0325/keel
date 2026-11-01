@@ -1,4 +1,4 @@
-# Kernel ablation — 2026-11-03
+# Kernel ablation — 2026-11-01
 
 This run measures the kernel's marginal contribution, not prompt quality. The
 prompt, model, workload and state file are fixed across five arms; one
@@ -112,7 +112,7 @@ to a mechanism. The validator caught them, which is the intended behavior.
 
 ## Next
 
-1. Done: `2026-11-03-recall-probe.md` adds the recall counterfactual. With
+1. Done: `2026-11-01-recall-probe.md` adds the recall counterfactual. With
    recall the model named `config/marlin.toml`; without it the model denied the
    project existed.
 2. Probe the short-memo case: a 126-character memo absorbed a segment; remove

@@ -11,12 +11,12 @@ gitignored except suite summaries).
 
 | Run | Result | Report |
 |---|---|---|
-| 50-chapter novel, 57 turns, 24k window | 57/57 Done, 50/50 chapters, 50/50 tasks, 57/57 acceptance, 0 overflow, 78.9% cache hit, 43 min, about ¥2.37 | `2026-11-03-fusion-run.md` |
-| 20 curated coding cases | 20/20 passed, 286,042 tokens, 85.6% cache hit, about ¥0.42, slowest 37 s | `2026-11-04-coding-suite.md` |
-| Public cache: HumanEval+ / MBPP+ | 20/20 and 13/16; two boundary failures, one transient | `2026-11-04-coding-suite.md` |
-| Five companion personas, 20 turns each | 100/100 Done, all surface rules 20/20, 15/15 memory probes | `2026-11-04-companion-personas.md` |
-| Multi-session memory | 8/8 answers after a restart; abstention and temporal bounds | `2026-11-04-memory-multi-session.md` |
-| MCP plugins | filesystem, memory, a Python SQLite server and a mock HTTP server; roots round-trip | `2026-11-04-mcp-plugins.md`, `2026-11-04-branching-and-plugin-check.md` |
+| 50-chapter novel, 57 turns, 24k window | 57/57 Done, 50/50 chapters, 50/50 tasks, 57/57 acceptance, 0 overflow, 78.9% cache hit, 43 min, about ¥2.37 | `2026-11-01-fusion-run.md` |
+| 20 curated coding cases | 20/20 passed, 286,042 tokens, 85.6% cache hit, about ¥0.42, slowest 37 s | `2026-11-01-coding-suite.md` |
+| Public cache: HumanEval+ / MBPP+ | 20/20 and 13/16; two boundary failures, one transient | `2026-11-01-coding-suite.md` |
+| Five companion personas, 20 turns each | 100/100 Done, all surface rules 20/20, 15/15 memory probes | `2026-11-01-companion-personas.md` |
+| Multi-session memory | 8/8 answers after a restart; abstention and temporal bounds | `2026-11-01-memory-multi-session.md` |
+| MCP plugins | filesystem, memory, a Python SQLite server and a mock HTTP server; roots round-trip | `2026-11-01-mcp-plugins.md`, `2026-11-01-branching-and-plugin-check.md` |
 | Terminal first run, failing-test workspace | 1/1 Done, 3/3 tests after the edit, 5 model calls, 5.4 s, 81.6% cache hit | `docs/llmwiki/tasks/tui.md` |
 
 ## What the numbers show

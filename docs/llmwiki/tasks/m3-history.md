@@ -70,12 +70,12 @@ one at a time. Summarization is blocked on
       companion profile differs from M2 only in data; 20/20 turns reached
       `Done`, 22.9k input tokens, no overflow, and the remembered fact was used
       across later turns. Report:
-      `evals/reports/2026-11-03-companion-20-turn.md`. The run also found and
+      `evals/reports/2026-11-01-companion-20-turn.md`. The run also found and
       fixed the CJK token estimate, provider overhead calibration, Chinese
       segmentation and the newest-segment detail window.
       The coding path was verified the same way: 20/20 `Done` with four tools
       at a 16k window, 292k tokens, generated tests passing 15/15 externally.
-      Report: `evals/reports/2026-11-03-coding-20-turn.md`. It found that
+      Report: `evals/reports/2026-11-01-coding-20-turn.md`. It found that
       `write_file` could not create a missing parent directory; the tool now
       does.
 
@@ -133,13 +133,13 @@ one at a time. Summarization is blocked on
       verify: 24/24 `Done`, 20 memo revisions with a max of 2679 characters,
       context 843–1479 tokens, recall fired for segments 0 and 4, and the
       answers were `config/marlin.toml` and `aglio e olio`. Report:
-      `evals/reports/2026-11-03-companion-24-turn-recall.md`.
+      `evals/reports/2026-11-01-companion-24-turn-recall.md`.
 - [x] Model-level recall A/B: the same 24 scripted turns with and without
       recall — verify: both arms 24/24 `Done`, 21 memo revisions, 0 overflow;
       the full arm answered `config/marlin.toml` from segment 0 and the
       no-recall arm denied the project existed; the "pasta recipe" probe missed
       because the segment lacks the word `recipe`. Report:
-      `evals/reports/2026-11-03-recall-probe.md`.
+      `evals/reports/2026-11-01-recall-probe.md`.
 
 ## Verification commands
 

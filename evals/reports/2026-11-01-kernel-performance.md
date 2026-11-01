@@ -1,6 +1,6 @@
 # Kernel performance and event overhead
 
-Date: 2026-11-04. Release build (`--release`), Windows 11, local machine, one
+Date: 2026-11-01. Release build (`--release`), Windows 11, local machine, one
 run per measurement. These are local gates, not a CI benchmark.
 
 ```bash

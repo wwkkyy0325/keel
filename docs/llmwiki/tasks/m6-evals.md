@@ -10,14 +10,14 @@ the deterministic parts.
       tests, reference solution and `verify.sh`.
 - [x] Run the full suite against `deepseek-flash` and record pass/fail,
       latency, tokens and cache hits. Verify:
-      `evals/reports/2026-11-04-coding-suite.md`: 43/46, 302k tokens, 82.4%
+      `evals/reports/2026-11-01-coding-suite.md`: 43/46, 302k tokens, 82.4%
       cache hit, ¥0.36; harness usage parsing fixed in the same change.
 - [x] Grow the coding set to twenty cases. Verify: task-011 to task-020 were
       added and validated (setup fails, reference passes); the curated suite
       passed 20/20.
 - [x] Five companion personas and a 20-turn run per persona. Verify: 5/5
       personas, 100/100 turns Done, all rule checks and 15/15 memory probes
-      passed; report `2026-11-04-companion-personas.md`.
+      passed; report `2026-11-01-companion-personas.md`.
 - [x] CI runs fmt, clippy, tests and `cargo deny`; the harness job compiles the
       scripts and validates the dataset importer without a model key.
 - [x] Reproducible report: commands, profile, model, date, token budget and
@@ -31,15 +31,15 @@ the deterministic parts.
 
 | Date | Profile | Cases | Passed | Tokens | Notes |
 |---|---|---|---|---|---|
-| 2026-11-04 | `variants/coding/profile.eval.toml` | 46 | 43 | 302,068 | curated 10/10, HumanEval 20/20, MBPP 13/16; 4 skipped at 300k; ¥0.36; report `2026-11-04-coding-suite.md` |
-| 2026-11-04 | `variants/coding/profile.eval.toml` | 15 | 14 | 189,069 | curated set only; 84.9% cache hit; ¥0.26; task-008 ended without a final answer while its tests passed |
-| 2026-11-04 | `variants/coding/profile.eval.toml` | 20 | 20 | 286,042 | full curated set; 85.6% cache hit; ¥0.42; slowest case 37 s |
+| 2026-11-01 | `variants/coding/profile.eval.toml` | 46 | 43 | 302,068 | curated 10/10, HumanEval 20/20, MBPP 13/16; 4 skipped at 300k; ¥0.36; report `2026-11-01-coding-suite.md` |
+| 2026-11-01 | `variants/coding/profile.eval.toml` | 15 | 14 | 189,069 | curated set only; 84.9% cache hit; ¥0.26; task-008 ended without a final answer while its tests passed |
+| 2026-11-01 | `variants/coding/profile.eval.toml` | 20 | 20 | 286,042 | full curated set; 85.6% cache hit; ¥0.42; slowest case 37 s |
 
 ## Companion runs
 
 | Date | Personas | Turns | Passed | Tokens | Notes |
 |---|---|---|---|---|---|
-| 2026-11-04 | 5 | 100 | 100 | 231,519 | all persona rules 20/20 and 15/15 memory probes; report `2026-11-04-companion-personas.md` |
+| 2026-11-01 | 5 | 100 | 100 | 231,519 | all persona rules 20/20 and 15/15 memory probes; report `2026-11-01-companion-personas.md` |
 
 ## Notes
 

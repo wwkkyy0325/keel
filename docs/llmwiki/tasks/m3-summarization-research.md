@@ -46,7 +46,7 @@ survive compression, cost stays bounded, and tests stay deterministic?
 
 ## Outcome
 
-Decided on 2026-11-03: model summaries are required, but they live at the
+Decided on 2026-11-01: model summaries are required, but they live at the
 session level, not the segment level.
 
 - `L2` turn digests stay structured and model-free; they are per-turn and would

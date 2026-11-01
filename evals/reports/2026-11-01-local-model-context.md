@@ -1,4 +1,4 @@
-# Local model context probe — 2026-11-03
+# Local model context probe — 2026-11-01
 
 A real local model on a separate Windows machine, driven by Keel through the
 same OpenAI-compatible provider. The goal was to measure the working set a
