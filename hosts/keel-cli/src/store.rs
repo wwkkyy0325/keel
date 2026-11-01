@@ -1536,6 +1536,93 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "timing gate; run in release"]
+    fn saving_turns_with_events_stays_bounded() {
+        use std::time::{Duration, Instant};
+
+        fn p(values: &[Duration], fraction: f64) -> Duration {
+            let mut sorted = values.to_vec();
+            sorted.sort();
+            sorted[((sorted.len() as f64 - 1.0) * fraction).round() as usize]
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&dir.path().join("keel.db")).unwrap();
+        let session = keel_core::Session::new();
+        let events: Vec<(String, String)> = (0..50)
+            .map(|index| (format!("event_{index}"), r#"{"x":1}"#.to_owned()))
+            .collect();
+
+        let mut serialized = Vec::new();
+        for _ in 0..100 {
+            let started = Instant::now();
+            for (name, payload) in &events {
+                let _ = serde_json::to_string(&(name, payload)).unwrap();
+            }
+            serialized.push(started.elapsed());
+        }
+
+        let mut with = Vec::new();
+        for seq in 1..=100 {
+            let turn = StoredTurn {
+                seq,
+                input: "hi",
+                state: "Done",
+                answer: "ok",
+                answer_json: "{}",
+                usage_json: "{}",
+                duration_ms: 1,
+                error: None,
+                context: None,
+                events: &events,
+            };
+            let started = Instant::now();
+            store
+                .save("s", &session.snapshot(), None, Some(turn))
+                .unwrap();
+            with.push(started.elapsed());
+        }
+        let mut without = Vec::new();
+        for seq in 101..=200 {
+            let turn = StoredTurn {
+                seq,
+                input: "hi",
+                state: "Done",
+                answer: "ok",
+                answer_json: "{}",
+                usage_json: "{}",
+                duration_ms: 1,
+                error: None,
+                context: None,
+                events: &[],
+            };
+            let started = Instant::now();
+            store
+                .save("s", &session.snapshot(), None, Some(turn))
+                .unwrap();
+            without.push(started.elapsed());
+        }
+        println!(
+            "serialize 50 events: p50={:.3} ms",
+            p(&serialized, 0.50).as_secs_f64() * 1000.0
+        );
+        println!(
+            "save with 50 events: p50={:.3} ms p99={:.3} ms",
+            p(&with, 0.50).as_secs_f64() * 1000.0,
+            p(&with, 0.99).as_secs_f64() * 1000.0
+        );
+        println!(
+            "save without events: p50={:.3} ms p99={:.3} ms",
+            p(&without, 0.50).as_secs_f64() * 1000.0,
+            p(&without, 0.99).as_secs_f64() * 1000.0
+        );
+        assert!(
+            p(&with, 0.99) < Duration::from_millis(100),
+            "event persistence exceeded 100 ms"
+        );
+    }
+
+    #[test]
     fn an_unknown_session_loads_as_none() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(&dir.path().join("keel.db")).unwrap();
