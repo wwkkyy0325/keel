@@ -7,7 +7,9 @@ mod view;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use keel_core::{
@@ -28,10 +30,18 @@ use terminal::TerminalInteractionPort;
 enum HostModel {
     Mock(MockModel),
     OpenAi(OpenAiProvider),
+    /// A paced script for `--demo`: a tool call with a visible wait, then an
+    /// answer streamed piece by piece.
+    Demo(DemoModel),
     /// Forwards text deltas to the TUI while the driver consumes the stream.
     Tui {
         inner: Box<HostModel>,
         ui: tokio::sync::mpsc::Sender<tui::UiEvent>,
+    },
+    /// Delays chunks so a mock turn looks like a real streaming turn.
+    Paced {
+        inner: Box<HostModel>,
+        delay: Duration,
     },
 }
 
@@ -42,6 +52,81 @@ impl HostModel {
             ui,
         }
     }
+
+    fn with_pacing(self, delay: Duration) -> Self {
+        Self::Paced {
+            inner: Box::new(self),
+            delay,
+        }
+    }
+}
+
+/// Two model calls per turn: a tool call, then the answer. The counter keeps
+/// repeating so every turn in a demo shows both phases.
+struct DemoModel {
+    calls: AtomicU64,
+}
+
+impl DemoModel {
+    fn new() -> Self {
+        Self {
+            calls: AtomicU64::new(0),
+        }
+    }
+}
+
+const DEMO_ANSWER: &str = "The check finished. This answer is streamed piece by piece so you can see the process: a model call, a tool call with its permission prompt, the tool result, and then the answer. When the turn ends the intermediate lines disappear and only this answer and its aggregate fields remain.";
+
+fn demo_tool_step() -> MockStep {
+    let mut args = ToolArgs::new();
+    args.insert("program", ArgValue::String("python".to_owned()));
+    args.insert(
+        "args",
+        ArgValue::StringList(vec![
+            "-c".to_owned(),
+            "import time; time.sleep(2)".to_owned(),
+        ]),
+    );
+    MockStep::TextAndToolCall {
+        text: "Let me run a quick check before answering.".to_owned(),
+        name: "shell".to_owned(),
+        args,
+    }
+}
+
+#[async_trait]
+impl ModelProvider for DemoModel {
+    async fn stream(
+        &self,
+        request: ModelRequest,
+        cancel: &CancelToken,
+    ) -> Result<ModelStream, ModelError> {
+        let call = self.calls.fetch_add(1, Ordering::Relaxed);
+        let step = if call % 2 == 0 {
+            demo_tool_step()
+        } else {
+            MockStep::Text(DEMO_ANSWER.to_owned())
+        };
+        MockModel::new(vec![step]).stream(request, cancel).await
+    }
+}
+
+fn text_chunks(text: &str, size: usize) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+    let mut count = 0;
+    for character in text.chars() {
+        current.push(character);
+        count += 1;
+        if count >= size {
+            chunks.push(std::mem::take(&mut current));
+            count = 0;
+        }
+    }
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+    chunks
 }
 
 #[async_trait]
@@ -54,6 +139,37 @@ impl ModelProvider for HostModel {
         match self {
             Self::Mock(model) => model.stream(request, cancel).await,
             Self::OpenAi(model) => model.stream(request, cancel).await,
+            Self::Demo(model) => model.stream(request, cancel).await,
+            Self::Paced { inner, delay } => {
+                let mut stream = inner.stream(request, cancel).await?;
+                let delay = *delay;
+                let cancel = cancel.clone();
+                let (tx, rx) = tokio::sync::mpsc::channel(64);
+                tokio::spawn(async move {
+                    while let Some(chunk) = stream.recv().await {
+                        if cancel.is_cancelled() {
+                            break;
+                        }
+                        match chunk {
+                            Ok(ModelChunk::TextDelta(text)) => {
+                                for piece in text_chunks(&text, 6) {
+                                    tokio::time::sleep(delay).await;
+                                    if tx.send(Ok(ModelChunk::TextDelta(piece))).await.is_err() {
+                                        return;
+                                    }
+                                }
+                            }
+                            other => {
+                                tokio::time::sleep(delay).await;
+                                if tx.send(other).await.is_err() {
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                });
+                Ok(ModelStream::new(rx))
+            }
             Self::Tui { inner, ui } => {
                 let mut stream = inner.stream(request, cancel).await?;
                 let ui = ui.clone();
@@ -298,7 +414,17 @@ async fn run() -> Result<ExitCode, KernelError> {
         config.interaction,
         events.clone(),
     ));
-    let model = build_model(&config, &args.input, args.session)?;
+    if args.demo && config.model_route.provider != "mock" {
+        return Err(invalid_config(
+            "`--demo` needs the mock provider; use a real profile for real runs",
+        ));
+    }
+    let model = build_model(&config, &args.input, args.session, args.demo)?;
+    let model = if args.demo {
+        model.with_pacing(Duration::from_millis(45))
+    } else {
+        model
+    };
     let model = if args.tui {
         model.with_ui(ui_tx)
     } else {
@@ -928,9 +1054,13 @@ fn build_model(
     config: &RuntimeConfig,
     input: &str,
     session: bool,
+    demo: bool,
 ) -> Result<HostModel, KernelError> {
     match config.model_route.provider.as_str() {
         "mock" => {
+            if demo {
+                return Ok(HostModel::Demo(DemoModel::new()));
+            }
             let model = if session {
                 MockModel::repeating(vec![MockStep::Text("mock session turn".to_owned())])
             } else {
@@ -987,6 +1117,8 @@ struct Args {
     keep_checkpoints: Option<u32>,
     /// Run the interactive terminal UI.
     tui: bool,
+    /// Mock-only demo: a slow tool call and a paced answer for the TUI.
+    demo: bool,
     /// Machine-readable output for `--plugins-check`.
     json: bool,
     /// Print a composed frontend view (`sessions`, `session`, `turn` or
@@ -1025,6 +1157,7 @@ fn parse_args() -> Result<Args, KernelError> {
     let mut delete_session = None;
     let mut keep_checkpoints = None;
     let mut tui = false;
+    let mut demo = false;
     let mut json = false;
     let mut view = None;
     let mut turn = None;
@@ -1097,6 +1230,9 @@ fn parse_args() -> Result<Args, KernelError> {
             }
             "--tui" => {
                 tui = true;
+            }
+            "--demo" => {
+                demo = true;
             }
             "--turn-input" => {
                 turn_input =
@@ -1259,6 +1395,7 @@ fn parse_args() -> Result<Args, KernelError> {
         delete_session,
         keep_checkpoints,
         tui,
+        demo,
         json,
         view,
         turn,
@@ -1397,6 +1534,36 @@ mod tests {
         assert!(parse_fork("s").is_err());
         assert!(parse_fork("s:0").is_err());
         assert!(parse_fork(":2").is_err());
+    }
+
+    #[test]
+    fn text_chunks_split_on_char_boundaries() {
+        assert_eq!(text_chunks("abcdef", 2), vec!["ab", "cd", "ef"]);
+        assert_eq!(text_chunks("中文测试", 2), vec!["中文", "测试"]);
+        assert!(text_chunks("", 2).is_empty());
+        assert_eq!(text_chunks("abc", 8), vec!["abc"]);
+    }
+
+    #[test]
+    fn the_demo_script_runs_a_sleeping_shell_tool() {
+        match demo_tool_step() {
+            MockStep::TextAndToolCall {
+                name, args, text, ..
+            } => {
+                assert_eq!(name, "shell");
+                assert!(!text.is_empty());
+                assert!(matches!(
+                    args.get("program"),
+                    Some(ArgValue::String(program)) if program == "python"
+                ));
+                assert!(matches!(
+                    args.get("args"),
+                    Some(ArgValue::StringList(items))
+                        if items.iter().any(|item| item.contains("sleep(2)"))
+                ));
+            }
+            other => panic!("unexpected demo step: {other:?}"),
+        }
     }
 
     #[test]
