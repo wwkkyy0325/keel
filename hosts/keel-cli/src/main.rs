@@ -232,6 +232,13 @@ async fn run_session(
                 message: format!("cannot write turn input `{}`: {error}", path.display()),
             })?;
         }
+        // The model marks host tasks completed. If the turn fails and its
+        // artifact is missing, the list would advance without evidence.
+        let task_snapshot = todos.map(|list| {
+            list.lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone()
+        });
         let mut retries = 0u32;
         let mut recovered = false;
         let outcome = loop {
@@ -249,6 +256,8 @@ async fn run_session(
                 recovered = true;
                 break outcome;
             }
+            revert_tasks(todos, task_snapshot.as_ref());
+            print_todos(todos);
             if retries >= retry_errors {
                 break outcome;
             }
@@ -273,6 +282,15 @@ async fn run_session(
     } else {
         ExitCode::SUCCESS
     })
+}
+
+/// Restores the pre-turn task list after a failed turn. Task completion is the
+/// model's claim; a failed checklist means the evidence is missing.
+fn revert_tasks(todos: Option<&Arc<Mutex<TodoList>>>, snapshot: Option<&TodoList>) {
+    let (Some(list), Some(snapshot)) = (todos, snapshot) else {
+        return;
+    };
+    *list.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = snapshot.clone();
 }
 
 /// A failed turn that still passes its checklist has done its work. The host
@@ -821,5 +839,22 @@ mod tests {
     #[tokio::test]
     async fn a_failed_turn_without_a_checklist_does_not_recover() {
         assert!(!recovered_by_checklist(None, std::path::Path::new(".")).await);
+    }
+
+    #[test]
+    fn a_failed_turn_restores_the_task_list() {
+        let mut list = TodoList::default();
+        let first = list.add_host("one").unwrap();
+        list.add_host("two").unwrap();
+        let snapshot = list.clone();
+        list.update_status(first, keel_core::TodoStatus::Completed)
+            .unwrap();
+        assert_eq!(list.completed(), 1);
+
+        let shared = Arc::new(Mutex::new(list));
+        revert_tasks(Some(&shared), Some(&snapshot));
+        let list = shared.lock().unwrap();
+        assert_eq!(list.completed(), 0);
+        assert_eq!(list.current().map(|item| item.id), Some(first));
     }
 }
