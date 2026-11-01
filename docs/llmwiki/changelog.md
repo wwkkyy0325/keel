@@ -1377,3 +1377,18 @@
   events; a host that wants live tokens wraps its `ModelProvider`.
 - Verify: `permission_decisions_are_recorded_as_events` covers allow, confirm
   and deny; 296 workspace tests, 252 kernel-only.
+
+### Event-order contract and minimal embedding
+
+- `a_tool_turn_emits_the_host_contract_events_in_order` pins the event sequence
+  a host may rely on: `turn_started` first, `turn_report` last, with
+  `model_started` → `permission_decided` → `tool_started` → `tool_finished` →
+  `turn_finished` in between.
+- `crates/keel-runtime/examples/minimal_turn.rs` is a host in one file: a
+  profile string, two context stages, one tool, a mock model, a driver. It runs
+  a turn and prints the state, answer and event count; no CLI involved.
+- `docs/kernel-contract.md` and README point to the example and state that a
+  path dependency is enough for personal use; publishing the kernel is
+  optional.
+- Verify: 297 workspace tests, 253 kernel-only, `cargo run -p keel-runtime
+  --example minimal_turn`.

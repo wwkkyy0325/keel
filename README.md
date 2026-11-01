@@ -42,7 +42,12 @@ kernel-only build proves the boundary:
 
 ```bash
 cargo build -p keel-core -p keel-policy -p keel-runtime -p keel-model-openai
+cargo run -p keel-runtime --example minimal_turn
 ```
+
+`minimal_turn` is a complete host in one file: a profile, two context stages,
+one tool, a mock model and a driver. It is the smallest starting point for a
+derived project; publishing the kernel is not required for personal use.
 
 ## Implemented
 

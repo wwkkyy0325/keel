@@ -99,6 +99,19 @@ cargo test -p keel-core -p keel-policy -p keel-runtime -p keel-model-openai
 CI runs this as a separate job, so a host change cannot hide a kernel
 dependency.
 
+### Minimal embedding
+
+`crates/keel-runtime/examples/minimal_turn.rs` is a host in one file: a
+profile, two context stages, one tool, a mock model and a driver. Run it with
+
+```bash
+cargo run -p keel-runtime --example minimal_turn
+```
+
+For personal projects a path dependency is enough; publishing is optional.
+A product copies this shape, replaces the mock with a provider and the prints
+with its UI, and does not need the reference CLI.
+
 ## Contract tests
 
 | Extension point | Contract test |
@@ -108,6 +121,7 @@ dependency.
 | `Policy` and profile resolution | `crates/keel-runtime/tests/profile.rs`, `keel-policy` unit tests |
 | `ContextStage` | `crates/keel-runtime/tests/context.rs`, `window_matrix.rs` |
 | `EventSink` / `EventLog` | `crates/keel-runtime/tests/event_log.rs` |
+| Event order for a tool turn | `a_tool_turn_emits_the_host_contract_events_in_order` |
 | `InteractionPort` | `crates/keel-runtime/tests/interactions.rs` |
 | `PermissionGate` | `crates/keel-runtime` permission unit tests; `permission_decisions_are_recorded_as_events` |
 | `Summarizer` | `crates/keel-runtime` summarizer unit tests |

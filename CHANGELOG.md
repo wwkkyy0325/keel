@@ -35,9 +35,15 @@ First complete kernel and reference host.
   replies, process-tree cleanup and `--plugins-check [--json]`.
 - Cache and usage telemetry; cost model in `docs/llmwiki/cache-economics.md`.
 
+### Examples
+
+- `crates/keel-runtime/examples/minimal_turn.rs` runs one turn without the
+  reference CLI: profile, two stages, one tool, a mock model and a driver.
+
 ### Evidence
 
 - 50-chapter novel: 57/57 turns, 0 overflow, 78.9% cache hit.
 - 20 curated coding cases: 20/20.
 - Five companion personas, 20 turns each: 100/100.
-- Kernel contract tests and 296 Rust tests (252 in the kernel crates).
+- Kernel contract tests, including the full event order for a tool turn, and
+  297 Rust tests (253 in the kernel crates).
