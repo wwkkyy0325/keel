@@ -18,7 +18,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use keel_core::{KernelError, SessionSnapshot, TodoList};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 5;
 
 /// One stored session.
 pub struct StoredSession {
@@ -32,6 +32,9 @@ pub struct StoredTurn<'a> {
     pub input: &'a str,
     pub state: &'a str,
     pub answer: &'a str,
+    /// The structured `Answer`: revision, body, changes, pending, verification,
+    /// notes and `missing`.
+    pub answer_json: &'a str,
     pub usage_json: &'a str,
     pub duration_ms: u64,
 }
@@ -68,6 +71,7 @@ impl Store {
                  input TEXT NOT NULL,
                  state TEXT NOT NULL,
                  answer TEXT NOT NULL,
+                 answer_json TEXT NOT NULL DEFAULT '{}',
                  usage_json TEXT NOT NULL,
                  duration_ms INTEGER NOT NULL,
                  created_at INTEGER NOT NULL
@@ -98,6 +102,7 @@ impl Store {
                  changes_json TEXT NOT NULL,
                  pending_json TEXT NOT NULL,
                  verified INTEGER NOT NULL,
+                 turns INTEGER NOT NULL DEFAULT 0,
                  folded INTEGER NOT NULL,
                  absorbed_in INTEGER,
                  PRIMARY KEY (session_id, segment_id)
@@ -164,6 +169,19 @@ impl Store {
              FROM sessions s;",
         )
         .map_err(|error| store_error("create schema", error))?;
+        // Additive migrations for databases written by earlier slices.
+        ensure_column(
+            &conn,
+            "turns",
+            "answer_json",
+            "ALTER TABLE turns ADD COLUMN answer_json TEXT NOT NULL DEFAULT '{}'",
+        )?;
+        ensure_column(
+            &conn,
+            "records",
+            "turns",
+            "ALTER TABLE records ADD COLUMN turns INTEGER NOT NULL DEFAULT 0",
+        )?;
         conn.execute(
             "INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (?1, ?2)",
             params![SCHEMA_VERSION, now()],
@@ -246,8 +264,9 @@ impl Store {
         if let Some(turn) = turn {
             tx.execute(
                 "INSERT OR REPLACE INTO turns
-                 (id, session_id, seq, input, state, answer, usage_json, duration_ms, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                 (id, session_id, seq, input, state, answer, answer_json,
+                  usage_json, duration_ms, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     format!("{session_id}:{}", turn.seq),
                     session_id,
@@ -255,6 +274,7 @@ impl Store {
                     turn.input,
                     turn.state,
                     turn.answer,
+                    turn.answer_json,
                     turn.usage_json,
                     turn.duration_ms,
                     now,
@@ -323,8 +343,8 @@ fn project(
             tx.execute(
                 "INSERT INTO records
                  (session_id, segment_id, goal, result, changes_json, pending_json,
-                  verified, folded, absorbed_in)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                  verified, turns, folded, absorbed_in)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     session_id,
                     segment.id,
@@ -333,6 +353,7 @@ fn project(
                     changes,
                     pending,
                     i64::from(record.verified),
+                    record.turns,
                     i64::from(record.folded),
                     record.absorbed_in,
                 ],
@@ -400,6 +421,28 @@ fn project(
                 ],
             )?;
         }
+    }
+    Ok(())
+}
+
+/// Adds a column to an existing table. `table`, `column` and `ddl` are
+/// compile-time constants, never user input.
+fn ensure_column(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    ddl: &str,
+) -> Result<(), KernelError> {
+    let present: i64 = conn
+        .query_row(
+            &format!("SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = '{column}'"),
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| store_error("inspect table", error))?;
+    if present == 0 {
+        conn.execute(ddl, [])
+            .map_err(|error| store_error("add column", error))?;
     }
     Ok(())
 }
@@ -524,6 +567,7 @@ mod tests {
             input: "hello",
             state: "done",
             answer: "hi",
+            answer_json: "{}",
             usage_json: "{}",
             duration_ms: 5,
         };

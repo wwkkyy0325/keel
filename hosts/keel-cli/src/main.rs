@@ -351,6 +351,23 @@ fn save_turn(
         "{{\"input\":{},\"output\":{},\"cached\":{}}}",
         outcome.usage.input_tokens, outcome.usage.output_tokens, outcome.usage.cached_input_tokens
     );
+    // The per-turn answer is structured: body, observed changes, pending items
+    // and the verifier report. The body is also in its own column so a reader
+    // can list answers without parsing JSON.
+    let answer_json = serde_json::json!({
+        "revision": outcome.answer.revision,
+        "body": &outcome.answer.body,
+        "changes": outcome.answer.changes.iter().map(|change| change.path.as_str()).collect::<Vec<_>>(),
+        "pending": outcome.answer.pending.iter().map(|item| item.description.as_str()).collect::<Vec<_>>(),
+        "verification": outcome.answer.verification.as_ref().map(|report| serde_json::json!({
+            "passed": report.passed(),
+            "required_failed": &report.required_failed,
+            "required_unverified": &report.required_unverified,
+        })),
+        "notes": &outcome.answer.notes,
+        "missing": outcome.answer.missing,
+    })
+    .to_string();
     let state = outcome.state.to_string();
     let seq = store.next_turn_seq(session_id)?;
     store.save(
@@ -362,6 +379,7 @@ fn save_turn(
             input,
             state: &state,
             answer: &outcome.answer.body,
+            answer_json: &answer_json,
             usage_json: &usage,
             duration_ms: outcome.duration_ms,
         }),
