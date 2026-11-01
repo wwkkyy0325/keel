@@ -1,12 +1,14 @@
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use serde::Serialize;
+
 static NEXT_TURN_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_TOOL_CALL_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_INTERACTION_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Identifier for one turn.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub struct TurnId(u64);
 
 impl TurnId {
@@ -31,7 +33,7 @@ impl fmt::Display for TurnId {
 }
 
 /// Identifier for one tool call inside a turn.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub struct ToolCallId(u64);
 
 impl ToolCallId {
@@ -56,7 +58,7 @@ impl fmt::Display for ToolCallId {
 }
 
 /// Identifier for one user interaction inside a turn.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub struct InteractionId(u64);
 
 impl InteractionId {

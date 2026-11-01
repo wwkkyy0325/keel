@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use async_trait::async_trait;
+use serde::Serialize;
 
 use crate::cancel::CancelToken;
 use crate::context::estimate_tokens;
@@ -10,7 +11,8 @@ use crate::ids::{ToolCallId, TurnId};
 use crate::permission::PermissionRequest;
 
 /// How risky a tool call is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RiskLevel {
     ReadOnly,
     Mutating,

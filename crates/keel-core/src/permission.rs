@@ -1,5 +1,7 @@
 use std::path::{Component, Path, PathBuf};
 
+use serde::Serialize;
+
 use crate::error::ErrorCode;
 
 /// Permission level configured for a session.
@@ -23,7 +25,8 @@ impl PermissionLevel {
 }
 
 /// Kind of access a tool asks for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AccessKind {
     Read,
     Write,

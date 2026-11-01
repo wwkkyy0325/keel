@@ -1,10 +1,13 @@
 use std::fmt;
 
+use serde::Serialize;
+
 /// States of the turn state machine.
 ///
 /// `Done`, `Error` and `Cancelled` are terminal. The remaining variants are
 /// either active or auxiliary states.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TurnState {
     Init,
     Observe,
@@ -55,7 +58,8 @@ impl fmt::Display for TurnState {
 /// `Cancel` and `Fail` apply from every non-terminal state. `Fail` is a
 /// kernel-internal event: it guarantees that an unexpected error still reaches
 /// a terminal state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TurnEvent {
     Ready,
     ToolCalls,

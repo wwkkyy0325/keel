@@ -1,3 +1,5 @@
+use serde::Serialize;
+
 use crate::error::ErrorCode;
 use crate::ids::{InteractionId, ToolCallId, TurnId};
 use crate::interaction::InteractionOutcome;
@@ -11,7 +13,8 @@ use crate::tool::RiskLevel;
 /// The event log is an append-only turn record, not sampled telemetry. It
 /// carries the turn input and final text so a turn can be replayed; tool
 /// arguments and tool outputs are intentionally excluded.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Event {
     TurnStarted {
         turn_id: TurnId,
@@ -297,5 +300,28 @@ impl Event {
             Self::InteractionResolved { .. } => "interaction_resolved",
             Self::TurnReport { .. } => "turn_report",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn events_serialize_for_persistence() {
+        let event = Event::PermissionDecided {
+            turn_id: TurnId::new(1),
+            call_id: ToolCallId::new(2),
+            tool: "write_file".to_owned(),
+            access: AccessKind::Write,
+            path: Some("note.txt".to_owned()),
+            decision: "allow".to_owned(),
+            reason: None,
+        };
+        let value = serde_json::to_value(&event).unwrap();
+        assert_eq!(value["permission_decided"]["turn_id"], 1);
+        assert_eq!(value["permission_decided"]["access"], "write");
+        assert_eq!(value["permission_decided"]["decision"], "allow");
+        assert_eq!(event.name(), "permission_decided");
     }
 }

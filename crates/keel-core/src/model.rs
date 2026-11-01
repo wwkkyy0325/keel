@@ -2,6 +2,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use serde::Serialize;
 use tokio::sync::mpsc;
 
 use crate::cancel::CancelToken;
@@ -13,7 +14,7 @@ use crate::policy::ModelRoute;
 use crate::tool::{ToolArgs, ToolSchema};
 
 /// Token usage reported by a model call.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct TokenUsage {
     pub input_tokens: u32,
     pub output_tokens: u32,

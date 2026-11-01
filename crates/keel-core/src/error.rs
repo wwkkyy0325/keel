@@ -1,13 +1,15 @@
 use std::fmt;
 use std::time::Duration;
 
+use serde::Serialize;
 use thiserror::Error;
 
 use crate::model::ModelError;
 use crate::state::{TurnEvent, TurnState};
 
 /// Stable error codes used at every kernel boundary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
     InvalidArguments,
     NotFound,

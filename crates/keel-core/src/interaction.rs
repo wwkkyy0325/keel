@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use serde::Serialize;
 
 use crate::cancel::CancelToken;
 use crate::ids::{InteractionId, ToolCallId, TurnId};
@@ -156,7 +157,8 @@ impl InteractionResponse {
 }
 
 /// Coarse outcome recorded in the event log.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum InteractionOutcome {
     Approved,
     Rejected,
