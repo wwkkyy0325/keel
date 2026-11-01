@@ -1,10 +1,13 @@
 use std::path::Path;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use keel_core::{
     AccessKind, ArgValue, CancelToken, ErrorCode, Tool, ToolArgs, ToolCallId, ToolCtx, TurnId,
 };
-use keel_runtime::{CodeSearchTool, ListDirTool, LocalTrashStore, ShellTool, WriteFileTool};
+use keel_runtime::{
+    CodeSearchTool, ListDirTool, LocalTrashStore, ReadFileTool, ShellTool, WriteFileTool,
+};
 
 fn ctx(root: &Path) -> ToolCtx {
     ToolCtx {
@@ -102,6 +105,39 @@ async fn code_search_finds_matches_and_skips_build_directories() {
 }
 
 #[tokio::test]
+async fn read_file_reads_a_normal_file() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("notes.txt"), "hello").unwrap();
+    let tool = ReadFileTool::new();
+    let mut args = ToolArgs::new();
+    args.insert("path", ArgValue::String("notes.txt".to_owned()));
+
+    let result = tool.call(args, &ctx(dir.path())).await;
+
+    assert!(result.is_success());
+    assert_eq!(result.content(), Some("hello"));
+}
+
+#[tokio::test]
+async fn read_file_refuses_a_file_over_the_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("huge.log");
+    let file = std::fs::File::create(&path).unwrap();
+    file.set_len(9 * 1024 * 1024).unwrap();
+    drop(file);
+
+    let tool = ReadFileTool::new();
+    let mut args = ToolArgs::new();
+    args.insert("path", ArgValue::String("huge.log".to_owned()));
+
+    let result = tool.call(args, &ctx(dir.path())).await;
+
+    let error = result.error().expect("a large file must be refused");
+    assert_eq!(error.code, ErrorCode::InvalidArguments);
+    assert!(error.message.contains("limit"), "{}", error.message);
+}
+
+#[tokio::test]
 async fn shell_runs_allowlisted_programs_without_a_shell() {
     let dir = tempfile::tempdir().unwrap();
     let tool = ShellTool::new(vec!["rustc".to_owned()]);
@@ -135,6 +171,38 @@ async fn shell_rejects_programs_outside_the_allowlist() {
         result.error().map(|error| error.code),
         Some(ErrorCode::InvalidArguments)
     );
+}
+
+#[tokio::test]
+async fn shell_stops_at_its_own_timeout() {
+    let python = std::process::Command::new("python")
+        .arg("--version")
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false);
+    if !python {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let tool = ShellTool::new(vec!["python".to_owned()]).with_timeout(Duration::from_millis(300));
+    let mut args = ToolArgs::new();
+    args.insert("program", ArgValue::String("python".to_owned()));
+    args.insert(
+        "args",
+        ArgValue::StringList(vec![
+            "-c".to_owned(),
+            "import time; time.sleep(30)".to_owned(),
+        ]),
+    );
+
+    let started = Instant::now();
+    let result = tool.call(args, &ctx(dir.path())).await;
+
+    assert_eq!(
+        result.error().map(|error| error.code),
+        Some(ErrorCode::Timeout)
+    );
+    assert!(started.elapsed() < Duration::from_secs(10));
 }
 
 #[tokio::test]

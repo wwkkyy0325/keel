@@ -207,12 +207,25 @@ async fn run() -> Result<ExitCode, KernelError> {
         }
     }
 
+    let mut limits = config.limits();
+    if let Some(calls) = args.max_model_calls {
+        limits.max_model_calls = calls;
+    }
+    if let Some(ms) = args.turn_timeout_ms {
+        limits.turn_timeout = std::time::Duration::from_millis(ms);
+    }
+    if let Some(ms) = args.tool_timeout_ms {
+        limits.tool_timeout = std::time::Duration::from_millis(ms);
+    }
+
     let mut registry = ToolRegistry::new();
     registry.register(Arc::new(EchoTool::new()))?;
     registry.register(Arc::new(ReadFileTool::new()))?;
     registry.register(Arc::new(ListDirTool::new()))?;
     registry.register(Arc::new(CodeSearchTool::new()))?;
-    registry.register(Arc::new(ShellTool::coding_defaults()))?;
+    registry.register(Arc::new(
+        ShellTool::coding_defaults().with_timeout(limits.tool_timeout),
+    ))?;
     registry.register(Arc::new(WriteFileTool::new(Arc::new(
         LocalTrashStore::new(permissions.root().to_path_buf()),
     ))))?;
@@ -242,13 +255,6 @@ async fn run() -> Result<ExitCode, KernelError> {
     ));
     let model = build_model(&config, &args.input, args.session)?;
     let policy: Arc<dyn Policy> = Arc::new(config.clone());
-    let mut limits = config.limits();
-    if let Some(calls) = args.max_model_calls {
-        limits.max_model_calls = calls;
-    }
-    if let Some(ms) = args.turn_timeout_ms {
-        limits.turn_timeout = std::time::Duration::from_millis(ms);
-    }
     let options = KernelOptions {
         recall: !args.no_recall,
         memo: !args.no_memo,
@@ -891,6 +897,8 @@ struct Args {
     retry_errors: u32,
     /// Host-owned turn deadline override; the policy default is 180 s.
     turn_timeout_ms: Option<u64>,
+    /// Host-owned per-tool timeout override; the policy default is 30 s.
+    tool_timeout_ms: Option<u64>,
     /// SQLite file for session persistence.
     store: Option<PathBuf>,
     /// Session id inside the store.
@@ -935,6 +943,7 @@ fn parse_args() -> Result<Args, KernelError> {
     let mut stop_on_error = false;
     let mut retry_errors = 0u32;
     let mut turn_timeout_ms = None;
+    let mut tool_timeout_ms = None;
     let mut store = None;
     let mut session_id = "default".to_owned();
     let mut context_snapshots = false;
@@ -1128,6 +1137,20 @@ fn parse_args() -> Result<Args, KernelError> {
                 }
                 turn_timeout_ms = Some(ms);
             }
+            "--tool-timeout-ms" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| invalid_config("missing value for `--tool-timeout-ms`"))?;
+                let ms = value.parse::<u64>().map_err(|_| {
+                    invalid_config("`--tool-timeout-ms` must be a positive integer")
+                })?;
+                if ms == 0 {
+                    return Err(invalid_config(
+                        "`--tool-timeout-ms` must be a positive integer",
+                    ));
+                }
+                tool_timeout_ms = Some(ms);
+            }
             other => {
                 return Err(invalid_config(format!("unknown argument `{other}`")));
             }
@@ -1150,6 +1173,7 @@ fn parse_args() -> Result<Args, KernelError> {
         stop_on_error,
         retry_errors,
         turn_timeout_ms,
+        tool_timeout_ms,
         store,
         session_id,
         context_snapshots,

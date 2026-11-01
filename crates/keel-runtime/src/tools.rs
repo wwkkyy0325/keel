@@ -57,6 +57,9 @@ impl Tool for EchoTool {
     }
 }
 
+/// Files above this size are refused instead of being read into memory.
+const MAX_READ_FILE_BYTES: u64 = 8 * 1024 * 1024;
+
 /// Reads a UTF-8 text file from the workspace.
 pub struct ReadFileTool;
 
@@ -106,6 +109,21 @@ impl Tool for ReadFileTool {
             Err(error) => return ToolResult::failure(ctx.call_id, "read_file", error),
         };
         let resolved = resolve_path(&ctx.workspace_root, Path::new(path));
+        // Check the size before reading: a large log or archive would fail the
+        // whole process instead of returning a tool error.
+        if let Ok(metadata) = tokio::fs::metadata(&resolved).await {
+            if metadata.len() > MAX_READ_FILE_BYTES {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "read_file",
+                    ToolError::invalid_arguments(format!(
+                        "`{path}` is {} bytes; the limit is {MAX_READ_FILE_BYTES} bytes; \
+                         use `code_search` to find a region",
+                        metadata.len()
+                    )),
+                );
+            }
+        }
         match tokio::fs::read_to_string(&resolved).await {
             Ok(content) => ToolResult::success(ctx.call_id, "read_file", content),
             Err(error) => ToolResult::failure(ctx.call_id, "read_file", io_error(&error)),
@@ -468,17 +486,28 @@ fn display_relative(path: &Path) -> String {
 /// Runs an allowlisted program without a shell.
 pub struct ShellTool {
     allowlist: Vec<String>,
+    timeout: Duration,
 }
 
 impl ShellTool {
     pub fn new(allowlist: Vec<String>) -> Self {
-        Self { allowlist }
+        Self {
+            allowlist,
+            timeout: Duration::from_secs(60),
+        }
     }
 
     /// Developer programs useful for a coding profile. Shells are excluded so
     /// the tool cannot be turned into an interpolating command string.
     pub fn coding_defaults() -> Self {
         Self::new(command::coding_allowlist())
+    }
+
+    /// The host sets this from the same limit the dispatcher enforces, so a
+    /// build can be given more time without editing the profile.
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
     }
 }
 
@@ -581,7 +610,7 @@ impl Tool for ShellTool {
             program,
             args: &command_args,
             cwd: &cwd,
-            timeout: Duration::from_secs(60),
+            timeout: self.timeout,
         };
         match command::run(spec, &ctx.cancel).await {
             Ok(output) => ToolResult::success(ctx.call_id, "shell", output.output),
