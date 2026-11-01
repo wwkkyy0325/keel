@@ -991,10 +991,18 @@
 - Live check: four turns projected one segment, eight entries, tasks 1/2 and
   `session_current.last_turn_seq = 4`; a second save replaced rows without
   duplication.
+- `turns.answer_json` stores the structured `Answer` (revision, body, changes,
+  pending, verification, notes, missing); `turns.answer` stays the body for
+  listings. `records.turns` is projected too.
+- Live seal check: two accepted turns sealed the first segment and produced a
+  record plus memo revision 1 (1,447 chars); the next turn sealed again and
+  appended revision 2 (1,802 chars); `session_current.summary_revision = 2`.
 - `fact_history` and `todo_history` remain for a later slice.
 - `docs/llmwiki/frontend-contract.md` fixes the read path: canonical queries,
   the current-state view, and the rule that a frontend never parses the resume
-  snapshot or writes to the database.
+  snapshot or writes to the database. It names the three answer layers (turn
+  answer, segment record, session memo) and the two overwritten axes (facts and
+  task status; `fact_history` and `todo_history` are not projected yet).
 - Verification: 255 tests; fmt and clippy clean.
 
 ### Fusion run completed at 24k

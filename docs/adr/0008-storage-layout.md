@@ -49,8 +49,8 @@ schema_version(version integer primary key, applied_at text)
 
 sessions(id text primary key, started_at text, metadata_json text)
 turns(id text primary key, session_id text, seq integer, input text,
-      state text, answer text, usage_json text, duration_ms integer,
-      created_at text)
+      state text, answer text, answer_json text, usage_json text,
+      duration_ms integer, created_at text)
 messages(id text primary key, turn_id text, seq integer, role text,
          content text, tool_call_id text, created_at text)
 
@@ -62,7 +62,7 @@ segment_messages(segment_id text, message_id text, seq integer,
 
 records(segment_id text primary key, goal text, result text,
         changes_json text, pending_json text, verified integer,
-        folded integer not null default 0,
+        turns integer, folded integer not null default 0,
         absorbed_in integer,        -- summary revision that includes it
         created_at text, updated_at text)
 

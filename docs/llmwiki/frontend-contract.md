@@ -5,6 +5,28 @@ opens it **read-only** and reads the normalized tables and `session_current`.
 It never reads `sessions.snapshot_json`; that column is the kernel's resume
 format and may change shape.
 
+## Three layers of "the final answer"
+
+The session does not overwrite one answer document. It keeps three layers, each
+at a different scope:
+
+| Layer | Where | Written | Meaning |
+|---|---|---|---|
+| Turn answer | `turns.answer` (body) and `turns.answer_json` (structured) | every turn | The `Answer` artifact: the latest round with no tool call, the observed changes, pending items, verification and `missing`. |
+| Segment record | `records` | at a segment seal | One cumulative line for the segment: `goal`, the last assistant `result`, accumulated `changes` and `pending`, `turns`, `verified`. |
+| Session memo | `session_summaries` | at a segment seal | One rolling summary revision covering every sealed segment so far. |
+
+`turns.answer` is append-only per turn; a retry of the same turn replaces the
+same row. `records` are derived from the segment at seal, and
+`session_summaries` revisions are appended, never edited. So the per-turn
+answers and the memo history are not overwritten.
+
+A store can legitimately have `turns` rows but no `records` or summaries: a
+segment only seals when the previous turn passed an acceptance plan, hit the
+turn cap, or the topic changed. A run without acceptance can stay in one open
+segment forever. That is why a fresh store shows answers but no cumulative
+record.
+
 ## Guarantees
 
 - One writer: the CLI. Readers see the state after the last committed turn.
@@ -31,7 +53,8 @@ ORDER BY updated_at DESC;
 Transcript for one session:
 
 ```sql
-SELECT seq, state, input, answer, usage_json, duration_ms, created_at
+SELECT seq, state, input, answer, answer_json,
+       usage_json, duration_ms, created_at
 FROM turns
 WHERE session_id = ?1
 ORDER BY seq;
@@ -51,13 +74,16 @@ WHERE session_id = ?1
 ORDER BY segment_id, seq;
 ```
 
-Structured records for sealed segments:
+Structured records for sealed segments, in story order. This is the cumulative
+"one result per segment" timeline:
 
 ```sql
-SELECT segment_id, goal, result, changes_json, pending_json,
-       verified, folded, absorbed_in
-FROM records
-WHERE session_id = ?1;
+SELECT g.seq, g.topic, r.goal, r.result, r.changes_json, r.pending_json,
+       r.turns, r.verified, r.folded, r.absorbed_in
+FROM records r
+JOIN segments g ON g.session_id = r.session_id AND g.id = r.segment_id
+WHERE r.session_id = ?1
+ORDER BY g.seq;
 ```
 
 Current memo (highest revision) and what it covers:
@@ -98,10 +124,25 @@ ORDER BY position;
 - Do not derive "current" from `updated_at`; use the queries above. Timestamps
   are for sorting, not for deciding which summary or turn is current.
 
+## Overwritten history
+
+Two axes keep only the current value today:
+
+- **Facts.** A superseded or forgotten fact leaves the current vector, and the
+  projection rewrites the table. The previous statement and the reason are
+  gone.
+- **Task status.** A row is rewritten on every change; the previous status and
+  the moment it changed are gone.
+
+ADR 0008 specifies `fact_history` and `todo_history` for exactly these. Neither
+is projected yet, and the resume snapshot also carries current state only.
+Turn answers, segment records and memo revisions are not overwritten: the first
+two are append-only per turn/segment, the third is append-only per revision.
+
 ## Not available yet
 
 - `fact_history` and `todo_history`: superseded facts and past task revisions
-  are not projected. The snapshot keeps current state only.
+  are not projected.
 - `context_snapshots`: the exact message list the model saw on a turn. It is
   designed in ADR 0008 but not written.
 - Events: the audit plane lands with the frontend milestone.
