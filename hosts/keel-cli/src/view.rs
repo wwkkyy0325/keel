@@ -200,8 +200,25 @@ pub fn sessions(conn: &Connection) -> Result<Vec<SessionSummaryView>, KernelErro
     rows.collect::<Result<Vec<_>, _>>().map_err(view_error)
 }
 
+/// How many turns to return and where to stop, for long sessions.
+///
+/// `limit = 0` returns every turn, `before` is an exclusive sequence cursor:
+/// the next page passes the smallest `seq` it received. The result is always
+/// ascending, so the newest page reads top to bottom.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TurnWindow {
+    pub limit: u32,
+    pub before: Option<u32>,
+}
+
 /// The session screen, or `None` when the id does not exist.
-pub fn session(conn: &Connection, id: &str) -> Result<Option<SessionView>, KernelError> {
+///
+/// The turn list is bounded by `window`; the summary still reports the total.
+pub fn session_window(
+    conn: &Connection,
+    id: &str,
+    window: TurnWindow,
+) -> Result<Option<SessionView>, KernelError> {
     let session = conn
         .query_row(
             "SELECT c.session_id, c.updated_at, c.turns, c.last_turn_state,
@@ -226,7 +243,7 @@ pub fn session(conn: &Connection, id: &str) -> Result<Option<SessionView>, Kerne
         tasks: tasks(conn, id)?,
         branches: branches(conn, id)?,
         records: records(conn, id)?,
-        turns: turns(conn, id)?,
+        turns: turns(conn, id, window)?,
     }))
 }
 
@@ -375,18 +392,29 @@ fn records(conn: &Connection, id: &str) -> Result<Vec<RecordView>, KernelError> 
     rows.collect::<Result<Vec<_>, _>>().map_err(view_error)
 }
 
-fn turns(conn: &Connection, id: &str) -> Result<Vec<TurnView>, KernelError> {
+fn turns(conn: &Connection, id: &str, window: TurnWindow) -> Result<Vec<TurnView>, KernelError> {
     let mut statement = conn
         .prepare(
             "SELECT seq, state, input, answer, answer_json, usage_json,
                     duration_ms, created_at
-             FROM turns WHERE session_id = ?1 ORDER BY seq",
+             FROM turns
+             WHERE session_id = ?1
+               AND seq < COALESCE(?2, 9223372036854775807)
+             ORDER BY seq DESC
+             LIMIT ?3",
         )
         .map_err(view_error)?;
+    let limit = if window.limit == 0 {
+        -1
+    } else {
+        i64::from(window.limit)
+    };
     let rows = statement
-        .query_map([id], turn_from_row)
+        .query_map(rusqlite::params![id, window.before, limit], turn_from_row)
         .map_err(view_error)?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(view_error)
+    let mut turns = rows.collect::<Result<Vec<_>, _>>().map_err(view_error)?;
+    turns.reverse();
+    Ok(turns)
 }
 
 fn turn_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TurnView> {
@@ -675,7 +703,9 @@ mod tests {
     #[test]
     fn a_session_view_carries_every_panel_the_ui_renders() {
         let (_dir, store) = seed();
-        let view = session(store.connection(), "parent").unwrap().unwrap();
+        let view = session_window(store.connection(), "parent", TurnWindow::default())
+            .unwrap()
+            .unwrap();
         assert_eq!(view.session.id, "parent");
         assert_eq!(view.turns.len(), 2);
         assert_eq!(view.turns[0].seq, 1);
@@ -739,6 +769,64 @@ mod tests {
     }
 
     #[test]
+    fn a_turn_window_pages_backward_in_ascending_order() {
+        let (_dir, store) = seed();
+        let conn = store.connection();
+
+        let all = session_window(conn, "parent", TurnWindow::default())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            all.turns.iter().map(|turn| turn.seq).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert_eq!(all.session.turns, 2);
+
+        let newest = session_window(
+            conn,
+            "parent",
+            TurnWindow {
+                limit: 1,
+                before: None,
+            },
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            newest.turns.iter().map(|turn| turn.seq).collect::<Vec<_>>(),
+            vec![2]
+        );
+        assert_eq!(newest.session.turns, 2, "the summary reports the total");
+
+        let older = session_window(
+            conn,
+            "parent",
+            TurnWindow {
+                limit: 10,
+                before: Some(2),
+            },
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            older.turns.iter().map(|turn| turn.seq).collect::<Vec<_>>(),
+            vec![1]
+        );
+
+        let empty = session_window(
+            conn,
+            "parent",
+            TurnWindow {
+                limit: 1,
+                before: Some(1),
+            },
+        )
+        .unwrap()
+        .unwrap();
+        assert!(empty.turns.is_empty());
+    }
+
+    #[test]
     fn the_memory_view_lists_fact_versions_and_task_revisions() {
         let (_dir, mut store) = seed();
         let stored = store.load("parent").unwrap().unwrap();
@@ -764,7 +852,9 @@ mod tests {
     #[test]
     fn the_session_view_matches_the_golden_file() {
         let (_dir, store) = seed();
-        let view = session(store.connection(), "parent").unwrap().unwrap();
+        let view = session_window(store.connection(), "parent", TurnWindow::default())
+            .unwrap()
+            .unwrap();
         let mut value = serde_json::to_value(&view).unwrap();
         normalize_timestamps(&mut value);
         let rendered = serde_json::to_string_pretty(&value).unwrap();
@@ -806,7 +896,9 @@ mod tests {
     #[test]
     fn a_branch_view_starts_at_the_fork_state() {
         let (_dir, store) = seed();
-        let view = session(store.connection(), "child").unwrap().unwrap();
+        let view = session_window(store.connection(), "child", TurnWindow::default())
+            .unwrap()
+            .unwrap();
         assert_eq!(view.session.parent_session_id.as_deref(), Some("parent"));
         assert_eq!(view.session.fork_turn_seq, Some(1));
         assert_eq!(view.turns.len(), 1);
@@ -821,6 +913,10 @@ mod tests {
     #[test]
     fn an_unknown_session_has_no_view() {
         let (_dir, store) = seed();
-        assert!(session(store.connection(), "missing").unwrap().is_none());
+        assert!(
+            session_window(store.connection(), "missing", TurnWindow::default())
+                .unwrap()
+                .is_none()
+        );
     }
 }

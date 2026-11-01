@@ -27,7 +27,7 @@ claim of failure.
 | Interjections | None | None | None | No (ADR 0010 only) |
 | Session persistence (host store) | Snapshot round-trip, projection replace, history, context snapshot, fault injection (failed save rolls back) | Two-process resume | None | No |
 | Branching / deletion | Checkpoint per turn, fork restore, pruning with pinned fork points, fork/delete errors | Mock parent/branch/delete and a retention smoke | None | No |
-| Frontend views | Composed panels, ordering, decoded answer/usage/context, typed memory timeline, golden file | CLI smoke of session, turn and memory views on the memory store | None | No |
+| Frontend views | Composed panels, ordering, decoded answer/usage/context, typed memory timeline, turn paging, golden file | CLI smoke of session, turn, memory and two-page session views | None | No |
 | M4 plugins | Schema mapping and description, roots/ping replies over stdio and HTTP, mock HTTP MCP server, process-tree kill | Filesystem, memory, Python SQLite probe and call with a roots round-trip | None | No |
 
 ## Fusion evidence

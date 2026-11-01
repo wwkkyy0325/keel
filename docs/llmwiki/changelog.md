@@ -1268,3 +1268,16 @@
   ordering change fails a test rather than reaching the UI.
 - Verify: 289 tests; CLI smoke of turn and memory views against the memory
   store. fmt, clippy and deny clean.
+
+### Turn pagination for long sessions
+
+- `--view session` accepts `--limit N` (0 = all) and `--before <seq>`
+  (exclusive cursor). It reads the newest N turns and returns them ascending,
+  so the newest page still reads top to bottom; the next page passes the
+  smallest `seq` received. The session summary keeps the total turn count.
+- The cursor is only valid with `--view session`; using it elsewhere is an
+  error. The golden file is unaffected because its test uses the default
+  window.
+- Verify: `a_turn_window_pages_backward_in_ascending_order` (all, newest one,
+  older page, empty page) and a CLI smoke of pages 9-11 then 7-8 on the memory
+  store.

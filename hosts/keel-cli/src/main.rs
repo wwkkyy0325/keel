@@ -75,6 +75,11 @@ async fn run() -> Result<ExitCode, KernelError> {
     if let Some(store) = store.as_mut() {
         store.set_checkpoint_limit(args.keep_checkpoints);
     }
+    if (args.limit != 0 || args.before.is_some()) && args.view.as_deref() != Some("session") {
+        return Err(invalid_config(
+            "`--limit` and `--before` apply to `--view session`",
+        ));
+    }
     if let Some(name) = &args.view {
         let Some(store) = store.as_ref() else {
             return Err(invalid_config("`--view` needs `--store`"));
@@ -82,7 +87,13 @@ async fn run() -> Result<ExitCode, KernelError> {
         match name.as_str() {
             "sessions" => print_json(&view::sessions(store.connection())?)?,
             "session" => {
-                let Some(session) = view::session(store.connection(), &args.session_id)? else {
+                let window = view::TurnWindow {
+                    limit: args.limit,
+                    before: args.before,
+                };
+                let Some(session) =
+                    view::session_window(store.connection(), &args.session_id, window)?
+                else {
                     return Err(invalid_config(format!(
                         "session `{}` not found",
                         args.session_id
@@ -868,6 +879,10 @@ struct Args {
     view: Option<String>,
     /// Turn sequence for `--view turn`.
     turn: Option<u32>,
+    /// Turn page size for `--view session`; 0 returns every turn.
+    limit: u32,
+    /// Exclusive turn cursor for `--view session`.
+    before: Option<u32>,
 }
 
 fn parse_args() -> Result<Args, KernelError> {
@@ -896,6 +911,8 @@ fn parse_args() -> Result<Args, KernelError> {
     let mut json = false;
     let mut view = None;
     let mut turn = None;
+    let mut limit = 0u32;
+    let mut before = None;
     let mut workspace = std::env::current_dir().map_err(|error| KernelError::Io {
         message: error.to_string(),
     })?;
@@ -1022,6 +1039,26 @@ fn parse_args() -> Result<Args, KernelError> {
                 }
                 turn = Some(seq);
             }
+            "--limit" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| invalid_config("missing value for `--limit`"))?;
+                limit = value
+                    .parse::<u32>()
+                    .map_err(|_| invalid_config("`--limit` must be a non-negative integer"))?;
+            }
+            "--before" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| invalid_config("missing value for `--before`"))?;
+                let seq = value
+                    .parse::<u32>()
+                    .map_err(|_| invalid_config("`--before` must be a positive integer"))?;
+                if seq == 0 {
+                    return Err(invalid_config("`--before` must be a positive integer"));
+                }
+                before = Some(seq);
+            }
             "--fork-from" => {
                 fork_from = Some(
                     args.next()
@@ -1089,6 +1126,8 @@ fn parse_args() -> Result<Args, KernelError> {
         json,
         view,
         turn,
+        limit,
+        before,
     })
 }
 

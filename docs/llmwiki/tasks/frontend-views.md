@@ -25,8 +25,10 @@ view is tested without starting a UI.
 - [x] Memory timeline: `--view memory` returns typed `fact_history` events
       (`added`/`superseded`/`forgotten`) and decoded `todo_history` revisions.
       Verify: `the_memory_view_lists_fact_versions_and_task_revisions`.
-- [ ] Long sessions: explicit limits/cursors for turns and transcripts rather
-      than serializing a whole store into one response.
+- [x] Long sessions: `--limit N` and `--before <seq>` page turns backward,
+      always returned ascending; `session.turns` keeps the total. Verify:
+      `a_turn_window_pages_backward_in_ascending_order` and a two-page CLI
+      smoke on the memory store.
 - [x] Golden file: seed a store, emit the session view, normalize timestamps
       and compare to `hosts/keel-cli/tests/fixtures/session-view.golden.json`.
       Verify: `the_session_view_matches_the_golden_file`.

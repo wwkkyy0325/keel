@@ -32,6 +32,11 @@ keel-cli --store keel.db --view memory --session-id mem
   decoded items.
 - A missing session or turn is an error with a non-zero exit, not an empty
   screen.
+- Long sessions page turns backward: `--limit N` returns the newest N turns
+  (`0` is all), and `--before <seq>` is an exclusive cursor. The next page
+  passes the smallest `seq` it received. The window is always ascending;
+  `session.turns` still reports the total, and `turns[0].seq > 1` means an
+  older page exists.
 
 Invariants: the same store produces the same view (no clock, randomness or
 map iteration in the assembly); the view is read-only. Tests in
