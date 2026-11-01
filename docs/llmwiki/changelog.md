@@ -1207,3 +1207,17 @@
   `--plugins-check` gate, and process-tree cleanup on drop.
 - Live probe: the official memory server listed 9 tools in 2.2 s, and a mock
   turn loaded all of them through `mcp::load` without a kernel change.
+
+### HTTP server requests and resumed turn numbers
+
+- Streamable HTTP now answers server-initiated requests. A response body (JSON,
+  JSON array or SSE) is split into the reply matching the client's id and any
+  `method`+`id` messages; each server request is answered with a POST to the
+  same endpoint. Sampling is still refused.
+- The mock HTTP server emits `roots/list` beside the `tools/list` response and
+  records the client's roots reply; the test asserts the workspace URI comes
+  back. Streamable HTTP therefore covers the same request set as stdio.
+- The session loop prints the persisted session turn (`next_turn_seq`) instead
+  of the driver's per-process id. A resumed session continues at `turn: 3`, and
+  the first new turn on a branch forked at turn 1 prints `turn: 2`.
+- Verify: 282 tests; fmt, clippy and deny clean.

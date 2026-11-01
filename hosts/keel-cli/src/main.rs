@@ -246,7 +246,7 @@ async fn run() -> Result<ExitCode, KernelError> {
     }
 
     let outcome = driver.run(&args.input, CancelToken::new()).await;
-    print_outcome(&config, &events, &outcome);
+    print_outcome(&config, &events, &outcome, None);
     print_todos(todos.as_ref());
     if let Some(store) = store.as_mut() {
         save_turn(
@@ -304,6 +304,12 @@ async fn run_session(mut host: SessionHost<'_>) -> Result<ExitCode, KernelError>
         if input.trim().is_empty() {
             continue;
         }
+        // Show the persisted session sequence, not the driver's per-process
+        // counter, so a resumed or forked session continues its numbering.
+        let session_turn = match host.store.as_ref() {
+            Some(store) => Some(store.next_turn_seq(host.session_id)?),
+            None => None,
+        };
         // A long-run host needs to know what this turn asked for. The file is
         // read by the host.acceptance checker; it is written before the turn runs.
         if let Some(path) = host.turn_input {
@@ -322,7 +328,7 @@ async fn run_session(mut host: SessionHost<'_>) -> Result<ExitCode, KernelError>
         let mut recovered = false;
         let outcome = loop {
             let outcome = host.driver.run(input, CancelToken::new()).await;
-            print_outcome(host.config, host.events, &outcome);
+            print_outcome(host.config, host.events, &outcome, session_turn);
             print_todos(host.todos);
             if outcome.is_done() || outcome.is_cancelled() {
                 break outcome;
@@ -483,9 +489,17 @@ fn print_todos(todos: Option<&Arc<Mutex<TodoList>>>) {
     );
 }
 
-fn print_outcome(config: &RuntimeConfig, events: &EventLog, outcome: &TurnOutcome) {
+fn print_outcome(
+    config: &RuntimeConfig,
+    events: &EventLog,
+    outcome: &TurnOutcome,
+    session_turn: Option<u32>,
+) {
     println!("profile: {}", config.profile_name);
-    println!("turn: {}", outcome.turn_id.get());
+    match session_turn {
+        Some(turn) => println!("turn: {turn}"),
+        None => println!("turn: {}", outcome.turn_id.get()),
+    }
     println!("state: {}", outcome.state);
     if let Some(error) = &outcome.error {
         println!("error: {error} ({})", error.code().as_str());

@@ -48,8 +48,10 @@ unchanged. MCP is the structured path; the shell tool is the unstructured one.
       refused: it would spend tokens and send context outside the kernel's
       permission and audit path. Verify: the Python fixture asks for roots
       before the initialize response and `roots_seen` returns the same URI.
-- [ ] Server requests over streamable HTTP: the SSE body parser still drops
-      them; only stdio answers.
+- [x] Server requests over streamable HTTP: a JSON or SSE body is split into
+      our response and any server requests; each request is answered with a
+      POST. Verify: the mock HTTP server emits a `roots/list` request beside
+      the `tools/list` result and records the client's reply.
 - [x] Improve the JSON fallback description for nested schemas: fields, types,
       required names and a minimal example, bounded at 900 characters, instead
       of a clipped raw schema. Verify:

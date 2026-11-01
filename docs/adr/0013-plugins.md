@@ -58,10 +58,10 @@ question is where a plugin lives and how much ceremony surrounds it.
    boundary is the user who installed it.
 7. **One process per server, serialized calls.** All tools from a server share
    a mutex and a 30 s request timeout. Requests are matched by JSON-RPC id.
-   Over stdio, server-initiated `ping` and `roots/list` are answered and other
-   methods are refused; over streamable HTTP they are ignored. Sampling is
-   refused: it would spend tokens and send context outside the permission and
-   audit path.
+   Server-initiated `ping` and `roots/list` are answered over both transports:
+   a stdio reply is one line on stdin, an HTTP reply is a POST to the endpoint.
+   Other methods are refused. Sampling is refused: it would spend tokens and
+   send context outside the permission and audit path.
 8. **Configuration is restart-based, with a probe gate.** The plugin file is
    the source of truth. `--plugins-check [--json]` starts every server,
    performs the handshake and lists tools before a configuration is saved; a

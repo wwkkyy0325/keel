@@ -217,44 +217,56 @@ impl McpServer {
         let message = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
         let body = self.send(&message).await?;
         let root = self.root.clone();
-        match &mut self.transport {
-            Transport::Stdio(inner) => loop {
-                let line = timeout(REQUEST_TIMEOUT, inner.lines.next_line())
-                    .await
-                    .map_err(|_| format!("`{method}` timed out"))?
-                    .map_err(|error| format!("cannot read from server: {error}"))?
-                    .ok_or_else(|| "server closed its stdout".to_owned())?;
-                let value: Value = serde_json::from_str(&line)
-                    .map_err(|error| format!("invalid JSON from server: {error}"))?;
-                if value.get("id").and_then(Value::as_u64) != Some(id) {
-                    // A server request has a method and an id; a notification
-                    // has no id. Answering requests keeps servers that ask for
-                    // roots or ping from waiting; sampling is refused.
-                    if let (Some(method), Some(request_id)) =
-                        (value.get("method").and_then(Value::as_str), value.get("id"))
-                    {
-                        let reply = server_request_reply(method, request_id, &root);
-                        let mut line = reply.to_string();
-                        line.push('\n');
-                        inner
-                            .stdin
-                            .write_all(line.as_bytes())
-                            .await
-                            .map_err(|error| format!("cannot answer server request: {error}"))?;
-                        inner
-                            .stdin
-                            .flush()
-                            .await
-                            .map_err(|error| format!("cannot flush server stdin: {error}"))?;
-                    }
-                    continue;
+        // HTTP: the response body may carry server requests next to our
+        // response. Answer them with a POST before returning.
+        if let Some(body) = body {
+            let (response, requests) = split_http_response(&body, id)?;
+            for request in requests {
+                if let (Some(method), Some(request_id)) = (
+                    request.get("method").and_then(Value::as_str),
+                    request.get("id"),
+                ) {
+                    let reply = server_request_reply(method, request_id, &root);
+                    self.send(&reply).await?;
                 }
-                return response_result(value);
-            },
-            Transport::Http { .. } => {
-                let body = body.ok_or_else(|| "empty HTTP response".to_owned())?;
-                parse_http_response(&body, id)
             }
+            return Ok(response);
+        }
+        let Transport::Stdio(inner) = &mut self.transport else {
+            return Err("unexpected transport".to_owned());
+        };
+        loop {
+            let line = timeout(REQUEST_TIMEOUT, inner.lines.next_line())
+                .await
+                .map_err(|_| format!("`{method}` timed out"))?
+                .map_err(|error| format!("cannot read from server: {error}"))?
+                .ok_or_else(|| "server closed its stdout".to_owned())?;
+            let value: Value = serde_json::from_str(&line)
+                .map_err(|error| format!("invalid JSON from server: {error}"))?;
+            if value.get("id").and_then(Value::as_u64) != Some(id) {
+                // A server request has a method and an id; a notification
+                // has no id. Answering requests keeps servers that ask for
+                // roots or ping from waiting; sampling is refused.
+                if let (Some(method), Some(request_id)) =
+                    (value.get("method").and_then(Value::as_str), value.get("id"))
+                {
+                    let reply = server_request_reply(method, request_id, &root);
+                    let mut line = reply.to_string();
+                    line.push('\n');
+                    inner
+                        .stdin
+                        .write_all(line.as_bytes())
+                        .await
+                        .map_err(|error| format!("cannot answer server request: {error}"))?;
+                    inner
+                        .stdin
+                        .flush()
+                        .await
+                        .map_err(|error| format!("cannot flush server stdin: {error}"))?;
+                }
+                continue;
+            }
+            return response_result(value);
         }
     }
 
@@ -336,28 +348,41 @@ fn response_result(value: Value) -> Result<Value, String> {
 }
 
 /// Parses a JSON or SSE response and returns the result for `id`.
-fn parse_http_response(body: &str, id: u64) -> Result<Value, String> {
-    if let Ok(value) = serde_json::from_str::<Value>(body) {
-        if value.get("id").and_then(Value::as_u64) == Some(id) || value.get("result").is_some() {
-            return response_result(value);
+/// Splits a JSON or SSE body into our response and any server requests.
+///
+/// A streamable-HTTP response may carry several JSON-RPC messages: the reply
+/// to our request plus requests the server wants the client to answer.
+fn split_http_response(body: &str, id: u64) -> Result<(Value, Vec<Value>), String> {
+    let mut messages = Vec::new();
+    match serde_json::from_str::<Value>(body) {
+        Ok(Value::Array(items)) => messages.extend(items),
+        Ok(value) => messages.push(value),
+        Err(_) => {
+            for line in body.lines() {
+                let Some(data) = line.strip_prefix("data:") else {
+                    continue;
+                };
+                let data = data.trim();
+                if data.is_empty() || data == "[DONE]" {
+                    continue;
+                }
+                if let Ok(value) = serde_json::from_str::<Value>(data) {
+                    messages.push(value);
+                }
+            }
         }
     }
-    for line in body.lines() {
-        let Some(data) = line.strip_prefix("data:") else {
-            continue;
-        };
-        let data = data.trim();
-        if data.is_empty() || data == "[DONE]" {
-            continue;
-        }
-        let Ok(value) = serde_json::from_str::<Value>(data) else {
-            continue;
-        };
-        if value.get("id").and_then(Value::as_u64) == Some(id) {
-            return response_result(value);
-        }
-    }
-    Err("no matching JSON-RPC response".to_owned())
+    let response = messages
+        .iter()
+        .find(|value| value.get("id").and_then(Value::as_u64) == Some(id))
+        .or_else(|| messages.iter().find(|value| value.get("result").is_some()))
+        .cloned()
+        .ok_or_else(|| "no matching JSON-RPC response".to_owned())?;
+    let requests = messages
+        .into_iter()
+        .filter(|value| value.get("method").is_some() && value.get("id").is_some())
+        .collect();
+    Ok((response_result(response)?, requests))
 }
 
 /// A kernel tool backed by one MCP tool.
@@ -999,7 +1024,7 @@ mod tests {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::net::TcpListener;
 
-        async fn mock_server() -> String {
+        async fn mock_server(seen: Arc<Mutex<Vec<Value>>>) -> String {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let address = listener.local_addr().unwrap();
             tokio::spawn(async move {
@@ -1007,6 +1032,7 @@ mod tests {
                     let Ok((mut socket, _)) = listener.accept().await else {
                         return;
                     };
+                    let seen = seen.clone();
                     tokio::spawn(async move {
                         let mut buffer = Vec::new();
                         let mut chunk = [0u8; 4096];
@@ -1041,6 +1067,13 @@ mod tests {
                         let value: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
                         let method = value.get("method").and_then(Value::as_str).unwrap_or("");
                         let id = value.get("id").cloned().unwrap_or(Value::Null);
+                        // A client response to a server request has no method.
+                        if value.get("method").is_none() {
+                            seen.lock().await.push(value);
+                            let response = "HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                            let _ = socket.write_all(response.as_bytes()).await;
+                            return;
+                        }
                         let result = match method {
                             "initialize" => json!({
                                 "protocolVersion": "2024-11-05",
@@ -1063,16 +1096,36 @@ mod tests {
                             }),
                             _ => json!({}),
                         };
-                        let (status, body) = if id.is_null() {
-                            ("202 Accepted", String::new())
+                        let (status, content_type, body) = if id.is_null() {
+                            ("202 Accepted", "application/json", String::new())
+                        } else if method == "tools/list" {
+                            // The SSE stream carries a server request next to
+                            // the response to the client's request.
+                            let roots = json!({
+                                "jsonrpc": "2.0",
+                                "id": 500,
+                                "method": "roots/list",
+                                "params": {}
+                            });
+                            let response = json!({
+                                "jsonrpc": "2.0",
+                                "id": id,
+                                "result": result
+                            });
+                            (
+                                "200 OK",
+                                "text/event-stream",
+                                format!("data: {roots}\n\ndata: {response}\n\n"),
+                            )
                         } else {
                             (
                                 "200 OK",
+                                "application/json",
                                 json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string(),
                             )
                         };
                         let response = format!(
-                            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nMcp-Session-Id: test\r\nConnection: close\r\n\r\n{body}",
+                            "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nMcp-Session-Id: test\r\nConnection: close\r\n\r\n{body}",
                             body.len()
                         );
                         let _ = socket.write_all(response.as_bytes()).await;
@@ -1082,11 +1135,17 @@ mod tests {
             format!("http://{address}/mcp")
         }
 
-        let mut server = McpServer::http(mock_server().await, Path::new("."));
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut server = McpServer::http(mock_server(seen.clone()).await, Path::new("."));
         server.initialize().await.unwrap();
         let tools = server.list_tools().await.unwrap();
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0]["name"], "echo");
+        let replies = seen.lock().await;
+        assert_eq!(replies.len(), 1, "the server request must be answered");
+        assert_eq!(replies[0]["id"], 500);
+        assert_eq!(replies[0]["result"]["roots"][0]["name"], "workspace");
+        drop(replies);
         let result = server
             .call_tool("echo", json!({"text": "hi"}))
             .await

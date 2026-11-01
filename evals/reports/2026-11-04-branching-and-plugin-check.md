@@ -61,9 +61,9 @@ PATH, so it does not add a runtime dependency to the workspace.
 
 ## Known gaps
 
-- The CLI prints the kernel's per-process turn id (`turn: 1` after a resume),
-  not the store sequence. The transcript rows and checkpoints use the correct
-  persisted sequence; only the live label restarts.
+- The CLI printed the kernel's per-process turn id (`turn: 1` after a resume)
+  when this run was made. It now prints the persisted session sequence; see
+  the follow-up.
 - Checkpoints are not pruned; storage grows with the transcript. That is host
   policy and is left open.
 - Server-initiated requests were ignored when this run was made; the stdio
@@ -91,8 +91,13 @@ PATH, so it does not add a runtime dependency to the workspace.
   exposes `roots_seen`; the test asserts the URI the server received equals the
   workspace URI the client computed. The fixture therefore reports two tools,
   where the earlier probe in this report saw one.
-- Streamable HTTP does not answer server requests yet; the SSE body parser
-  only returns the response matching the client's id.
+- Streamable HTTP now answers server requests too: a JSON or SSE body is split
+  into the client's response and any server requests, and each request is
+  answered with a POST. The mock server emits `roots/list` beside the
+  `tools/list` result and the test asserts it receives the workspace reply.
+- Resumed turn numbering: the loop now prints `next_turn_seq` from the store.
+  Smoke: two turns as one process, one more as a second process → `turn: 3`;
+  a fork from turn 1 printed `turn: 2` on its first new turn.
 
 ## Follow-up: checkpoint retention
 
