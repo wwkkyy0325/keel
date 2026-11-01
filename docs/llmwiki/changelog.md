@@ -992,6 +992,9 @@
   `session_current.last_turn_seq = 4`; a second save replaced rows without
   duplication.
 - `fact_history` and `todo_history` remain for a later slice.
+- `docs/llmwiki/frontend-contract.md` fixes the read path: canonical queries,
+  the current-state view, and the rule that a frontend never parses the resume
+  snapshot or writes to the database.
 - Verification: 255 tests; fmt and clippy clean.
 
 ### Fusion run completed at 24k
