@@ -9,13 +9,21 @@ pub struct EventRecord {
     pub event: Event,
 }
 
-/// Append-only, in-memory event log.
+/// In-memory event log.
 ///
-/// There is deliberately no removal API. Appends take a short synchronous
-/// lock; telemetry sinks are a later, asynchronous concern.
+/// The kernel only appends while a turn runs. A host that persists the stream
+/// may call [`EventLog::clear`] between turns, so a long-lived `--session`
+/// process does not keep every turn's events for its whole lifetime.
+/// Sequence numbers keep increasing across a clear.
 #[derive(Debug, Default)]
 pub struct EventLog {
-    entries: Mutex<Vec<EventRecord>>,
+    inner: Mutex<Inner>,
+}
+
+#[derive(Debug, Default)]
+struct Inner {
+    entries: Vec<EventRecord>,
+    next_seq: u64,
 }
 
 impl EventLog {
@@ -24,9 +32,10 @@ impl EventLog {
     }
 
     pub fn append(&self, event: Event) -> u64 {
-        let mut entries = self.entries();
-        let seq = entries.len() as u64 + 1;
-        entries.push(EventRecord {
+        let mut inner = self.inner();
+        inner.next_seq = inner.next_seq.saturating_add(1);
+        let seq = inner.next_seq;
+        inner.entries.push(EventRecord {
             seq,
             event: redact_event(event),
         });
@@ -34,27 +43,34 @@ impl EventLog {
     }
 
     pub fn len(&self) -> usize {
-        self.entries().len()
+        self.inner().entries.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entries().is_empty()
+        self.inner().entries.is_empty()
     }
 
     pub fn snapshot(&self) -> Vec<EventRecord> {
-        self.entries().clone()
+        self.inner().entries.clone()
     }
 
     pub fn for_turn(&self, turn_id: TurnId) -> Vec<EventRecord> {
-        self.entries()
+        self.inner()
+            .entries
             .iter()
             .filter(|record| record.event.turn_id() == turn_id)
             .cloned()
             .collect()
     }
 
-    fn entries(&self) -> MutexGuard<'_, Vec<EventRecord>> {
-        self.entries
+    /// Drops the records a host has already persisted. The sequence counter
+    /// is kept so event numbers stay monotonic within the process.
+    pub fn clear(&self) {
+        self.inner().entries.clear();
+    }
+
+    fn inner(&self) -> MutexGuard<'_, Inner> {
+        self.inner
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }

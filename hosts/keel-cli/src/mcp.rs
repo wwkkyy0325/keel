@@ -21,13 +21,16 @@ use keel_core::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 
 const PROTOCOL_VERSION: &str = "2024-11-05";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// One server message. A larger line or HTTP body is refused instead of being
+/// buffered; the kernel clips a tool result before it reaches the model anyway.
+const MAX_MCP_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
 
 /// One MCP server entry in the plugin file.
 #[derive(Deserialize)]
@@ -52,7 +55,7 @@ struct PluginFile {
 struct StdioTransport {
     child: Child,
     stdin: ChildStdin,
-    lines: Lines<BufReader<ChildStdout>>,
+    reader: BufReader<ChildStdout>,
 }
 
 enum Transport {
@@ -70,6 +73,44 @@ impl Drop for Transport {
             kill_tree(&mut inner.child);
         }
     }
+}
+
+/// Reads one newline-delimited message with a hard size cap. `Lines` would
+/// grow the buffer until a newline arrives, so a broken server could exhaust
+/// memory before the request timeout.
+async fn read_message<R>(reader: &mut R) -> Result<Option<String>, String>
+where
+    R: AsyncBufRead + Unpin,
+{
+    let mut message = Vec::new();
+    loop {
+        let (chunk, consumed, done) = {
+            let available = reader.fill_buf().await.map_err(|error| error.to_string())?;
+            if available.is_empty() {
+                (Vec::new(), 0, true)
+            } else if let Some(position) = available.iter().position(|byte| *byte == b'\n') {
+                (available[..=position].to_vec(), position + 1, true)
+            } else {
+                (available.to_vec(), available.len(), false)
+            }
+        };
+        message.extend_from_slice(&chunk);
+        reader.consume(consumed);
+        if message.len() > MAX_MCP_MESSAGE_BYTES {
+            return Err(format!(
+                "server message exceeds {MAX_MCP_MESSAGE_BYTES} bytes"
+            ));
+        }
+        if done {
+            break;
+        }
+    }
+    if message.is_empty() {
+        return Ok(None);
+    }
+    String::from_utf8(message)
+        .map(Some)
+        .map_err(|_| "server message is not UTF-8".to_owned())
 }
 
 /// Kills the server and its descendants.
@@ -140,7 +181,7 @@ impl McpServer {
             transport: Transport::Stdio(Box::new(StdioTransport {
                 child,
                 stdin,
-                lines: BufReader::new(stdout).lines(),
+                reader: BufReader::new(stdout),
             })),
             next_id: 1,
             root: root.to_path_buf(),
@@ -189,7 +230,7 @@ impl McpServer {
                 if let Some(session) = session.as_deref() {
                     request = request.header("Mcp-Session-Id", session);
                 }
-                let response = timeout(REQUEST_TIMEOUT, request.json(message).send())
+                let mut response = timeout(REQUEST_TIMEOUT, request.json(message).send())
                     .await
                     .map_err(|_| "HTTP request timed out".to_owned())?
                     .map_err(|error| format!("HTTP request failed: {error}"))?;
@@ -199,10 +240,22 @@ impl McpServer {
                     }
                 }
                 let status = response.status();
-                let body = response
-                    .text()
-                    .await
-                    .map_err(|error| format!("cannot read HTTP body: {error}"))?;
+                let body = timeout(REQUEST_TIMEOUT, async {
+                    let mut body = Vec::new();
+                    while let Some(chunk) = response
+                        .chunk()
+                        .await
+                        .map_err(|error| format!("cannot read HTTP body: {error}"))?
+                    {
+                        if body.len() + chunk.len() > MAX_MCP_MESSAGE_BYTES {
+                            return Err(format!("HTTP body exceeds {MAX_MCP_MESSAGE_BYTES} bytes"));
+                        }
+                        body.extend_from_slice(&chunk);
+                    }
+                    String::from_utf8(body).map_err(|_| "HTTP body is not UTF-8".to_owned())
+                })
+                .await
+                .map_err(|_| "HTTP body timed out".to_owned())??;
                 if !status.is_success() {
                     return Err(format!("HTTP {status}: {body}"));
                 }
@@ -236,7 +289,7 @@ impl McpServer {
             return Err("unexpected transport".to_owned());
         };
         loop {
-            let line = timeout(REQUEST_TIMEOUT, inner.lines.next_line())
+            let line = timeout(REQUEST_TIMEOUT, read_message(&mut inner.reader))
                 .await
                 .map_err(|_| format!("`{method}` timed out"))?
                 .map_err(|error| format!("cannot read from server: {error}"))?
@@ -1017,6 +1070,65 @@ mod tests {
         });
         let text = render_content(&result);
         assert_eq!(text, "first\n[image content omitted]\nsecond");
+    }
+
+    #[tokio::test]
+    async fn a_stdio_message_is_read_up_to_its_newline() {
+        let data = b"{\"jsonrpc\":\"2.0\"}\nnext";
+        let mut reader = BufReader::new(&data[..]);
+
+        assert_eq!(
+            read_message(&mut reader).await.unwrap().as_deref(),
+            Some("{\"jsonrpc\":\"2.0\"}\n")
+        );
+        assert_eq!(
+            read_message(&mut reader).await.unwrap().as_deref(),
+            Some("next")
+        );
+        assert_eq!(read_message(&mut reader).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn an_oversized_stdio_message_is_refused() {
+        let data = vec![b'x'; MAX_MCP_MESSAGE_BYTES + 1];
+        let mut reader = BufReader::new(&data[..]);
+
+        let error = read_message(&mut reader).await.unwrap_err();
+
+        assert!(error.contains("exceeds"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn an_oversized_http_body_is_refused() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                return;
+            };
+            let mut buffer = [0u8; 4096];
+            let _ = socket.read(&mut buffer).await;
+            let header =
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n";
+            if socket.write_all(header.as_bytes()).await.is_err() {
+                return;
+            }
+            let chunk = vec![b'x'; 64 * 1024];
+            for _ in 0..(MAX_MCP_MESSAGE_BYTES / chunk.len() + 2) {
+                if socket.write_all(&chunk).await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut server = McpServer::http(format!("http://{address}"), dir.path());
+        let error = server.request("tools/list", json!({})).await.unwrap_err();
+
+        assert!(error.contains("exceeds"), "{error}");
     }
 
     #[tokio::test]

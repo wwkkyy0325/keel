@@ -32,7 +32,9 @@ Stable within a major version:
 - The event enum is the live UI/audit feed: turn and state changes, context
   builds, tool starts/finishes, `PermissionDecided` for every gate decision,
   interactions, memory and summary events. `Event` serializes with snake_case
-  keys so a host can persist the stream without a second schema.
+  keys so a host can persist the stream without a second schema. A host may
+  call `EventLog::clear` between turns after persisting the stream; sequence
+  numbers stay monotonic within the process.
 - The tool protocol: names, parameter kinds, risk levels and result envelopes.
 - Built-in tool resource bounds: command output is captured as a bounded head
   and tail (64 KiB per stream), `read_file` refuses a file over 8 MiB, and a

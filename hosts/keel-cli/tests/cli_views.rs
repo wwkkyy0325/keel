@@ -60,6 +60,37 @@ fn seed_session(workspace: &Path, store: &Path, session: &str) {
 }
 
 #[test]
+fn a_session_persists_every_turn_after_the_event_log_is_cleared() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = dir.path().join("ws");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let store = dir.path().join("keel.db");
+    seed_session(&workspace, &store, "s");
+
+    let conn = rusqlite::Connection::open(&store).unwrap();
+    let turns: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM turns WHERE session_id = 's'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let turns_with_events: i64 = conn
+        .query_row(
+            "SELECT COUNT(DISTINCT turn_seq) FROM events WHERE session_id = 's'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+
+    assert_eq!(turns, 2);
+    assert_eq!(
+        turns_with_events, 2,
+        "the host clears memory only after the turn is saved"
+    );
+}
+
+#[test]
 fn views_are_emitted_by_the_cli_and_page_turns() {
     let dir = tempfile::tempdir().unwrap();
     let workspace = dir.path().join("ws");

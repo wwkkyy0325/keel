@@ -20,6 +20,10 @@ use keel_core::{KernelError, SessionSnapshot, TodoList};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
 const SCHEMA_VERSION: i64 = 9;
+/// Each checkpoint carries a full session snapshot, so an unbounded history
+/// grows with the square of the session length. Twenty recent branch points
+/// are enough to fork from recent work; `--keep-checkpoints 0` keeps all.
+const DEFAULT_CHECKPOINT_LIMIT: u32 = 20;
 
 /// One stored session.
 pub struct StoredSession {
@@ -264,7 +268,7 @@ impl Store {
         .map_err(|error| store_error("record schema version", error))?;
         Ok(Self {
             conn,
-            checkpoint_limit: 0,
+            checkpoint_limit: DEFAULT_CHECKPOINT_LIMIT,
         })
     }
 
@@ -1288,6 +1292,30 @@ mod tests {
         assert_eq!(seq, 1);
         let snapshot: SessionSnapshot = serde_json::from_str(&json).unwrap();
         assert_eq!(snapshot.segments.len(), 1);
+    }
+
+    #[test]
+    fn the_default_checkpoint_cap_bounds_the_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&dir.path().join("keel.db")).unwrap();
+        let mut session = keel_core::Session::new();
+        for seq in 1..=(DEFAULT_CHECKPOINT_LIMIT + 5) {
+            recorded(&mut session, "turn");
+            store
+                .save("s", &session.snapshot(), None, Some(turn(seq)))
+                .unwrap();
+        }
+
+        let count: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM session_checkpoints WHERE session_id = 's'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(count, i64::from(DEFAULT_CHECKPOINT_LIMIT));
     }
 
     #[test]

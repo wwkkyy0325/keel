@@ -73,8 +73,8 @@ async fn run() -> Result<ExitCode, KernelError> {
         Some(path) => Some(store::Store::open(path)?),
         None => None,
     };
-    if let Some(store) = store.as_mut() {
-        store.set_checkpoint_limit(args.keep_checkpoints);
+    if let (Some(store), Some(keep)) = (store.as_mut(), args.keep_checkpoints) {
+        store.set_checkpoint_limit(keep);
     }
     let windowed = matches!(args.view.as_deref(), Some("session" | "events"));
     if (args.limit != 0 || args.before.is_some()) && !windowed {
@@ -446,6 +446,9 @@ async fn run_session(mut host: SessionHost<'_>) -> Result<ExitCode, KernelError>
                 host.events,
             )?;
         }
+        // The turn is printed and persisted; keeping its events would grow
+        // with the session for the life of the process.
+        host.events.clear();
         if host.stop_on_error && !outcome.is_done() && !recovered {
             stopped = true;
             break;
@@ -917,8 +920,9 @@ struct Args {
     fork_from: Option<String>,
     /// Delete a session and its derived rows, then exit.
     delete_session: Option<String>,
-    /// Keep at most this many branch checkpoints per session; 0 keeps all.
-    keep_checkpoints: u32,
+    /// Keep at most this many branch checkpoints per session. The store keeps
+    /// 20 by default; 0 keeps all.
+    keep_checkpoints: Option<u32>,
     /// Machine-readable output for `--plugins-check`.
     json: bool,
     /// Print a composed frontend view (`sessions`, `session`, `turn` or
@@ -955,7 +959,7 @@ fn parse_args() -> Result<Args, KernelError> {
     let mut plugins_check = false;
     let mut fork_from = None;
     let mut delete_session = None;
-    let mut keep_checkpoints = 0u32;
+    let mut keep_checkpoints = None;
     let mut json = false;
     let mut view = None;
     let mut turn = None;
@@ -1123,9 +1127,9 @@ fn parse_args() -> Result<Args, KernelError> {
                 let value = args
                     .next()
                     .ok_or_else(|| invalid_config("missing value for `--keep-checkpoints`"))?;
-                keep_checkpoints = value.parse::<u32>().map_err(|_| {
+                keep_checkpoints = Some(value.parse::<u32>().map_err(|_| {
                     invalid_config("`--keep-checkpoints` must be a non-negative integer")
-                })?;
+                })?);
             }
             "--turn-timeout-ms" => {
                 let value = args

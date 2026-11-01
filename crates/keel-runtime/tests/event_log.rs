@@ -43,6 +43,29 @@ fn secrets_are_redacted_before_append() {
 }
 
 #[test]
+fn clear_drops_records_and_keeps_sequence_numbers() {
+    let log = EventLog::new();
+    log.append(Event::TurnStarted {
+        turn_id: TurnId::new(1),
+        input: "one".to_owned(),
+    });
+
+    log.clear();
+    assert!(log.is_empty());
+    assert!(log.snapshot().is_empty());
+
+    assert_eq!(
+        log.append(Event::TurnStarted {
+            turn_id: TurnId::new(2),
+            input: "two".to_owned(),
+        }),
+        2,
+        "sequence numbers keep increasing after a clear"
+    );
+    assert_eq!(log.len(), 1);
+}
+
+#[test]
 fn entries_can_be_filtered_by_turn() {
     let log = EventLog::new();
     log.append(Event::TurnStarted {
