@@ -7,10 +7,10 @@ runtime — turn state machine, tool protocol, context assembly, permissions,
 memory, model wire — small and stable, while variants (coding, companionship,
 automation) arrive as policy profiles and plugins.
 
-**Status:** M1 implemented; M2 end-to-end criterion met — OpenAI-compatible
-streaming provider, acceptance verifier (compute, file hash, command and test),
-six coding tools, profile-driven provider selection, and one coding task passed
-with `deepseek-flash`. Driver-side acceptance verification is next.
+**Status:** the kernel and host base are implemented and evaluated. Twenty
+coding cases and five companion personas run against `deepseek-flash`; the
+remaining M6 work is packaging and release. The mechanism-level evidence is in
+`docs/case-study.md`.
 
 ## Why "Keel"
 
@@ -28,17 +28,36 @@ rigging and cabins are built around it. Keel is that spine for agent variants.
 The kernel never knows variant names. The middle layer answers the kernel's
 policy questions. Plugins add capability and never bypass permissions.
 
+## Implemented
+
+- Turn FSM, streaming OpenAI-compatible provider, tool loop, cancellation and
+  turn deadlines.
+- Profile-driven policy, two permission levels, soft delete and typed
+  interactions.
+- Bounded context: governor, segment records, rolling memo, scoped facts,
+  lexical recall and tool-result elision.
+- Acceptance checklists (compute, command, test, file hash, human,
+  unverifiable) with checks between retries.
+- SQLite host store: resume, per-turn checkpoints, branches, session deletion,
+  fact/task history, context snapshots and fault-injection tests.
+- Composed read models for a frontend: `--view sessions|session|turn|memory`,
+  decoded answers, a typed memory timeline and turn paging.
+- MCP plugins over stdio and streamable HTTP, `--plugins-check [--json]`,
+  roots/ping replies and process-tree cleanup.
+- Per-call usage and cache telemetry, plus a cost model in
+  `docs/llmwiki/cache-economics.md`.
+
 ## Layout
 
 - `crates/` — reusable libraries.
-- `hosts/` — executables (CLI, server).
+- `hosts/` — executables (the CLI).
 - `variants/` — composition data: profiles, prompts, plugin selection.
 - `evals/` — capability evidence.
-- `docs/` — specs and ADRs.
+- `docs/` — specs, ADRs, architecture and the case study.
 
-M1 has three workspace members: `keel-core`, `keel-runtime`, `hosts/keel-cli`.
-Crates are split only when a second consumer appears; see
-`docs/spec/03-modules.md`.
+The workspace has five members: `keel-core`, `keel-policy`,
+`keel-model-openai`, `keel-runtime` and `hosts/keel-cli`. Crates are split only
+when a second consumer appears; see `docs/spec/03-modules.md`.
 
 ## Clean-room notice
 
@@ -50,10 +69,13 @@ sources recorded in `docs/spec/05-provenance.md`.
 ## Start here
 
 1. `CLAUDE.md` — working rules for this repository.
-2. `docs/spec/00-brief.md` — problem, users, non-goals.
-3. `docs/spec/01-kernel.md` — kernel contract.
-4. `docs/spec/02-profile.md` — policy/profile schema.
-5. `docs/spec/06-roadmap.md` — milestone order.
+2. `docs/architecture.md` — how the layers and one turn fit together.
+3. `docs/spec/00-brief.md` — problem, users, non-goals.
+4. `docs/spec/01-kernel.md` — kernel contract.
+5. `docs/spec/02-profile.md` — policy/profile schema.
+6. `docs/adr/` — accepted decisions, including storage, plugins and memory.
+7. `docs/case-study.md` — measured behaviour and failure analysis.
+8. `docs/spec/06-roadmap.md` — milestone order.
 
 ## Run
 
@@ -92,8 +114,8 @@ cp .env.example .env
 cargo run -p keel-cli -- --profile variants/coding/profile.openai.toml --input "hello"
 ```
 
-The CLI loads `.env` automatically. Credentials stay in `.env` or the OS
-keyring, never in the chat or a profile.
+The CLI loads `.env` automatically. Credentials stay in `.env`, never in the
+chat or a profile; the OS keyring is not wired yet.
 
 The workspace defaults to the current directory. Use `--workspace PATH` to run
 against a separate eval workspace while still loading `.env` and the profile
@@ -106,16 +128,70 @@ cargo run -p keel-cli -- \
   --input "fix the mean function"
 ```
 
-M1 uses two permission levels: `workspace_auto` is the logical sandbox and
+Keel uses two permission levels: `workspace_auto` is the logical sandbox and
 `full_auto` removes the workspace boundary while keeping the hard deny list.
 Deletion is recoverable through the trash; interactions (questions, plan
 approval, permission confirmation and escalation) are kernel primitives, not
 domain tools. See ADR 0002 and ADR 0003.
 
+## Store, branches and views
+
+`--store` keeps sessions in SQLite; a new process resumes from the snapshot.
+
+```bash
+cargo run -p keel-cli -- --profile variants/companion/profile.deepseek.toml \
+  --session --store keel.db --session-id mem
+
+# A branch starts from the state after a turn; the parent is untouched.
+cargo run -p keel-cli -- --profile variants/companion/profile.deepseek.toml \
+  --session --store keel.db --session-id alt --fork-from mem:3
+
+# Delete one session and its rows; branches are independent.
+cargo run -p keel-cli -- --store keel.db --delete-session alt
+```
+
+Composed views are what a frontend renders; it does not join tables or decode
+JSON columns:
+
+```bash
+cargo run -p keel-cli -- --store keel.db --view sessions
+cargo run -p keel-cli -- --store keel.db --view session --session-id mem --limit 20
+cargo run -p keel-cli -- --store keel.db --view turn --session-id mem --turn 3
+cargo run -p keel-cli -- --store keel.db --view memory --session-id mem
+```
+
+## Plugins
+
+A plugin is an external process or a remote MCP endpoint. `plugins.toml` lists
+servers; the host performs the handshake and registers their tools.
+
+```bash
+cargo run -p keel-cli -- --plugins-check --json --plugins plugins.toml
+cargo run -p keel-cli -- --profile variants/coding/profile.toml \
+  --plugins plugins.toml --input "list the workspace"
+```
+
+`--plugins-check` is the gate for a configuration page: it starts every server,
+lists its tools and exits non-zero if any fails. A changed file needs a host
+restart; state is in SQLite, so restarting does not lose a session. See
+ADR 0013.
+
+## Evals
+
+```bash
+python evals/harness/run_case.py evals/cases/coding/task-001
+python evals/harness/run_suite.py --filter coding
+python evals/harness/run_companions.py
+```
+
+Model runs are local because they need a key; CI covers the deterministic
+parts. Reports live in `evals/reports/`; the measured results are summarised in
+`docs/case-study.md`.
+
 ## Secrets
 
 Keys never go into the chat or the repository. Put credentials in `.env`
-(gitignored; copy `.env.example`) or the OS keyring. Input is never blocked;
+(gitignored; copy `.env.example`); the OS keyring is not wired yet. Input is never blocked;
 when it matches a secret pattern, the turn records a `SecretWarning` event and
 the CLI prints the notice with that turn's result. Test keys and hashes trigger
 the same patterns, so blocking would make the CLI unusable. The event log

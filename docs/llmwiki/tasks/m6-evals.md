@@ -20,10 +20,12 @@ the deterministic parts.
       passed; report `2026-11-04-companion-personas.md`.
 - [x] CI runs fmt, clippy, tests and `cargo deny`; the harness job compiles the
       scripts and validates the dataset importer without a model key.
-- [ ] Reproducible report: command, profile, model version, date, token
-      budget and failures with their logs.
-- [ ] README, architecture note and case study.
-- [ ] License and asset audit.
+- [x] Reproducible report: commands, profile, model, date, token budget and
+      failure analysis. Verify: `docs/case-study.md` plus the per-run reports.
+- [x] README, architecture note and case study. Verify: `README.md`,
+      `docs/architecture.md`, `docs/case-study.md`.
+- [x] License and asset audit. Verify: `docs/license-audit.md`; `cargo deny
+      check` passes. The pre-release checklist remains open.
 
 ## Suite runs
 

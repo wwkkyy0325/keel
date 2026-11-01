@@ -1331,3 +1331,18 @@
   required the literal “八点”. It now accepts equivalent time spellings and
   the rerun passed. This normalised the checker, not the memory bar.
 - Verify: `python -m py_compile evals/harness/*.py`; the companion run above.
+
+### Architecture, case study and license audit
+
+- Added `docs/architecture.md`: layers, one turn end to end, bounded context,
+  memory, tools/permissions, storage and branching, plugins, and the list of
+  concerns deliberately kept outside the kernel.
+- Added `docs/case-study.md`: the 50-turn fusion, 20-case coding suite,
+  companion runs, memory and plugin evidence in one place, with the cost model
+  and a failure analysis (16k negative result, empty summaries, fact noise,
+  tool headroom, benchmark boundaries, turn closure).
+- Added `docs/license-audit.md`: Apache-2.0 project license, `cargo deny`
+  policy and direct dependency licenses, dataset provenance, external plugins,
+  asset inventory and a pre-release checklist.
+- README refreshed to the current state: implemented features, store/branch/
+  view commands, plugin configuration, evals and the new documents.
