@@ -5,6 +5,31 @@ opens it **read-only** and reads the normalized tables and `session_current`.
 It never reads `sessions.snapshot_json`; that column is the kernel's resume
 format and may change shape.
 
+## Composed views
+
+The host assembles the screens. A frontend renders values; it does not join
+tables, decode JSON columns or sort rows.
+
+```bash
+keel-cli --store keel.db --view sessions
+keel-cli --store keel.db --view session --session-id mem
+```
+
+- `sessions` is an array ordered by `updated_at` descending, then `id`.
+- `session` is one object with `session`, `memo`, `facts`, `tasks`, `branches`
+  and `turns`. Ordering is fixed: memo covers by segment id, facts by
+  `scope,key`, tasks by `position`, branches by `updated_at,id`, turns by
+  `seq`.
+- `turns[].answer_model` is the decoded structured answer and
+  `turns[].usage` is the decoded token row. The UI never parses `answer_json`
+  or `usage_json`.
+- A missing session is an error with a non-zero exit, not an empty screen.
+
+Invariants: the same store produces the same view (no clock, randomness or
+map iteration in the assembly); the view is read-only. Tests in
+`hosts/keel-cli/src/view.rs` assert every panel and that two calls serialize
+identically, so the frontend contract is verified without starting a UI.
+
 ## Three layers of "the final answer"
 
 The session does not overwrite one answer document. It keeps three layers, each

@@ -253,6 +253,11 @@ impl Store {
         self.checkpoint_limit = keep;
     }
 
+    /// Read-only access for the composed frontend views.
+    pub(crate) fn connection(&self) -> &Connection {
+        &self.conn
+    }
+
     /// Loads a session snapshot and its task list, if they exist.
     pub fn load(&self, session_id: &str) -> Result<Option<StoredSession>, KernelError> {
         let row: Option<(String, Option<String>)> = self

@@ -1221,3 +1221,28 @@
   of the driver's per-process id. A resumed session continues at `turn: 3`, and
   the first new turn on a branch forked at turn 1 prints `turn: 2`.
 - Verify: 282 tests; fmt, clippy and deny clean.
+
+### Coding suite run
+
+- Full `deepseek-flash` suite: 43/46 cases, 302,068 tokens, 82.4% weighted
+  cache hit, about ¥0.36 at peak prices. Curated coding 10/10, HumanEval+ 20/20,
+  MBPP+ 13/16; four MBPP cases skipped at the 300k budget. Report:
+  `evals/reports/2026-11-04-coding-suite.md`.
+- The two reproducible failures are benchmark boundaries: one lowercase word
+  counts as valid in MBPP 16, and `True` counts as `1` in MBPP 20. MBPP 3 failed
+  once with a test-runner error and passed on rerun.
+- `run_case.py` was still matching the pre-cache usage line, so reports carried
+  `usage: null`. It now parses calls/input/output/cached/hit/total and stores
+  `cached_tokens`. Verified with mock runs and the suite.
+
+### Composed frontend views
+
+- `--view sessions` and `--view session --session-id <id>` print the assembled
+  screens as JSON: session summary, memo with covers, facts, tasks, branches and
+  decoded turns (`answer_model`, `usage`). The host performs joins, ordering and
+  JSON decoding, so a frontend renders instead of deriving.
+- Ordering is explicit everywhere (updated_at/id, scope/key, position, seq), and
+  the same store serializes identically twice. Missing sessions exit non-zero.
+- Tests in `hosts/keel-cli/src/view.rs` cover the list, both the parent and the
+  branch view, every panel, repeat output, and the missing-session case; a CLI
+  smoke ran both views against the memory store.

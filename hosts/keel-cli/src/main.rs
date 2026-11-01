@@ -2,6 +2,7 @@ mod acceptance;
 mod mcp;
 mod store;
 mod terminal;
+mod view;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -73,6 +74,25 @@ async fn run() -> Result<ExitCode, KernelError> {
     };
     if let Some(store) = store.as_mut() {
         store.set_checkpoint_limit(args.keep_checkpoints);
+    }
+    if let Some(name) = &args.view {
+        let Some(store) = store.as_ref() else {
+            return Err(invalid_config("`--view` needs `--store`"));
+        };
+        match name.as_str() {
+            "sessions" => print_json(&view::sessions(store.connection())?)?,
+            "session" => {
+                let Some(session) = view::session(store.connection(), &args.session_id)? else {
+                    return Err(invalid_config(format!(
+                        "session `{}` not found",
+                        args.session_id
+                    )));
+                };
+                print_json(&session)?;
+            }
+            other => return Err(invalid_config(format!("unknown view `{other}`"))),
+        }
+        return Ok(ExitCode::SUCCESS);
     }
     if let Some(session_id) = &args.delete_session {
         let Some(store) = store.as_mut() else {
@@ -822,6 +842,8 @@ struct Args {
     keep_checkpoints: u32,
     /// Machine-readable output for `--plugins-check`.
     json: bool,
+    /// Print a composed frontend view (`sessions` or `session`) and exit.
+    view: Option<String>,
 }
 
 fn parse_args() -> Result<Args, KernelError> {
@@ -848,6 +870,7 @@ fn parse_args() -> Result<Args, KernelError> {
     let mut delete_session = None;
     let mut keep_checkpoints = 0u32;
     let mut json = false;
+    let mut view = None;
     let mut workspace = std::env::current_dir().map_err(|error| KernelError::Io {
         message: error.to_string(),
     })?;
@@ -956,6 +979,12 @@ fn parse_args() -> Result<Args, KernelError> {
             "--json" => {
                 json = true;
             }
+            "--view" => {
+                view = Some(
+                    args.next()
+                        .ok_or_else(|| invalid_config("missing value for `--view`"))?,
+                );
+            }
             "--fork-from" => {
                 fork_from = Some(
                     args.next()
@@ -1021,6 +1050,7 @@ fn parse_args() -> Result<Args, KernelError> {
         delete_session,
         keep_checkpoints,
         json,
+        view,
     })
 }
 
@@ -1044,6 +1074,14 @@ fn invalid_config(message: impl Into<String>) -> KernelError {
     KernelError::InvalidConfig {
         message: message.into(),
     }
+}
+
+/// Prints one composed view as JSON for a frontend or a golden test.
+fn print_json<T: serde::Serialize + ?Sized>(value: &T) -> Result<(), KernelError> {
+    let text = serde_json::to_string_pretty(value)
+        .map_err(|error| invalid_config(format!("cannot encode view: {error}")))?;
+    println!("{text}");
+    Ok(())
 }
 
 /// Parses `<session>:<turn>` from `--fork-from`.
