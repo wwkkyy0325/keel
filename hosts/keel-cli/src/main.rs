@@ -7,16 +7,16 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use keel_core::{
-    ArgValue, CancelToken, Event, KernelError, ModelError, ModelProvider, ModelRequest,
-    ModelStream, Policy, TodoList, ToolArgs,
+    AcceptanceItem, ArgValue, CancelToken, Event, KernelError, ModelError, ModelProvider,
+    ModelRequest, ModelStream, Policy, TodoList, ToolArgs,
 };
 use keel_model_openai::{OpenAiConfig, OpenAiProvider};
 use keel_runtime::{
-    load_profile, validate_config, CodeSearchTool, ContextBuilder, EchoTool, EventLog,
-    HistoryStage, InteractionBroker, KernelOptions, LatestStage, ListDirTool, LocalTrashStore,
-    MemoryStage, MockModel, MockStep, PermissionEngine, ProviderSummarizer, ReadFileTool,
-    RuntimeConfig, ShellTool, Summarizer, SystemStage, TaskStateStage, TodoTool, ToolRegistry,
-    TurnDriver, TurnDriverConfig, TurnOutcome, WriteFileTool,
+    load_profile, validate_config, AcceptanceVerifier, CodeSearchTool, ContextBuilder, EchoTool,
+    EventLog, HistoryStage, InteractionBroker, KernelOptions, LatestStage, ListDirTool,
+    LocalTrashStore, MemoryStage, MockModel, MockStep, PermissionEngine, ProviderSummarizer,
+    ReadFileTool, RuntimeConfig, ShellTool, Summarizer, SystemStage, TaskStateStage, TodoTool,
+    ToolRegistry, TurnDriver, TurnDriverConfig, TurnOutcome, WriteFileTool,
 };
 use terminal::TerminalInteractionPort;
 
@@ -42,7 +42,7 @@ impl ModelProvider for HostModel {
 #[tokio::main]
 async fn main() -> ExitCode {
     match run().await {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(code) => code,
         Err(error) => {
             eprintln!("error: {} ({})", error, error.code().as_str());
             ExitCode::FAILURE
@@ -50,7 +50,7 @@ async fn main() -> ExitCode {
     }
 }
 
-async fn run() -> Result<(), KernelError> {
+async fn run() -> Result<ExitCode, KernelError> {
     dotenvy::dotenv().ok();
     let args = parse_args()?;
     let mut config = load_profile(&args.profile)?;
@@ -121,11 +121,15 @@ async fn run() -> Result<(), KernelError> {
     if let Some(calls) = args.max_model_calls {
         limits.max_model_calls = calls;
     }
+    if let Some(ms) = args.turn_timeout_ms {
+        limits.turn_timeout = std::time::Duration::from_millis(ms);
+    }
     let options = KernelOptions {
         recall: !args.no_recall,
         memo: !args.no_memo,
         bounded_tools: !args.unbounded_tools,
     };
+    let workspace_root = permissions.root().to_path_buf();
     let driver = TurnDriver::new(
         model,
         registry,
@@ -152,8 +156,12 @@ async fn run() -> Result<(), KernelError> {
             None => driver,
         }
     };
-    let driver = match &args.acceptance {
-        Some(path) => driver.with_acceptance(acceptance::load(path)?, 2),
+    let acceptance_items = match &args.acceptance {
+        Some(path) => Some(acceptance::load(path)?),
+        None => None,
+    };
+    let driver = match &acceptance_items {
+        Some(items) => driver.with_acceptance(items.clone(), 2),
         None => driver,
     };
 
@@ -166,6 +174,8 @@ async fn run() -> Result<(), KernelError> {
             args.turn_input.as_deref(),
             args.stop_on_error,
             args.retry_errors,
+            acceptance_items.as_deref(),
+            &workspace_root,
         )
         .await;
     }
@@ -173,10 +183,12 @@ async fn run() -> Result<(), KernelError> {
     let outcome = driver.run(&args.input, CancelToken::new()).await;
     print_outcome(&config, &events, &outcome);
     print_todos(todos.as_ref());
-    done_or_error(outcome)
+    done_or_error(outcome)?;
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Reads inputs from stdin until EOF, keeping one session across turns.
+#[allow(clippy::too_many_arguments)]
 async fn run_session(
     driver: &TurnDriver<HostModel>,
     config: &RuntimeConfig,
@@ -185,12 +197,15 @@ async fn run_session(
     turn_input: Option<&std::path::Path>,
     stop_on_error: bool,
     retry_errors: u32,
-) -> Result<(), KernelError> {
+    acceptance: Option<&[AcceptanceItem]>,
+    workspace_root: &std::path::Path,
+) -> Result<ExitCode, KernelError> {
     use std::io::{BufRead, IsTerminal, Write};
 
     let stdin = std::io::stdin();
     let interactive = stdin.is_terminal();
     let mut line = String::new();
+    let mut stopped = false;
     loop {
         if interactive {
             print!("keel> ");
@@ -218,11 +233,23 @@ async fn run_session(
             })?;
         }
         let mut retries = 0u32;
+        let mut recovered = false;
         let outcome = loop {
             let outcome = driver.run(input, CancelToken::new()).await;
             print_outcome(config, events, &outcome);
             print_todos(todos);
-            if outcome.is_done() || outcome.is_cancelled() || retries >= retry_errors {
+            if outcome.is_done() || outcome.is_cancelled() {
+                break outcome;
+            }
+            // A failed turn may already have written the artifact. The
+            // checklist is the evidence; re-running the same input after the
+            // world moved would write the next chapter for a stale request.
+            if recovered_by_checklist(acceptance, workspace_root).await {
+                println!("recovered: acceptance passed after a failed turn");
+                recovered = true;
+                break outcome;
+            }
+            if retries >= retry_errors {
                 break outcome;
             }
             retries = retries.saturating_add(1);
@@ -236,11 +263,31 @@ async fn run_session(
         if outcome.is_cancelled() {
             break;
         }
-        if stop_on_error && !outcome.is_done() {
+        if stop_on_error && !outcome.is_done() && !recovered {
+            stopped = true;
             break;
         }
     }
-    Ok(())
+    Ok(if stopped {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    })
+}
+
+/// A failed turn that still passes its checklist has done its work. The host
+/// continues instead of replaying an input the world has already moved past.
+async fn recovered_by_checklist(
+    acceptance: Option<&[AcceptanceItem]>,
+    workspace_root: &std::path::Path,
+) -> bool {
+    let Some(items) = acceptance else {
+        return false;
+    };
+    AcceptanceVerifier::new(workspace_root)
+        .verify(items)
+        .await
+        .passed()
 }
 
 fn print_todos(todos: Option<&Arc<Mutex<TodoList>>>) {
@@ -555,6 +602,8 @@ struct Args {
     stop_on_error: bool,
     /// Re-run the same input after a failed turn, at most this many times.
     retry_errors: u32,
+    /// Host-owned turn deadline override; the policy default is 180 s.
+    turn_timeout_ms: Option<u64>,
 }
 
 fn parse_args() -> Result<Args, KernelError> {
@@ -571,6 +620,7 @@ fn parse_args() -> Result<Args, KernelError> {
     let mut turn_input = None;
     let mut stop_on_error = false;
     let mut retry_errors = 0u32;
+    let mut turn_timeout_ms = None;
     let mut workspace = std::env::current_dir().map_err(|error| KernelError::Io {
         message: error.to_string(),
     })?;
@@ -653,6 +703,20 @@ fn parse_args() -> Result<Args, KernelError> {
                     invalid_config("`--retry-errors` must be a non-negative integer")
                 })?;
             }
+            "--turn-timeout-ms" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| invalid_config("missing value for `--turn-timeout-ms`"))?;
+                let ms = value.parse::<u64>().map_err(|_| {
+                    invalid_config("`--turn-timeout-ms` must be a positive integer")
+                })?;
+                if ms == 0 {
+                    return Err(invalid_config(
+                        "`--turn-timeout-ms` must be a positive integer",
+                    ));
+                }
+                turn_timeout_ms = Some(ms);
+            }
             other => {
                 return Err(invalid_config(format!("unknown argument `{other}`")));
             }
@@ -674,6 +738,7 @@ fn parse_args() -> Result<Args, KernelError> {
         turn_input,
         stop_on_error,
         retry_errors,
+        turn_timeout_ms,
     })
 }
 
@@ -696,5 +761,40 @@ fn script_for(config: &RuntimeConfig, input: &str) -> Vec<MockStep> {
 fn invalid_config(message: impl Into<String>) -> KernelError {
     KernelError::InvalidConfig {
         message: message.into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use keel_core::VerifySpec;
+
+    fn compute_item(id: &str, expected: &str) -> AcceptanceItem {
+        AcceptanceItem {
+            id: id.to_owned(),
+            description: "arithmetic check".to_owned(),
+            required: true,
+            verify: VerifySpec::Compute {
+                expression: "2+2".to_owned(),
+                expected: expected.to_owned(),
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_turn_recovers_when_the_checklist_passes() {
+        let items = vec![compute_item("four", "4")];
+        assert!(recovered_by_checklist(Some(&items), std::path::Path::new(".")).await);
+    }
+
+    #[tokio::test]
+    async fn a_failed_turn_does_not_recover_when_the_checklist_fails() {
+        let items = vec![compute_item("five", "5")];
+        assert!(!recovered_by_checklist(Some(&items), std::path::Path::new(".")).await);
+    }
+
+    #[tokio::test]
+    async fn a_failed_turn_without_a_checklist_does_not_recover() {
+        assert!(!recovered_by_checklist(None, std::path::Path::new(".")).await);
     }
 }
