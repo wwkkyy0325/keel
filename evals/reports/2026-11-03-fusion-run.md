@@ -192,6 +192,60 @@ now has `--retry-errors N`, which re-runs the same input after a failed turn;
 the state and files written before the timeout are already on disk. The full
 50 is being rerun with two retries.
 
+## Full 50 retry (attempt 2): the retry was not idempotent
+
+A clean workspace, the same 24k profile, per-turn acceptance and
+`--retry-errors 2`. The run stopped at turn 11.
+
+| Metric | Value |
+|---|---|
+| Turns | 11 |
+| Done / Error | 7 / 4 |
+| Errors | 3 model-stream timeouts, 1 acceptance failure |
+| Retries | 3 (`1/2`, `1/2`, `2/2`) |
+| Chapters written | 1–9, no gaps |
+| State Last chapter | 9 |
+| Tasks | done 9, current #10, list open |
+| Acceptance | passed on 7 turns; failed on turn 11 |
+| Recall | 0 turns |
+| Overflows / elisions | 0 / 0 |
+| Memo revisions / failures | 7 / 2 (one timeout, one empty summary) |
+| Input / output tokens | 748,864 / 60,219 |
+| Exit code | 0, although the host stopped on a failed turn |
+
+The sequence matters:
+
+- Turn 9 (chapter 8) timed out before writing anything.
+- Turn 10 re-ran the same input, wrote `ch-008.md` and marked task 8
+  completed, then timed out again before the final answer.
+- Turn 11 re-ran the same input a third time. The task list now said the
+  current item was #9, so the model wrote `ch-009.md` for a request that asked
+  for chapter 8. It said so in the answer. Acceptance then failed with
+  `state says chapter 9, but the request is chapter 8`, and `--stop-on-error`
+  stopped the run.
+
+The retry replayed an input the world had already moved past. Two host defects
+followed:
+
+1. **No artifact check between attempts.** Turn 10 had already done the work;
+   the host retried anyway. The checklist, not the turn state, decides whether
+   the work exists.
+2. **The stop was invisible to automation.** `run_session` returned `Ok(())`
+   after stopping, so the process exited 0.
+
+The timeout also recurred at the 180 s turn deadline during peak hours, with
+turns taking 135–151 s before the deadline. The deadline is host-owned; the CLI
+now exposes `--turn-timeout-ms`.
+
+Fixes: after a failed turn, the host verifies the acceptance checklist; if it
+passes, the turn counts as recovered and the session advances to the next
+input. `--turn-timeout-ms` overrides the 180 s default. A session that stops
+on an unrecovered failure exits non-zero. Three CLI tests cover the recovery
+predicate.
+
+The third run uses a clean workspace, `--turn-timeout-ms 300000` and the same
+two retries.
+
 ## Local 26B attempt
 
 The local Gemma 4 26B was run at 32k server context and a 20k working set with

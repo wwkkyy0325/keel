@@ -60,12 +60,24 @@ host is shared, so the run uses the remote DeepSeek endpoint.
       0 overflow, 0 recall. Stopped by `--stop-on-error`.
 - [x] Add `--retry-errors N` to the CLI: re-run the same input after a failed
       turn, bounded. Verify: 242 tests; no test covers the session loop yet.
-- [ ] Rerun the full 50 on DeepSeek with `--retry-errors 2`, the 24k profile,
-      per-turn acceptance and narrowed markers. The slices are not a substitute.
+- [x] Rerun the full 50 on DeepSeek with `--retry-errors 2`, the 24k profile,
+      per-turn acceptance and narrowed markers. Verify: stopped at turn 11.
+      Chapter 8 timed out twice; the third replay saw task #9 as current and
+      wrote `ch-009.md` for a chapter-8 request; acceptance caught the mismatch.
+      11 turns, 7 Done / 4 Error, chapters 1–9 present, tasks 9/50, 0 overflow,
+      0 recall. The retry was not idempotent and the stopped process exited 0.
+- [x] Check the acceptance checklist between retry attempts: a failed turn
+      whose expected artifact already exists is recovered, not replayed.
+      Verify: three CLI tests for the recovery predicate.
+- [x] Add `--turn-timeout-ms` (host-owned; the policy default is 180 s) and make
+      a session that stops on an unrecovered failure exit non-zero.
+- [ ] Run the full 50 again from a clean workspace with
+      `--turn-timeout-ms 300000`, per-turn acceptance and two retries.
 - [ ] Consider evidence-gating host task completion: a task marked `completed`
       without the expected artifact, or a turn that fails acceptance, should
       not leave the list closed as `completed`. Host-side revert or kernel
-      evidence rule; not implemented.
+      evidence rule; not implemented. The 26B micro-slice showed the list can
+      close while a chapter file is missing.
 
 ## Verify criteria
 

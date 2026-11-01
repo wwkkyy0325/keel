@@ -732,7 +732,8 @@
   10 were written before the timeout.
 - Added CLI `--retry-errors N`: re-run the same input after a failed turn,
   bounded, so a transient stream timeout does not end a long run.
-- The full 50 rerun with `--retry-errors 2` is pending.
+- The second full 50 showed the retry was not idempotent; the fix is recorded
+  below.
 
 ### Fusion run: negative result at 16k
 
@@ -886,3 +887,18 @@
   shortened and the token delta. This covers growth inside a turn, which the
   turn-start governor cannot see.
 - Verification: 232 tests; fmt and clippy clean.
+
+### Retry recovery and host deadline
+
+- The second full 50 exposed a non-idempotent retry: chapter 8 timed out twice,
+  the third replay saw task #9 as current and wrote `ch-009.md` for a
+  chapter-8 request. Acceptance caught the mismatch and stopped the run at
+  turn 11 (7 Done / 4 Error, chapters 1–9, tasks 9/50, 0 overflow, 0 recall).
+- The host now runs the acceptance checklist after a failed turn. If it passes,
+  the turn counts as recovered and the session advances instead of replaying an
+  input the world has moved past.
+- `--turn-timeout-ms` overrides the host-owned 180 s turn deadline; the second
+  run hit it three times during peak hours. A session that stops on an
+  unrecovered failure now exits non-zero.
+- Report: `evals/reports/2026-11-03-fusion-run.md`.
+- Verification: 245 tests; fmt and clippy clean.
