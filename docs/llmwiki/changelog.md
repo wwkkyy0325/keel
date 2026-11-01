@@ -942,6 +942,22 @@
   seals after the previous turn passed acceptance, which ADR 0006 already
   specifies.
 
+### Tool headroom in history assembly
+
+- A 12-turn slice overflowed by 154 tokens at turn 2: the previous turn's
+  detail filled the working set (20,958 / 23,677) and the first tool round
+  added 2.9k. History assembly reserved the current input but not the turn's
+  tool results, and mid-turn elision cannot drop the current round.
+- History now reserves `tool_headroom = budget/6`, clamped to 512..4096 and
+  zero below 2k tokens. Tight turns lose some detail instead of dying.
+- An 11-turn rerun with both fixes: 11/11 Done, 11/11 acceptance, 0 overflow,
+  context peak 9,784 / 23,772, and 10/10 memo revisions model-written with no
+  fallback.
+- The rerun also showed that a new process starts the host task list at #1:
+  the slice wrote chapters 8–17 while the list stayed at `done=0`. Session and
+  task persistence remain M5 work (ADR 0008).
+- Verification: 250 tests; fmt and clippy clean.
+
 ### Fusion run completed at 24k
 
 - The full 57-turn novel finished on DeepSeek with the 24k profile, per-turn

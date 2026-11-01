@@ -313,6 +313,32 @@ characters), both `fallback=false`, with acceptance 3/3. A first 3-turn attempt
 without acceptance produced no summaries at all: ADR 0006 seals a segment after
 a turn passes acceptance, so the memo cadence depends on the host's checklist.
 
+### Follow-up validation: tool headroom and ten model summaries
+
+The next 12-turn slice failed at turn 2 with `ContextOverflow` by 154 tokens:
+turn 1's detail filled the working set (20,958 / 23,677 before the turn), and
+the first tool round added 2.9k. History assembly reserved room for the current
+input but not for the turn's tool results. It now reserves
+`tool_headroom = budget/6`, clamped to 512..4096 and zero below 2k.
+
+The rerun of 11 turns with both fixes:
+
+| Metric | Value |
+|---|---|
+| Done / Error | 11 / 11 |
+| Acceptance | 11 / 11 passed |
+| Overflows | 0 |
+| Context peak | 9,784 / 23,772 |
+| Memo revisions | 10 |
+| Model-written / fallback | 10 / 0 |
+| Chapters after the slice | 17, no gaps |
+
+A new finding from the resume: the host task list and session memory are
+in-process. A new process starts the 50-item list at #1, so the slice wrote
+chapters 8–17 while the task list stayed at `done=0`. Acceptance still passed
+because it checks the artifacts, not the list. Persisting the session is M5
+work (ADR 0008); it is the next structural gap.
+
 ## Local 26B attempt
 
 The local Gemma 4 26B was run at 32k server context and a 20k working set with

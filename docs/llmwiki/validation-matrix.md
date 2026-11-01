@@ -8,7 +8,7 @@ claim of failure.
 
 | Mechanism | Unit / synthetic | Real run | Ablation | Repeat |
 |---|---|---|---|---|
-| Context governor and watermarks | Window matrix 8k-1M | 15-chapter novel | None | No |
+| Context governor and watermarks | Window matrix 8k-1M, tool headroom | 15-chapter, 57-turn, 11-turn rerun | None | No |
 | Topic segmentation | Unit tests | 15-chapter, 24-turn | None | No |
 | Segment records / digests | Window matrix | 15-chapter | None | No |
 | Rolling memo | Unit tests, reasoning-none test | 15-chapter, 24-turn, 57-turn, local 26B | `no-memo` | No |
@@ -64,8 +64,11 @@ claim of failure.
 - The 24k fusion completed once: 57/57 Done, 50/50 chapters, 50/50 tasks,
   57/57 acceptance, 0 overflow, 1 recall turn with 2 hits. It is a single
   successful run; model variance is not separated.
-- The memo fallback fired on 22 of 56 revisions (20 empty, 2 short); the
-  structured path held, but model-written memo quality is the next target.
+- The memo fallback fired on 22 of 56 revisions (20 empty, 2 short) before the
+  summarizer stopped spending output tokens on reasoning; an 11-turn rerun had
+  10/10 model-written summaries and no fallback.
+- Session state is in-process: a new process starts the task list, memo and
+  recall empty. Multi-session memory and resume depend on M5 persistence.
 - One run per ablation arm; model variance is not separated.
 - The 15-chapter protocol's state file carries the story, so memo and recall are
   not load-bearing there.

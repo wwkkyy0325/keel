@@ -93,6 +93,12 @@ host is shared, so the run uses the remote DeepSeek endpoint.
 - [x] Evidence-gate host task completion: the CLI snapshots the task list
       before each turn and restores it when the turn fails and acceptance does
       not pass. Verify: `a_failed_turn_restores_the_task_list`.
+- [x] Reserve tool headroom in history assembly. Verify: the 12-turn slice
+      overflowed by 154 tokens; the 11-turn rerun had 0 overflow, peak
+      9,784 / 23,772, 11/11 Done and 10/10 model-written summaries.
+- [ ] Persist the session across processes (M5, ADR 0008). A resumed slice
+      wrote chapters 8–17 but the task list started at #1 (`done=0`); the memo
+      and recall also start empty. This blocks multi-session memory evaluation.
 
 ## Verify criteria
 
