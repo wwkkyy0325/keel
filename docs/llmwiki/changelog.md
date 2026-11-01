@@ -1055,3 +1055,23 @@
   cache hit (per-turn median 78.0%); about ¥2.37 at off-peak prices.
 - Report: `evals/reports/2026-11-03-fusion-run.md`.
 - Verification: 247 tests; fmt and clippy clean.
+
+### MCP plugins
+
+- ADR 0013 fixes the plugin shape: a plugin is an external process, not a
+  linked library and not a reviewed manifest. `plugins.toml` lists MCP stdio
+  servers; the host spawns each, performs the handshake, lists its tools and
+  registers them as ordinary kernel tools (`mcp_<server>_<tool>`). Any
+  allowlisted CLI stays reachable through the shell tool.
+- Flat schema properties become typed parameters. Nested objects and object
+  arrays switch the whole tool to a single JSON `arguments` string; a partly
+  mapped flat schema would silently drop fields. The memory server exposed
+  this: its `entities` array of objects was first mapped to a string list and
+  the kernel rejected the call as `invalid_response`.
+- Live: the official filesystem server listed a directory, and the memory
+  server stored and found an entity, both with no kernel change. Windows runs
+  `npx` through `cmd /c`.
+- Remaining: hot reload, server-initiated requests, deeper schema mapping.
+  Report: `evals/reports/2026-11-04-mcp-plugins.md`; task doc:
+  `tasks/m4-plugins.md`.
+- Verification: 267 tests; fmt and clippy clean.
