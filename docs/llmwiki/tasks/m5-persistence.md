@@ -55,8 +55,12 @@ The kernel exposes a snapshot; the host decides where it lives.
       session in one transaction; branches survive. Verify:
       `deleting_a_session_removes_its_rows_but_not_its_branches` and a live
       delete of the branch from the smoke store.
-- [ ] Checkpoint retention: prune old checkpoints (host policy). Until then
-      every turn stays forkable and storage grows with the transcript.
+- [x] Checkpoint retention: `--keep-checkpoints N` prunes to the newest N per
+      session inside the same transaction as the turn; `0` keeps every turn.
+      Every turn a branch was forked from is kept regardless of age. Verify:
+      `old_checkpoints_are_pruned_but_fork_points_are_kept` and a three-turn
+      smoke with `--keep-checkpoints 2` that left `[2, 3]` and refused a fork
+      from turn 1 with a typed error.
 
 ## State ownership
 

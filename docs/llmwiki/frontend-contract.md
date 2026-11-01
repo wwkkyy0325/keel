@@ -167,6 +167,10 @@ appear in it.
 Deleting a session through the CLI removes its own rows; branches are separate
 sessions and survive. The parent link is historical metadata.
 
+Checkpoints are kept for every turn by default. With `--keep-checkpoints N` the
+host keeps the newest N and every turn a branch was forked from; older turns
+can no longer be fork points and a fork attempt reports a missing checkpoint.
+
 ## What not to do
 
 - Do not parse `sessions.snapshot_json` or `sessions.todos_json`. They exist so

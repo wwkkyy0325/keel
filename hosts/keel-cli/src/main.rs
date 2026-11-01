@@ -66,6 +66,9 @@ async fn run() -> Result<ExitCode, KernelError> {
         Some(path) => Some(store::Store::open(path)?),
         None => None,
     };
+    if let Some(store) = store.as_mut() {
+        store.set_checkpoint_limit(args.keep_checkpoints);
+    }
     if let Some(session_id) = &args.delete_session {
         let Some(store) = store.as_mut() else {
             return Err(invalid_config("`--delete-session` needs `--store`"));
@@ -796,6 +799,8 @@ struct Args {
     fork_from: Option<String>,
     /// Delete a session and its derived rows, then exit.
     delete_session: Option<String>,
+    /// Keep at most this many branch checkpoints per session; 0 keeps all.
+    keep_checkpoints: u32,
 }
 
 fn parse_args() -> Result<Args, KernelError> {
@@ -820,6 +825,7 @@ fn parse_args() -> Result<Args, KernelError> {
     let mut plugins_check = false;
     let mut fork_from = None;
     let mut delete_session = None;
+    let mut keep_checkpoints = 0u32;
     let mut workspace = std::env::current_dir().map_err(|error| KernelError::Io {
         message: error.to_string(),
     })?;
@@ -937,6 +943,14 @@ fn parse_args() -> Result<Args, KernelError> {
                         .ok_or_else(|| invalid_config("missing value for `--delete-session`"))?,
                 );
             }
+            "--keep-checkpoints" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| invalid_config("missing value for `--keep-checkpoints`"))?;
+                keep_checkpoints = value.parse::<u32>().map_err(|_| {
+                    invalid_config("`--keep-checkpoints` must be a non-negative integer")
+                })?;
+            }
             "--turn-timeout-ms" => {
                 let value = args
                     .next()
@@ -980,6 +994,7 @@ fn parse_args() -> Result<Args, KernelError> {
         plugins_check,
         fork_from,
         delete_session,
+        keep_checkpoints,
     })
 }
 

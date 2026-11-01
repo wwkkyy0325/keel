@@ -26,7 +26,7 @@ claim of failure.
 | Persona affordances | None | Not measured | None (no A/B) | No |
 | Interjections | None | None | None | No (ADR 0010 only) |
 | Session persistence (host store) | Snapshot round-trip, projection replace, history, context snapshot, fault injection (failed save rolls back) | Two-process resume | None | No |
-| Branching / deletion | Checkpoint per turn, fork restore, fork errors, delete rows | Mock parent/branch/delete on one store | None | No |
+| Branching / deletion | Checkpoint per turn, fork restore, pruning with pinned fork points, fork/delete errors | Mock parent/branch/delete and a retention smoke | None | No |
 | M4 plugins | Schema mapping and description, roots/ping replies, mock HTTP MCP server, process-tree kill | Filesystem, memory, Python SQLite probe and call with a roots round-trip | None | No |
 
 ## Fusion evidence

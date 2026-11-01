@@ -1179,3 +1179,13 @@
 - Verify: `a_nested_schema_is_described_with_fields_and_an_example`,
   `server_requests_are_answered_by_method`, and the Python fixture end to end
   (it asks for roots during initialize and `roots_seen` returns the same URI).
+
+### Checkpoint retention
+
+- `--keep-checkpoints N` prunes a session's checkpoints to the newest N inside
+  the turn transaction; the default `0` keeps every turn. Turns referenced by
+  an existing branch are pinned: `fork_turn_seq` protects them from pruning.
+- Verify: `old_checkpoints_are_pruned_but_fork_points_are_kept` keeps
+  `[1, 4, 5]` (newest two plus the fork point) and a fork from a pruned turn
+  fails with a typed error; a three-turn CLI smoke with `--keep-checkpoints 2`
+  left `[2, 3]` and refused a fork from turn 1.

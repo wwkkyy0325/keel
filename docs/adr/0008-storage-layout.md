@@ -135,7 +135,8 @@ in one column; they are read as whole values and never queried inside.
   replay would produce a different state and silently rewrite history.
 - Checkpoints are host retention policy. They are not read by the model and
   grow with the transcript, so a host may prune all but the newest ones; a
-  pruned turn can no longer be a fork point.
+  pruned turn can no longer be a fork point. A turn that an existing branch
+  forked from is pinned and survives pruning.
 - Deleting a session removes its own rows in one transaction. Branches are
   separate sessions and survive; the parent link is metadata, not a foreign
   key. A view is derived and deleting it removes no data.

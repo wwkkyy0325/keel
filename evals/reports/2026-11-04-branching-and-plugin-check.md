@@ -93,3 +93,13 @@ PATH, so it does not add a runtime dependency to the workspace.
   where the earlier probe in this report saw one.
 - Streamable HTTP does not answer server requests yet; the SSE body parser
   only returns the response matching the client's id.
+
+## Follow-up: checkpoint retention
+
+- `--keep-checkpoints N` keeps the newest N checkpoints per session and pins
+  every turn an existing branch was forked from. Default `0` keeps all.
+- Store test: five turns, a fork at turn 1, limit 2 → checkpoints `[1, 4, 5]`;
+  forking from the pruned turn 2 reports `no checkpoint at turn 2`.
+- CLI smoke: three turns with `--keep-checkpoints 2` left `[2, 3]`; a fork
+  from turn 1 failed with the typed error above. The transcript still has all
+  three turns.

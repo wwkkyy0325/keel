@@ -45,6 +45,9 @@ pub struct StoredTurn<'a> {
 /// A SQLite-backed host store.
 pub struct Store {
     conn: Connection,
+    /// Keep at most this many checkpoints per session; 0 keeps every turn.
+    /// Fork points referenced by a branch are always kept.
+    checkpoint_limit: u32,
 }
 
 impl Store {
@@ -239,7 +242,15 @@ impl Store {
             params![SCHEMA_VERSION, now()],
         )
         .map_err(|error| store_error("record schema version", error))?;
-        Ok(Self { conn })
+        Ok(Self {
+            conn,
+            checkpoint_limit: 0,
+        })
+    }
+
+    /// Sets the per-session checkpoint cap. Zero keeps every checkpoint.
+    pub fn set_checkpoint_limit(&mut self, keep: u32) {
+        self.checkpoint_limit = keep;
     }
 
     /// Loads a session snapshot and its task list, if they exist.
@@ -299,6 +310,7 @@ impl Store {
             None => None,
         };
         let now = now();
+        let keep = self.checkpoint_limit;
         let tx = self
             .conn
             .transaction()
@@ -364,6 +376,10 @@ impl Store {
                 params![session_id, turn.seq, snapshot_json, todos_json, now],
             )
             .map_err(|error| store_error("write checkpoint", error))?;
+            if keep != 0 {
+                prune_checkpoints(&tx, session_id, keep)
+                    .map_err(|error| store_error("prune checkpoints", error))?;
+            }
         }
         project(&tx, session_id, snapshot, todos, now)
             .map_err(|error| store_error("project session", error))?;
@@ -510,6 +526,27 @@ struct PreviousState {
     facts: BTreeMap<(String, String), String>,
     fact_versions: BTreeMap<(String, String), i64>,
     todos: Vec<(i64, String, String, String, i64)>,
+}
+
+/// Drops old checkpoints for one session, keeping the newest `keep` and every
+/// turn that a branch was forked from.
+fn prune_checkpoints(tx: &Transaction<'_>, session_id: &str, keep: u32) -> rusqlite::Result<()> {
+    tx.execute(
+        "DELETE FROM session_checkpoints
+         WHERE session_id = ?1
+           AND turn_seq NOT IN (
+               SELECT turn_seq FROM session_checkpoints
+               WHERE session_id = ?1
+               ORDER BY turn_seq DESC
+               LIMIT ?2
+           )
+           AND turn_seq NOT IN (
+               SELECT fork_turn_seq FROM sessions
+               WHERE parent_session_id = ?1 AND fork_turn_seq IS NOT NULL
+           )",
+        params![session_id, i64::from(keep)],
+    )?;
+    Ok(())
 }
 
 fn project(
@@ -1286,6 +1323,42 @@ mod tests {
 
         let same = store.fork("parent", 1, "parent").unwrap_err();
         assert!(format!("{same:?}").contains("different session id"));
+    }
+
+    #[test]
+    fn old_checkpoints_are_pruned_but_fork_points_are_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&dir.path().join("keel.db")).unwrap();
+        let mut session = keel_core::Session::new();
+        for seq in 1..=4 {
+            recorded(&mut session, "turn");
+            store
+                .save("parent", &session.snapshot(), None, Some(turn(seq)))
+                .unwrap();
+        }
+        store.fork("parent", 1, "child").unwrap();
+
+        store.set_checkpoint_limit(2);
+        recorded(&mut session, "turn");
+        store
+            .save("parent", &session.snapshot(), None, Some(turn(5)))
+            .unwrap();
+
+        let seqs: Vec<i64> = store
+            .conn
+            .prepare(
+                "SELECT turn_seq FROM session_checkpoints
+                 WHERE session_id = 'parent' ORDER BY turn_seq",
+            )
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(seqs, vec![1, 4, 5], "newest two plus the fork point");
+
+        let pruned = store.fork("parent", 2, "another").unwrap_err();
+        assert!(format!("{pruned:?}").contains("no checkpoint at turn 2"));
     }
 
     #[test]
