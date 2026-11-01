@@ -34,7 +34,24 @@ pub struct SessionView {
     pub facts: Vec<FactView>,
     pub tasks: Vec<TaskView>,
     pub branches: Vec<BranchView>,
+    pub records: Vec<RecordView>,
     pub turns: Vec<TurnView>,
+}
+
+/// One sealed segment's cumulative line.
+#[derive(Debug, Serialize)]
+pub struct RecordView {
+    pub segment_id: u32,
+    pub segment_seq: u32,
+    pub topic: String,
+    pub goal: String,
+    pub result: String,
+    pub changes: Vec<String>,
+    pub pending: Vec<String>,
+    pub verified: bool,
+    pub turns: u32,
+    pub folded: bool,
+    pub absorbed_in: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -110,6 +127,60 @@ pub struct UsageView {
     pub cached: u64,
 }
 
+/// One turn with the exact message list it started from, when captured.
+#[derive(Debug, Serialize)]
+pub struct TurnDetailView {
+    pub turn: TurnView,
+    pub context: Option<ContextView>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ContextView {
+    pub estimate: u32,
+    pub budget: u32,
+    pub stages: Vec<String>,
+    pub messages: Vec<ContextMessageView>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ContextMessageView {
+    pub role: String,
+    pub content: String,
+}
+
+/// The memory screen: every fact version and every task revision.
+#[derive(Debug, Serialize)]
+pub struct MemoryView {
+    pub facts: Vec<FactEventView>,
+    pub tasks: Vec<TaskRevisionView>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FactEventView {
+    pub scope: String,
+    pub key: String,
+    pub version: u32,
+    pub statement: String,
+    pub active: bool,
+    pub reason: String,
+    pub changed_at: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TaskRevisionView {
+    pub revision: u32,
+    pub created_at: i64,
+    pub items: Vec<HistoricTaskView>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct HistoricTaskView {
+    pub id: u32,
+    pub text: String,
+    pub status: String,
+    pub source: String,
+}
+
 /// The list screen: newest first, then id for a stable tie-break.
 pub fn sessions(conn: &Connection) -> Result<Vec<SessionSummaryView>, KernelError> {
     let mut statement = conn
@@ -154,6 +225,7 @@ pub fn session(conn: &Connection, id: &str) -> Result<Option<SessionView>, Kerne
         facts: facts(conn, id)?,
         tasks: tasks(conn, id)?,
         branches: branches(conn, id)?,
+        records: records(conn, id)?,
         turns: turns(conn, id)?,
     }))
 }
@@ -270,6 +342,39 @@ fn branches(conn: &Connection, id: &str) -> Result<Vec<BranchView>, KernelError>
     rows.collect::<Result<Vec<_>, _>>().map_err(view_error)
 }
 
+fn records(conn: &Connection, id: &str) -> Result<Vec<RecordView>, KernelError> {
+    let mut statement = conn
+        .prepare(
+            "SELECT r.segment_id, g.seq, g.topic, r.goal, r.result,
+                    r.changes_json, r.pending_json, r.verified, r.turns,
+                    r.folded, r.absorbed_in
+             FROM records r
+             JOIN segments g ON g.session_id = r.session_id AND g.id = r.segment_id
+             WHERE r.session_id = ?1 ORDER BY g.seq",
+        )
+        .map_err(view_error)?;
+    let rows = statement
+        .query_map([id], |row| {
+            let changes: String = row.get(5)?;
+            let pending: String = row.get(6)?;
+            Ok(RecordView {
+                segment_id: count(row.get(0)?),
+                segment_seq: count(row.get(1)?),
+                topic: row.get(2)?,
+                goal: row.get(3)?,
+                result: row.get(4)?,
+                changes: decode_strings(&changes),
+                pending: decode_strings(&pending),
+                verified: row.get(7)?,
+                turns: count(row.get(8)?),
+                folded: row.get(9)?,
+                absorbed_in: row.get::<_, Option<i64>>(10)?.map(count),
+            })
+        })
+        .map_err(view_error)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(view_error)
+}
+
 fn turns(conn: &Connection, id: &str) -> Result<Vec<TurnView>, KernelError> {
     let mut statement = conn
         .prepare(
@@ -279,23 +384,131 @@ fn turns(conn: &Connection, id: &str) -> Result<Vec<TurnView>, KernelError> {
         )
         .map_err(view_error)?;
     let rows = statement
+        .query_map([id], turn_from_row)
+        .map_err(view_error)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(view_error)
+}
+
+fn turn_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TurnView> {
+    let answer_json: String = row.get(4)?;
+    let usage_json: String = row.get(5)?;
+    let answer: String = row.get(3)?;
+    Ok(TurnView {
+        seq: count(row.get(0)?),
+        state: row.get(1)?,
+        input: row.get(2)?,
+        answer: answer.clone(),
+        answer_model: decode_answer(&answer_json, answer),
+        usage: decode_usage(&usage_json),
+        duration_ms: u64::try_from(row.get::<_, i64>(6)?).unwrap_or(0),
+        created_at: row.get(7)?,
+    })
+}
+
+/// One turn plus the context snapshot captured when it started.
+pub fn turn(conn: &Connection, id: &str, seq: u32) -> Result<Option<TurnDetailView>, KernelError> {
+    let turn = conn
+        .query_row(
+            "SELECT seq, state, input, answer, answer_json, usage_json,
+                    duration_ms, created_at
+             FROM turns WHERE session_id = ?1 AND seq = ?2",
+            rusqlite::params![id, seq],
+            turn_from_row,
+        )
+        .optional()
+        .map_err(view_error)?;
+    let Some(turn) = turn else {
+        return Ok(None);
+    };
+    let context = conn
+        .query_row(
+            "SELECT estimate, budget, stages_json, messages_json
+             FROM context_snapshots WHERE turn_id = ?1",
+            [format!("{id}:{seq}")],
+            |row| {
+                let stages: String = row.get(2)?;
+                let messages: String = row.get(3)?;
+                Ok(ContextView {
+                    estimate: count(row.get(0)?),
+                    budget: count(row.get(1)?),
+                    stages: serde_json::from_str(&stages).unwrap_or_default(),
+                    messages: serde_json::from_str(&messages).unwrap_or_default(),
+                })
+            },
+        )
+        .optional()
+        .map_err(view_error)?;
+    Ok(Some(TurnDetailView { turn, context }))
+}
+
+/// The memory screen: fact versions and task revisions, oldest first.
+pub fn memory(conn: &Connection, id: &str) -> Result<Option<MemoryView>, KernelError> {
+    let exists: Option<i64> = conn
+        .query_row("SELECT 1 FROM sessions WHERE id = ?1", [id], |row| {
+            row.get(0)
+        })
+        .optional()
+        .map_err(view_error)?;
+    if exists.is_none() {
+        return Ok(None);
+    }
+    let mut statement = conn
+        .prepare(
+            "SELECT scope, key, version, statement, active, reason, changed_at
+             FROM fact_history WHERE session_id = ?1
+             ORDER BY scope, key, version",
+        )
+        .map_err(view_error)?;
+    let rows = statement
         .query_map([id], |row| {
-            let answer_json: String = row.get(4)?;
-            let usage_json: String = row.get(5)?;
-            let answer: String = row.get(3)?;
-            Ok(TurnView {
-                seq: count(row.get(0)?),
-                state: row.get(1)?,
-                input: row.get(2)?,
-                answer: answer.clone(),
-                answer_model: decode_answer(&answer_json, answer),
-                usage: decode_usage(&usage_json),
-                duration_ms: u64::try_from(row.get::<_, i64>(6)?).unwrap_or(0),
-                created_at: row.get(7)?,
+            Ok(FactEventView {
+                scope: row.get(0)?,
+                key: row.get(1)?,
+                version: count(row.get(2)?),
+                statement: row.get(3)?,
+                active: row.get::<_, i64>(4)? != 0,
+                reason: row.get(5)?,
+                changed_at: row.get(6)?,
             })
         })
         .map_err(view_error)?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(view_error)
+    let facts = rows.collect::<Result<Vec<_>, _>>().map_err(view_error)?;
+
+    let mut statement = conn
+        .prepare(
+            "SELECT revision, snapshot_json, created_at FROM todo_history
+             WHERE session_id = ?1 ORDER BY revision",
+        )
+        .map_err(view_error)?;
+    let rows = statement
+        .query_map([id], |row| {
+            let snapshot: String = row.get(1)?;
+            Ok(TaskRevisionView {
+                revision: count(row.get(0)?),
+                created_at: row.get(2)?,
+                items: decode_tasks(&snapshot),
+            })
+        })
+        .map_err(view_error)?;
+    let tasks = rows.collect::<Result<Vec<_>, _>>().map_err(view_error)?;
+    Ok(Some(MemoryView { facts, tasks }))
+}
+
+fn decode_strings(raw: &str) -> Vec<String> {
+    serde_json::from_str(raw).unwrap_or_default()
+}
+
+fn decode_tasks(raw: &str) -> Vec<HistoricTaskView> {
+    let list: keel_core::TodoList = serde_json::from_str(raw).unwrap_or_default();
+    list.items
+        .into_iter()
+        .map(|item| HistoricTaskView {
+            id: item.id,
+            text: item.text,
+            status: item.status.as_str().to_owned(),
+            source: item.source.as_str().to_owned(),
+        })
+        .collect()
 }
 
 fn decode_answer(raw: &str, fallback_body: String) -> AnswerView {
@@ -323,9 +536,16 @@ fn view_error(error: rusqlite::Error) -> KernelError {
 mod tests {
     use super::*;
     use crate::store::{Store, StoredTurn};
-    use keel_core::{Fact, FactScope, Session, TodoList, TodoStatus, TurnRecord};
+    use keel_core::{
+        ContextMessage, ContextSnapshot, Fact, FactScope, SegmentRecord, Session, TodoList,
+        TodoStatus, TurnRecord,
+    };
 
-    fn turn(seq: u32, answer_json: &'static str) -> StoredTurn<'static> {
+    fn turn<'a>(
+        seq: u32,
+        answer_json: &'a str,
+        context: Option<&'a ContextSnapshot>,
+    ) -> StoredTurn<'a> {
         StoredTurn {
             seq,
             input: "prompt",
@@ -334,7 +554,7 @@ mod tests {
             answer_json,
             usage_json: r#"{"input":10,"output":5,"cached":4}"#,
             duration_ms: 12,
-            context: None,
+            context,
         }
     }
 
@@ -360,8 +580,28 @@ mod tests {
             confirmed: true,
             segment_id: 0,
         };
+        let record = SegmentRecord {
+            goal: "write chapter one".to_owned(),
+            result: "chapter one is done".to_owned(),
+            changes: vec!["a.py".to_owned()],
+            pending: Vec::new(),
+            verified: true,
+            turns: 1,
+            folded: false,
+            absorbed_in: None,
+        };
+        let context = ContextSnapshot {
+            estimate: 100,
+            budget: 200,
+            stages: vec!["system".to_owned(), "latest".to_owned()],
+            messages: vec![ContextMessage {
+                role: "user".to_owned(),
+                content: "prompt".to_owned(),
+            }],
+        };
         let mut first = session.snapshot();
         first.facts.push(fact.clone());
+        first.segments[0].record = Some(record.clone());
         store
             .save(
                 "parent",
@@ -370,6 +610,7 @@ mod tests {
                 Some(turn(
                     1,
                     r#"{"revision":1,"body":"first","changes":["a.py"],"pending":[],"verification":null,"notes":null,"missing":false}"#,
+                    Some(&context),
                 )),
             )
             .unwrap();
@@ -386,6 +627,7 @@ mod tests {
         todos.update_status(item, TodoStatus::Completed).unwrap();
         let mut second = session.snapshot();
         second.facts.push(fact);
+        second.segments[0].record = Some(record);
         store
             .save(
                 "parent",
@@ -394,6 +636,7 @@ mod tests {
                 Some(turn(
                     2,
                     r#"{"revision":1,"body":"second","changes":[],"pending":[],"verification":{"passed":true,"required_failed":[],"required_unverified":[]},"notes":null,"missing":false}"#,
+                    None,
                 )),
             )
             .unwrap();
@@ -462,6 +705,102 @@ mod tests {
         assert_eq!(view.branches.len(), 1);
         assert_eq!(view.branches[0].id, "child");
         assert_eq!(view.branches[0].fork_turn_seq, 1);
+
+        assert_eq!(view.records.len(), 1);
+        assert_eq!(view.records[0].goal, "write chapter one");
+        assert_eq!(view.records[0].changes, vec!["a.py"]);
+        assert!(view.records[0].verified);
+        assert!(!view.records[0].folded);
+    }
+
+    #[test]
+    fn a_turn_view_includes_the_captured_context() {
+        let (_dir, store) = seed();
+        let detail = super::turn(store.connection(), "parent", 1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(detail.turn.seq, 1);
+        assert_eq!(detail.turn.answer_model.body, "first");
+        let context = detail.context.unwrap();
+        assert_eq!(context.estimate, 100);
+        assert_eq!(context.budget, 200);
+        assert_eq!(context.stages, vec!["system", "latest"]);
+        assert_eq!(context.messages.len(), 1);
+        assert_eq!(context.messages[0].role, "user");
+        assert_eq!(context.messages[0].content, "prompt");
+
+        let second = super::turn(store.connection(), "parent", 2)
+            .unwrap()
+            .unwrap();
+        assert!(second.context.is_none());
+        assert!(super::turn(store.connection(), "parent", 9)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn the_memory_view_lists_fact_versions_and_task_revisions() {
+        let (_dir, mut store) = seed();
+        let stored = store.load("parent").unwrap().unwrap();
+        let mut snapshot = stored.snapshot;
+        let todos = stored.todos;
+        snapshot.facts[0].statement = "project is seagull".to_owned();
+        store
+            .save("parent", &snapshot, todos.as_ref(), None)
+            .unwrap();
+
+        let view = memory(store.connection(), "parent").unwrap().unwrap();
+        assert_eq!(view.facts.len(), 2);
+        assert_eq!(view.facts[0].reason, "added");
+        assert!(view.facts[0].active);
+        assert_eq!(view.facts[1].reason, "superseded");
+        assert_eq!(view.facts[1].statement, "project is seagull");
+        assert_eq!(view.tasks.len(), 2);
+        assert_eq!(view.tasks[0].items[0].status, "pending");
+        assert_eq!(view.tasks[1].items[0].status, "completed");
+        assert!(memory(store.connection(), "missing").unwrap().is_none());
+    }
+
+    #[test]
+    fn the_session_view_matches_the_golden_file() {
+        let (_dir, store) = seed();
+        let view = session(store.connection(), "parent").unwrap().unwrap();
+        let mut value = serde_json::to_value(&view).unwrap();
+        normalize_timestamps(&mut value);
+        let rendered = serde_json::to_string_pretty(&value).unwrap();
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/session-view.golden.json");
+        let expected = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(_) => {
+                // First run writes the fixture; the file is reviewed and
+                // committed, so later runs compare against a fixed shape.
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(&path, &rendered).unwrap();
+                return;
+            }
+        };
+        assert_eq!(rendered.trim(), expected.trim());
+    }
+
+    fn normalize_timestamps(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(map) => {
+                for (key, item) in map.iter_mut() {
+                    if matches!(key.as_str(), "updated_at" | "created_at" | "changed_at") {
+                        *item = serde_json::json!(0);
+                    } else {
+                        normalize_timestamps(item);
+                    }
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    normalize_timestamps(item);
+                }
+            }
+            _ => {}
+        }
     }
 
     #[test]

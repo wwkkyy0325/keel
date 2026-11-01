@@ -1250,3 +1250,21 @@
   composed panels (turn detail with decoded context snapshots, typed memory
   timeline, long-session limits, golden files) and the rule that a screen
   field lands with its view and test.
+
+### Frontend views: turn, memory, records
+
+- `--view session` now includes `records`: every sealed segment with goal,
+  result, decoded changes/pending, verification and fold/absorption state,
+  ordered by segment sequence.
+- `--view turn --session-id <id> --turn <n>` returns one turn with the decoded
+  structured answer, usage and the captured context snapshot (stages and
+  messages). A missing turn exits non-zero.
+- `--view memory --session-id <id>` returns the typed timeline: every
+  `fact_history` row with `added`/`superseded`/`forgotten` and `active`, and
+  every `todo_history` revision with decoded items. A missing session exits
+  non-zero.
+- The session view has a golden file (`hosts/keel-cli/tests/fixtures/
+  session-view.golden.json`, timestamps normalized), so a field rename or an
+  ordering change fails a test rather than reaching the UI.
+- Verify: 289 tests; CLI smoke of turn and memory views against the memory
+  store. fmt, clippy and deny clean.

@@ -13,17 +13,25 @@ tables, decode JSON columns or sort rows.
 ```bash
 keel-cli --store keel.db --view sessions
 keel-cli --store keel.db --view session --session-id mem
+keel-cli --store keel.db --view turn --session-id mem --turn 3
+keel-cli --store keel.db --view memory --session-id mem
 ```
 
 - `sessions` is an array ordered by `updated_at` descending, then `id`.
-- `session` is one object with `session`, `memo`, `facts`, `tasks`, `branches`
-  and `turns`. Ordering is fixed: memo covers by segment id, facts by
-  `scope,key`, tasks by `position`, branches by `updated_at,id`, turns by
-  `seq`.
+- `session` is one object with `session`, `memo`, `facts`, `tasks`, `branches`,
+  `records` and `turns`. Ordering is fixed: memo covers by segment id, facts by
+  `scope,key`, tasks by `position`, branches by `updated_at,id`, records by
+  segment `seq`, turns by `seq`.
 - `turns[].answer_model` is the decoded structured answer and
   `turns[].usage` is the decoded token row. The UI never parses `answer_json`
   or `usage_json`.
-- A missing session is an error with a non-zero exit, not an empty screen.
+- `turn` is one turn plus `context`: the captured turn-start message list with
+  decoded `stages` and `messages`.
+- `memory` is the typed timeline: every `fact_history` row with
+  `added`/`superseded`/`forgotten`, and every `todo_history` revision with
+  decoded items.
+- A missing session or turn is an error with a non-zero exit, not an empty
+  screen.
 
 Invariants: the same store produces the same view (no clock, randomness or
 map iteration in the assembly); the view is read-only. Tests in

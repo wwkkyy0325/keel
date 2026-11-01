@@ -90,6 +90,27 @@ async fn run() -> Result<ExitCode, KernelError> {
                 };
                 print_json(&session)?;
             }
+            "turn" => {
+                let Some(seq) = args.turn else {
+                    return Err(invalid_config("`--view turn` needs `--turn`"));
+                };
+                let Some(detail) = view::turn(store.connection(), &args.session_id, seq)? else {
+                    return Err(invalid_config(format!(
+                        "turn {seq} of session `{}` not found",
+                        args.session_id
+                    )));
+                };
+                print_json(&detail)?;
+            }
+            "memory" => {
+                let Some(memory) = view::memory(store.connection(), &args.session_id)? else {
+                    return Err(invalid_config(format!(
+                        "session `{}` not found",
+                        args.session_id
+                    )));
+                };
+                print_json(&memory)?;
+            }
             other => return Err(invalid_config(format!("unknown view `{other}`"))),
         }
         return Ok(ExitCode::SUCCESS);
@@ -842,8 +863,11 @@ struct Args {
     keep_checkpoints: u32,
     /// Machine-readable output for `--plugins-check`.
     json: bool,
-    /// Print a composed frontend view (`sessions` or `session`) and exit.
+    /// Print a composed frontend view (`sessions`, `session`, `turn` or
+    /// `memory`) and exit.
     view: Option<String>,
+    /// Turn sequence for `--view turn`.
+    turn: Option<u32>,
 }
 
 fn parse_args() -> Result<Args, KernelError> {
@@ -871,6 +895,7 @@ fn parse_args() -> Result<Args, KernelError> {
     let mut keep_checkpoints = 0u32;
     let mut json = false;
     let mut view = None;
+    let mut turn = None;
     let mut workspace = std::env::current_dir().map_err(|error| KernelError::Io {
         message: error.to_string(),
     })?;
@@ -985,6 +1010,18 @@ fn parse_args() -> Result<Args, KernelError> {
                         .ok_or_else(|| invalid_config("missing value for `--view`"))?,
                 );
             }
+            "--turn" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| invalid_config("missing value for `--turn`"))?;
+                let seq = value
+                    .parse::<u32>()
+                    .map_err(|_| invalid_config("`--turn` must be a positive integer"))?;
+                if seq == 0 {
+                    return Err(invalid_config("`--turn` must be a positive integer"));
+                }
+                turn = Some(seq);
+            }
             "--fork-from" => {
                 fork_from = Some(
                     args.next()
@@ -1051,6 +1088,7 @@ fn parse_args() -> Result<Args, KernelError> {
         keep_checkpoints,
         json,
         view,
+        turn,
     })
 }
 

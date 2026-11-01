@@ -1,0 +1,117 @@
+{
+  "branches": [
+    {
+      "fork_turn_seq": 1,
+      "id": "child",
+      "updated_at": 0
+    }
+  ],
+  "facts": [
+    {
+      "confirmed": true,
+      "key": "project",
+      "scope": "session",
+      "segment_id": 0,
+      "statement": "project is blue whale"
+    }
+  ],
+  "memo": {
+    "budget_tokens": 256,
+    "covers": [
+      0
+    ],
+    "revision": 1,
+    "text": "memo text"
+  },
+  "records": [
+    {
+      "absorbed_in": null,
+      "changes": [
+        "a.py"
+      ],
+      "folded": false,
+      "goal": "write chapter one",
+      "pending": [],
+      "result": "chapter one is done",
+      "segment_id": 0,
+      "segment_seq": 1,
+      "topic": "one",
+      "turns": 1,
+      "verified": true
+    }
+  ],
+  "session": {
+    "active_facts": 1,
+    "current_segment_id": 0,
+    "fork_turn_seq": null,
+    "id": "parent",
+    "last_turn_state": "done",
+    "parent_session_id": null,
+    "summary_revision": 1,
+    "tasks_completed": 1,
+    "tasks_total": 1,
+    "turns": 2,
+    "updated_at": 0
+  },
+  "tasks": [
+    {
+      "item_id": 1,
+      "position": 1,
+      "source": "host",
+      "status": "completed",
+      "text": "write chapter one"
+    }
+  ],
+  "turns": [
+    {
+      "answer": "answer",
+      "answer_model": {
+        "body": "first",
+        "changes": [
+          "a.py"
+        ],
+        "missing": false,
+        "notes": null,
+        "pending": [],
+        "revision": 1,
+        "verification": null
+      },
+      "created_at": 0,
+      "duration_ms": 12,
+      "input": "prompt",
+      "seq": 1,
+      "state": "done",
+      "usage": {
+        "cached": 4,
+        "input": 10,
+        "output": 5
+      }
+    },
+    {
+      "answer": "answer",
+      "answer_model": {
+        "body": "second",
+        "changes": [],
+        "missing": false,
+        "notes": null,
+        "pending": [],
+        "revision": 1,
+        "verification": {
+          "passed": true,
+          "required_failed": [],
+          "required_unverified": []
+        }
+      },
+      "created_at": 0,
+      "duration_ms": 12,
+      "input": "prompt",
+      "seq": 2,
+      "state": "done",
+      "usage": {
+        "cached": 4,
+        "input": 10,
+        "output": 5
+      }
+    }
+  ]
+}

@@ -17,15 +17,19 @@ view is tested without starting a UI.
 - [x] Missing session exits non-zero instead of rendering an empty screen.
       Verify: `an_unknown_session_has_no_view` and the CLI error path.
 - [x] Contract documented in `docs/llmwiki/frontend-contract.md`.
-- [ ] Turn detail view: one turn with its three answer layers and the
-      `context_snapshots` messages decoded, so a debugging screen needs no SQL.
-- [ ] Memory timeline: `fact_history` and `todo_history` as typed events, with
-      a stable order and no JSON string in the payload.
+- [x] Turn detail view: `--view turn --turn N` returns one turn plus the
+      decoded `context_snapshots` messages and stages. Verify:
+      `a_turn_view_includes_the_captured_context`.
+- [x] Records panel: the session view carries every sealed record ordered by
+      segment sequence. Verify: the session test asserts the record fields.
+- [x] Memory timeline: `--view memory` returns typed `fact_history` events
+      (`added`/`superseded`/`forgotten`) and decoded `todo_history` revisions.
+      Verify: `the_memory_view_lists_fact_versions_and_task_revisions`.
 - [ ] Long sessions: explicit limits/cursors for turns and transcripts rather
       than serializing a whole store into one response.
-- [ ] Golden files: seed a store, emit the views, compare to a checked-in
-      fixture with timestamps normalized. This guards the field names against
-      accidental renames.
+- [x] Golden file: seed a store, emit the session view, normalize timestamps
+      and compare to `hosts/keel-cli/tests/fixtures/session-view.golden.json`.
+      Verify: `the_session_view_matches_the_golden_file`.
 - [ ] Event/audit timeline once events are stored.
 
 ## Rules
