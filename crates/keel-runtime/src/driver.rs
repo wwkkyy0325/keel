@@ -245,6 +245,17 @@ impl<M: ModelProvider> TurnDriver<M> {
             .snapshot()
     }
 
+    /// Host-facing permission mode switch. A UI can offer `full_auto` without
+    /// waiting for a tool to ask; the grant still expires with `ttl`.
+    pub fn escalate_full_auto(&self, ttl: Duration) {
+        self.dispatcher.escalate_full_auto(ttl);
+    }
+
+    /// Drops session grants and returns to the profile's base level.
+    pub fn revoke_permission_grants(&self) {
+        self.dispatcher.revoke_grants();
+    }
+
     /// Continues a stored session instead of starting an empty one.
     pub fn with_session(mut self, session: Session) -> Self {
         self.session = Mutex::new(session);

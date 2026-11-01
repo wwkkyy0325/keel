@@ -48,6 +48,10 @@ Stable within a major version:
   the target path from the tool argument, so the permission gate approves the
   real file; an entry is accepted only for its recorded path, and the current
   version is backed up first.
+- Permission mode: a host may call `TurnDriver::escalate_full_auto(ttl)` and
+  `TurnDriver::revoke_permission_grants()` to offer a mode switch. The grants
+  are the same ones a prompt would create, expire with the TTL, and every tool
+  call still passes through the gate.
 - The profile schema loaded by `keel-policy`; unknown fields are errors.
 - The snapshot JSON written by `Session::snapshot`; `format_version` is
   `SNAPSHOT_VERSION`, and `Session::restore` rejects a newer format.

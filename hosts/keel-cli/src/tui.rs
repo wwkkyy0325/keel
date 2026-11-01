@@ -19,8 +19,8 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use keel_core::{
-    CancelToken, Event, InteractionKind, InteractionPort, InteractionRequest, InteractionResponse,
-    KernelError, TodoList, TokenUsage,
+    CancelToken, Event, GrantScope, InteractionKind, InteractionPort, InteractionRequest,
+    InteractionResponse, KernelError, PermissionLevel, TodoList, TokenUsage,
 };
 use keel_runtime::{EventLog, RuntimeConfig, TurnDriver, TurnOutcome};
 use ratatui::backend::CrosstermBackend;
@@ -106,6 +106,8 @@ struct TurnDone {
 enum Command {
     Submit(String),
     Slash(String),
+    /// Tab or Shift+Tab: switch between workspace-auto and full-auto.
+    ToggleMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -162,6 +164,9 @@ struct App {
     running: bool,
     cancel: Option<CancelToken>,
     pending: Option<InteractionJob>,
+    pending_choice: usize,
+    full_auto: bool,
+    base_full_auto: bool,
     status: String,
     usage: UsageTotal,
     last_seq: u64,
@@ -193,6 +198,9 @@ impl App {
             running: false,
             cancel: None,
             pending: None,
+            pending_choice: 0,
+            full_auto: false,
+            base_full_auto: false,
             status: "ready".to_owned(),
             usage: UsageTotal::default(),
             last_seq: 0,
@@ -317,6 +325,12 @@ impl App {
     }
 
     fn open_interaction(&mut self, job: InteractionJob) {
+        self.pending_choice = job
+            .request
+            .options
+            .iter()
+            .position(|option| option.id == "allow_once")
+            .unwrap_or(0);
         if let Some(previous) = self.pending.replace(job) {
             let _ = previous.reply.send(InteractionResponse::Deferred);
         }
@@ -400,6 +414,11 @@ impl App {
     fn handle_key(&mut self, key: KeyEvent) -> Option<Command> {
         if key.kind != KeyEventKind::Press {
             return None;
+        }
+        // Tab and Shift+Tab switch the session mode, even while a prompt is
+        // open; the prompt itself is navigated with the arrow keys.
+        if key.code == KeyCode::Tab || key.code == KeyCode::BackTab {
+            return Some(Command::ToggleMode);
         }
         if self.pending.is_some() {
             self.modal_key(key);
@@ -539,17 +558,48 @@ impl App {
             self.cancel_turn();
             return;
         }
+        let count = job.request.options.len();
+        match key.code {
+            KeyCode::Up if count > 0 => {
+                self.pending_choice = (self.pending_choice + count - 1) % count;
+                self.pending = Some(job);
+                return;
+            }
+            KeyCode::Down if count > 0 => {
+                self.pending_choice = (self.pending_choice + 1) % count;
+                self.pending = Some(job);
+                return;
+            }
+            KeyCode::Enter if count > 0 => {
+                let option = &job.request.options[self.pending_choice.min(count - 1)];
+                let response = if job.request.kind == InteractionKind::PermissionApproval {
+                    parse_response(&job.request, &option.id)
+                } else {
+                    InteractionResponse::Selected {
+                        option: option.id.clone(),
+                    }
+                };
+                self.apply_response(job, response);
+                return;
+            }
+            KeyCode::Esc => {
+                self.apply_response(job, InteractionResponse::Deferred);
+                return;
+            }
+            _ => {}
+        }
         let permission = job.request.kind == InteractionKind::PermissionApproval;
         let response = match key.code {
-            KeyCode::Esc => Some(InteractionResponse::Deferred),
-            KeyCode::Char('d') | KeyCode::Char('1') => Some(parse_response(&job.request, "deny")),
-            KeyCode::Char('a') | KeyCode::Char('2') => {
+            KeyCode::Char('d') | KeyCode::Char('1') if permission => {
+                Some(parse_response(&job.request, "deny"))
+            }
+            KeyCode::Char('a') | KeyCode::Char('2') if permission => {
                 Some(parse_response(&job.request, "allow_once"))
             }
-            KeyCode::Char('s') | KeyCode::Char('3') => {
+            KeyCode::Char('s') | KeyCode::Char('3') if permission => {
                 Some(parse_response(&job.request, "allow_scope"))
             }
-            KeyCode::Char('f') | KeyCode::Char('4') => {
+            KeyCode::Char('f') | KeyCode::Char('4') if permission => {
                 Some(parse_response(&job.request, "full_auto"))
             }
             KeyCode::Char(character) if !permission => character
@@ -563,12 +613,23 @@ impl App {
             _ => None,
         };
         match response {
-            Some(response) => {
-                self.notice(format!("interaction: {}", describe(&response)));
-                self.answer(job, response);
-            }
+            Some(response) => self.apply_response(job, response),
             None => self.pending = Some(job),
         }
+    }
+
+    fn apply_response(&mut self, job: InteractionJob, response: InteractionResponse) {
+        if matches!(
+            &response,
+            InteractionResponse::Approved {
+                scope: GrantScope::FullAutoSession { .. }
+            }
+        ) {
+            self.full_auto = true;
+            self.permission = "full_auto".to_owned();
+        }
+        self.notice(format!("interaction: {}", describe(&response)));
+        self.answer(job, response);
     }
 
     fn transcript(&self, width: usize) -> Vec<Line<'static>> {
@@ -711,6 +772,8 @@ pub async fn run(host: TuiHost) -> Result<ExitCode, KernelError> {
         host.session_id.clone(),
         host.config.permission_level.as_str().to_owned(),
     );
+    app.base_full_auto = host.config.permission_level == PermissionLevel::FullAuto;
+    app.full_auto = app.base_full_auto;
     let driver = Arc::new(host.driver);
     let (key_tx, mut key_rx) = mpsc::channel(64);
     let stop = Arc::new(AtomicBool::new(false));
@@ -729,6 +792,7 @@ pub async fn run(host: TuiHost) -> Result<ExitCode, KernelError> {
                 match app.handle_key(key) {
                     Some(Command::Submit(input)) => start_turn(&mut app, driver.clone(), turn_tx.clone(), input),
                     Some(Command::Slash(command)) => run_slash(&mut app, &command, store.as_ref()),
+                    Some(Command::ToggleMode) => toggle_mode(&mut app, &driver),
                     None => {}
                 }
             }
@@ -758,6 +822,24 @@ pub async fn run(host: TuiHost) -> Result<ExitCode, KernelError> {
     }
     stop.store(true, Ordering::Relaxed);
     Ok(ExitCode::SUCCESS)
+}
+
+fn toggle_mode(app: &mut App, driver: &TurnDriver<HostModel>) {
+    if app.base_full_auto {
+        app.notice("mode: full_auto (fixed by the profile)");
+        return;
+    }
+    if app.full_auto {
+        driver.revoke_permission_grants();
+        app.full_auto = false;
+        app.permission = "workspace_auto".to_owned();
+        app.notice("mode: workspace_auto");
+    } else {
+        driver.escalate_full_auto(Duration::from_secs(8 * 60 * 60));
+        app.full_auto = true;
+        app.permission = "full_auto".to_owned();
+        app.notice("mode: full_auto (8 h)");
+    }
 }
 
 fn start_turn(
@@ -808,7 +890,11 @@ fn run_slash(app: &mut App, command: &str, store: Option<&Store>) {
 
 fn draw(app: &App, frame: &mut Frame) {
     let area = frame.area();
-    let prompt_height = if app.pending.is_some() { 5 } else { 0 };
+    let prompt_height = app.pending.as_ref().map_or(0, |job| {
+        let text_width = area.width.saturating_sub(2).max(1) as usize;
+        let prompt_lines = wrap_text(&job.request.prompt, text_width).len().max(1);
+        (prompt_lines + job.request.options.len() + 3).min(14) as u16
+    });
     let chunks = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(3),
@@ -837,7 +923,7 @@ fn draw(app: &App, frame: &mut Frame) {
     frame.render_widget(Paragraph::new(lines).scroll((offset as u16, 0)), chunks[1]);
 
     if let Some(job) = &app.pending {
-        draw_prompt(job, frame, chunks[2]);
+        draw_prompt(job, app.pending_choice, frame, chunks[2]);
     }
 
     let before: String = app.input[..app.cursor.min(app.input.len())]
@@ -861,7 +947,7 @@ fn draw(app: &App, frame: &mut Frame) {
     let status = if app.running {
         format!(" ● working · {usage} · Ctrl-C cancel · PgUp/PgDn scroll ")
     } else {
-        format!(" ● ready · {usage} · Enter send · /help ")
+        format!(" ● ready · {usage} · Enter send · Tab mode · /help ")
     };
     frame.render_widget(
         Paragraph::new(status).style(Style::default().fg(if app.running {
@@ -875,27 +961,34 @@ fn draw(app: &App, frame: &mut Frame) {
 
 /// Inline approval above the input, so the conversation does not disappear
 /// behind a modal.
-fn draw_prompt(job: &InteractionJob, frame: &mut Frame, area: Rect) {
+fn draw_prompt(job: &InteractionJob, selected: usize, frame: &mut Frame, area: Rect) {
     let title = if job.request.kind == InteractionKind::PermissionApproval {
         " permission ".to_owned()
     } else {
         format!(" {} ", job.request.kind.as_str())
     };
-    let mut lines = vec![Line::from(job.request.prompt.clone())];
-    if job.request.kind == InteractionKind::PermissionApproval {
-        lines.push(Line::from(
-            " d Deny · a Allow once · s Allow path · f Full auto · Esc defer",
-        ));
-    } else {
-        let options: Vec<String> = job
-            .request
-            .options
-            .iter()
-            .enumerate()
-            .map(|(index, option)| format!("{}. {}", index + 1, option.label))
-            .collect();
-        lines.push(Line::from(format!(" {} · Esc defer", options.join(" · "))));
+    let mut lines = Vec::new();
+    for line in job.request.prompt.lines() {
+        lines.push(Line::from(line.to_owned()));
     }
+    for (index, option) in job.request.options.iter().enumerate() {
+        let active = index == selected;
+        let style = if active {
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        let marker = if active { "› " } else { "  " };
+        lines.push(Line::from(vec![
+            Span::styled(marker.to_owned(), style),
+            Span::styled(option.label.clone(), style),
+        ]));
+    }
+    lines.push(Line::from(
+        " ↑↓ select · Enter confirm · Esc defer · Tab mode",
+    ));
     frame.render_widget(
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })
@@ -1114,15 +1207,13 @@ mod tests {
             .any(|block| matches!(&block.kind, BlockKind::User)));
     }
 
-    #[test]
-    fn permission_keys_map_to_the_same_scopes_as_the_line_ui() {
-        let mut app = app();
-        let (reply, mut answer) = oneshot::channel();
-        app.open_interaction(InteractionJob {
+    fn permission_job(prompt: &str) -> (InteractionJob, oneshot::Receiver<InteractionResponse>) {
+        let (reply, answer) = oneshot::channel();
+        let job = InteractionJob {
             request: InteractionRequest::new(
                 TurnId::new(1),
                 InteractionKind::PermissionApproval,
-                "Allow shell?",
+                prompt,
             )
             .with_options(vec![
                 InteractionOption::new("deny", "Deny"),
@@ -1131,7 +1222,15 @@ mod tests {
                 InteractionOption::new("full_auto", "Full auto"),
             ]),
             reply,
-        });
+        };
+        (job, answer)
+    }
+
+    #[test]
+    fn permission_keys_map_to_the_same_scopes_as_the_line_ui() {
+        let mut app = app();
+        let (job, mut answer) = permission_job("Allow shell?");
+        app.open_interaction(job);
 
         app.handle_key(key(KeyCode::Char('a')));
 
@@ -1139,9 +1238,38 @@ mod tests {
         assert!(matches!(
             answer.try_recv(),
             Ok(InteractionResponse::Approved {
-                scope: keel_core::GrantScope::Once
+                scope: GrantScope::Once
             })
         ));
+    }
+
+    #[test]
+    fn arrows_select_a_scope_and_enter_confirms_it() {
+        let mut app = app();
+        let (job, mut answer) = permission_job("Allow shell?");
+        app.open_interaction(job);
+        assert_eq!(app.pending_choice, 1, "allow once is the default");
+
+        app.handle_key(key(KeyCode::Down));
+        app.handle_key(key(KeyCode::Enter));
+
+        assert!(app.pending.is_none());
+        assert!(matches!(
+            answer.try_recv(),
+            Ok(InteractionResponse::Approved {
+                scope: GrantScope::PathPrefix { .. }
+            })
+        ));
+    }
+
+    #[test]
+    fn tab_requests_a_mode_toggle() {
+        let mut app = app();
+        assert_eq!(app.handle_key(key(KeyCode::Tab)), Some(Command::ToggleMode));
+        assert_eq!(
+            app.handle_key(key(KeyCode::BackTab)),
+            Some(Command::ToggleMode)
+        );
     }
 
     #[test]
@@ -1198,26 +1326,18 @@ mod tests {
     #[test]
     fn the_permission_prompt_is_inline() {
         let mut app = app();
-        let (reply, _answer) = oneshot::channel();
-        app.open_interaction(InteractionJob {
-            request: InteractionRequest::new(
-                TurnId::new(1),
-                InteractionKind::PermissionApproval,
-                "Allow `shell` to execute `cargo`?",
-            )
-            .with_options(vec![
-                InteractionOption::new("deny", "Deny"),
-                InteractionOption::new("allow_once", "Allow once"),
-                InteractionOption::new("allow_scope", "Allow this path"),
-                InteractionOption::new("full_auto", "Full auto"),
-            ]),
-            reply,
-        });
+        let (job, _answer) =
+            permission_job("Allow `shell` to execute `cargo`?\ncommand: cargo test");
+        app.open_interaction(job);
 
         let rendered = frame(&app, 80, 24);
         golden("tui-prompt.txt", &rendered);
         assert!(rendered.contains("Allow `shell`"));
-        assert!(rendered.contains("Allow once"));
+        assert!(rendered
+            .lines()
+            .any(|line| line.contains("command: cargo test")));
+        assert!(rendered.contains("› Allow once"), "the default is marked");
         assert!(rendered.contains("Full auto"));
+        assert!(rendered.contains("↑↓ select"));
     }
 }

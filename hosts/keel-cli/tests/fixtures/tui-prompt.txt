@@ -9,16 +9,16 @@
 
 
 
-
-
-
-
 ┌ permission ──────────────────────────────────────────────────────────────────┐
 │Allow `shell` to execute `cargo`?                                             │
-│ d Deny · a Allow once · s Allow path · f Full auto · Esc defer               │
-│                                                                              │
+│command: cargo test                                                           │
+│  Deny                                                                        │
+│› Allow once                                                                  │
+│  Allow this path                                                             │
+│  Full auto                                                                   │
+│ ↑↓ select · Enter confirm · Esc defer · Tab mode                             │
 └──────────────────────────────────────────────────────────────────────────────┘
 ┌ message ─────────────────────────────────────────────────────────────────────┐
 │> ▏                                                                           │
 └──────────────────────────────────────────────────────────────────────────────┘
- ● ready · 0 in · 0 out · 0 cached · Enter send · /help
+ ● ready · 0 in · 0 out · 0 cached · Enter send · Tab mode · /help

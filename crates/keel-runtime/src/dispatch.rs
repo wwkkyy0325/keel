@@ -54,6 +54,16 @@ impl ToolDispatcher {
         self
     }
 
+    /// Host-facing mode switch: allow every access for `ttl` without a prompt.
+    pub fn escalate_full_auto(&self, ttl: Duration) {
+        self.permission.escalate_full_auto(ttl);
+    }
+
+    /// Drops session grants and returns to the configured base level.
+    pub fn revoke_grants(&self) {
+        self.permission.revoke_all();
+    }
+
     pub async fn dispatch(
         &self,
         turn_id: TurnId,
