@@ -1346,3 +1346,22 @@
   asset inventory and a pre-release checklist.
 - README refreshed to the current state: implemented features, store/branch/
   view commands, plugin configuration, evals and the new documents.
+
+### Kernel distribution and snapshot versioning
+
+- ADR 0014 fixes the repo shape: `crates/` is the distributable kernel;
+  `hosts/keel-cli` is a reference host and executable contract test, not the
+  product. Derived projects depend on the crates and bring their own host.
+- `docs/kernel-contract.md` lists the stable surface, extension points,
+  contract tests, versioning/deprecation rules, snapshot migration and how a
+  derived project consumes and updates the kernel. `CHANGELOG.md` records the
+  0.1.0 kernel and host.
+- `SessionSnapshot` now carries `format_version` (`SNAPSHOT_VERSION = 1`);
+  `Session::restore` returns a typed `Unsupported` error for a newer format
+  instead of reading it as if the fields matched. The test
+  `a_snapshot_from_a_newer_format_is_rejected` covers it.
+- CI gains a kernel-only job (`cargo test -p keel-core -p keel-policy
+  -p keel-runtime -p keel-model-openai`), so a host change cannot hide a
+  kernel dependency.
+- Verify: kernel-only build/tests (251 tests) and the full workspace
+  (295 tests); fmt and clippy clean.

@@ -22,17 +22,19 @@ immutable `RuntimeConfig`; plugins add optional capabilities.
 | `crates/keel-policy` | Profile schema, resolution, `RuntimeConfig`, `TurnLimits` |
 | `crates/keel-model-openai` | OpenAI-compatible wire mapping and streaming provider |
 | `crates/keel-runtime` | FSM, turn driver, context builder, dispatch, permission module, verifier, tools, mock model |
-| `hosts/keel-cli` | Loads a profile, runs one turn, terminal interactions |
+| `hosts/keel-cli` | Reference host: CLI, SQLite store, MCP adapter, frontend views |
 
-Status: M3 closed. Sessions, budget-driven history assembly, the context
-governor, tool summaries, segment records, fact folding, a rolling session
-memo, deterministic lexical recall, three-tier facts, kernel-owned task state
-and the turn `Answer` artifact are implemented; ADR 0008 fixes the persistence
-layout and ADR 0009 defines task state. Real runs: a 20-turn DeepSeek companion
-at 8k finished 20/20, a 20-turn coding session with four tools at 16k finished
-20/20, and a 24-turn companion run exercised memo rewrites and recall probes.
-226 tests pass; the self-authored suite is 10/10 and the public baseline is
-HumanEval+ 20/20 and MBPP+ 19/20.
+Status: kernel 0.1.0 with a reference host. Sessions, bounded history assembly,
+the context governor, segment records, fact folding, the rolling memo, lexical
+recall, three-tier facts, task state, acceptance and the turn `Answer` artifact
+are implemented. The host adds persistence, branches, MCP plugins and composed
+read models. Evidence: 20/20 curated coding cases, five companion personas
+(100 turns), and a 50-turn novel with 0 overflow. 295 tests pass.
+
+The repository is kernel-first: `crates/` is the distributable kernel and
+`hosts/keel-cli` is an executable contract test, not the product. Products
+depend on the crates and bring their own host and UI. See
+`docs/kernel-contract.md` and ADR 0014.
 
 ## Permission and interaction model
 

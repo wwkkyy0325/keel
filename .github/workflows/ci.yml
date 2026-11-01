@@ -18,6 +18,15 @@ jobs:
       - run: cargo test --workspace
       - uses: EmbarkStudios/cargo-deny-action@v2
 
+  kernel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # The kernel crates must build and pass their tests without the host.
+      - run: cargo test -p keel-core -p keel-policy -p keel-runtime -p keel-model-openai
+
   harness:
     runs-on: ubuntu-latest
     steps:

@@ -28,6 +28,22 @@ rigging and cabins are built around it. Keel is that spine for agent variants.
 The kernel never knows variant names. The middle layer answers the kernel's
 policy questions. Plugins add capability and never bypass permissions.
 
+## Kernel vs reference host
+
+This repository is kernel-first. The crates under `crates/` are the reusable
+kernel; `hosts/keel-cli` is a thin reference host that exercises it and serves
+as an executable contract test. A derived project depends on the kernel crates
+and brings its own host, UI, storage and composition instead of forking the
+kernel.
+
+The kernel contract, stability tiers and update procedure are in
+`docs/kernel-contract.md`; version history is in `CHANGELOG.md`. The
+kernel-only build proves the boundary:
+
+```bash
+cargo build -p keel-core -p keel-policy -p keel-runtime -p keel-model-openai
+```
+
 ## Implemented
 
 - Turn FSM, streaming OpenAI-compatible provider, tool loop, cancellation and
