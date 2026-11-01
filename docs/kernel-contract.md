@@ -29,6 +29,9 @@ Stable within a major version:
   versioned), `Tool`, `ToolSchema`, `ToolArgs`, `ToolResult`, `ModelProvider`,
   `ContextStage`, `Policy`, `PermissionGate`, `InteractionPort`, `Event`,
   `EventSink`, `KernelError`, `ErrorCode`.
+- The event enum is the live UI/audit feed: turn and state changes, context
+  builds, tool starts/finishes, `PermissionDecided` for every gate decision,
+  interactions, memory and summary events.
 - The tool protocol: names, parameter kinds, risk levels and result envelopes.
 - The profile schema loaded by `keel-policy`; unknown fields are errors.
 - The snapshot JSON written by `Session::snapshot`; `format_version` is
@@ -106,13 +109,34 @@ dependency.
 | `ContextStage` | `crates/keel-runtime/tests/context.rs`, `window_matrix.rs` |
 | `EventSink` / `EventLog` | `crates/keel-runtime/tests/event_log.rs` |
 | `InteractionPort` | `crates/keel-runtime/tests/interactions.rs` |
-| `PermissionGate` | `crates/keel-runtime` permission unit tests |
+| `PermissionGate` | `crates/keel-runtime` permission unit tests; `permission_decisions_are_recorded_as_events` |
 | `Summarizer` | `crates/keel-runtime` summarizer unit tests |
 | `TrashStore` | `crates/keel-runtime` trash unit tests |
 | Session snapshot | `a_snapshot_restores_the_derived_state`, `a_snapshot_from_a_newer_format_is_rejected` |
 | Snapshot persistence (host) | `hosts/keel-cli/src/store.rs` tests — host contract, not kernel |
 
 Add a contract test with every new trait or when a trait's semantics change.
+
+## Frontend adaptability
+
+The kernel is UI-agnostic. A UI gets:
+
+- a typed event stream (`EventSink`): state changes, context builds, tool
+  activity, permission decisions, interactions, memory and summary updates;
+- `InteractionPort` for questions, plan approval and permission confirmation;
+- `CancelToken` for cancel;
+- `TurnOutcome.answer` and, when enabled, `TurnOutcome.context` — the exact
+  message list the model saw;
+- `Session::snapshot` for session state.
+
+Token-level streaming is deliberately not an event. The kernel hot path must
+not allocate or serialize per token. A host that wants live tokens wraps its
+`ModelProvider` and forwards `TextDelta`/`ThinkingDelta` to its UI before
+returning them to the driver. The reference CLI prints only the final answer,
+which is why token streaming does not appear in its output.
+
+Read models and views are host concerns: the kernel does not know SQL, tables
+or screen shapes.
 
 ## What a derived project supplies
 

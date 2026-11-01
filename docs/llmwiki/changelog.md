@@ -1365,3 +1365,15 @@
   kernel dependency.
 - Verify: kernel-only build/tests (251 tests) and the full workspace
   (295 tests); fmt and clippy clean.
+
+### Permission decisions as events
+
+- `Event::PermissionDecided` records every gate decision (`allow`, `deny`,
+  `confirm`) with the tool, access kind, path and reason. The dispatcher emits
+  one per permission request, so a UI or audit log no longer has to infer a
+  decision from the tool outcome.
+- `docs/kernel-contract.md` now describes the event feed as the UI/audit
+  contract and states the streaming rule: the kernel does not emit per-token
+  events; a host that wants live tokens wraps its `ModelProvider`.
+- Verify: `permission_decisions_are_recorded_as_events` covers allow, confirm
+  and deny; 296 workspace tests, 252 kernel-only.

@@ -29,7 +29,8 @@ the context governor, segment records, fact folding, the rolling memo, lexical
 recall, three-tier facts, task state, acceptance and the turn `Answer` artifact
 are implemented. The host adds persistence, branches, MCP plugins and composed
 read models. Evidence: 20/20 curated coding cases, five companion personas
-(100 turns), and a 50-turn novel with 0 overflow. 295 tests pass.
+(100 turns), and a 50-turn novel with 0 overflow. 296 tests pass (252 in the
+kernel crates alone).
 
 The repository is kernel-first: `crates/` is the distributable kernel and
 `hosts/keel-cli` is an executable contract test, not the product. Products
