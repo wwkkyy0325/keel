@@ -147,6 +147,26 @@ truncation, with secrets redacted. It is not the transcript; a later
 reconstruction from segments can differ. Turns run without the flag have no
 row.
 
+## Branches
+
+A branch is a normal session with a parent. There is no branch table:
+
+```sql
+SELECT id, updated_at, parent_session_id, fork_turn_seq
+FROM sessions
+WHERE parent_session_id = ?1
+ORDER BY updated_at;
+```
+
+`fork_turn_seq` is the turn whose end state the branch starts from; the branch
+copies turns `1..fork_turn_seq` and rebuilds every derived table. Its facts,
+memo and tasks are those of the parent at that turn, not the parent's current
+state. A branch is independent after creation: later parent turns do not
+appear in it.
+
+Deleting a session through the CLI removes its own rows; branches are separate
+sessions and survive. The parent link is historical metadata.
+
 ## What not to do
 
 - Do not parse `sessions.snapshot_json` or `sessions.todos_json`. They exist so
@@ -174,12 +194,11 @@ level. The resume snapshot (`snapshot_json`) remains current state only.
 
 - Event rows as a queryable audit plane; the CLI keeps the event log in memory
   and writes turn rows.
-- `context_snapshots`: the exact message list the model saw on a turn. It is
-  designed in ADR 0008 but not written.
-- Events: the audit plane lands with the frontend milestone.
+- A checkpoints query: `session_checkpoints` is the kernel's fork source, not a
+  frontend surface. Show branch lineage through `sessions` instead.
 
 ## Versioning
 
 `schema_version` lists applied migrations. A frontend should refuse to open a
-database whose highest version it does not know. Version 3 adds the projection
-tables and `session_current`.
+database whose highest version it does not know. Version 8 adds per-turn
+checkpoints and the branch columns.

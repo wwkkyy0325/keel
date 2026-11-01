@@ -42,10 +42,26 @@ The kernel exposes a snapshot; the host decides where it lives.
       extraction, update, temporal, abstention). Verify: two runs, 9 and 11
       turns across two and three processes; 8/8 and 6/6 answers; see
       `docs/llmwiki/tasks/memory-eval.md` and the report.
+- [x] Per-turn checkpoints: `session_checkpoints` holds the state after every
+      turn, written in the same transaction as the turn. Verify:
+      `each_turn_writes_a_checkpoint`.
+- [x] Branching: `--fork-from <session>:<turn>` copies the checkpoint, the
+      transcript up to that turn and rebuilds the projection under
+      `--session-id`; `sessions.parent_session_id` and `fork_turn_seq` record
+      the lineage. Verify: `a_fork_resumes_from_the_checkpoint_and_copies_the_transcript`,
+      `a_fork_needs_a_checkpoint_and_a_free_target`, and a two-process mock
+      smoke where the branch continued without changing the parent.
+- [x] Session deletion: `--delete-session <id>` removes every row of that
+      session in one transaction; branches survive. Verify:
+      `deleting_a_session_removes_its_rows_but_not_its_branches` and a live
+      delete of the branch from the smoke store.
+- [ ] Checkpoint retention: prune old checkpoints (host policy). Until then
+      every turn stays forkable and storage grows with the transcript.
 
 ## State ownership
 
-- Kernel: `sessions.snapshot_json`, used only to resume.
+- Kernel: `sessions.snapshot_json`, used only to resume;
+  `session_checkpoints` is the fork source and is never read by a frontend.
 - Frontend: the normalized tables and `session_current`, never the snapshot.
 - Both are written from one snapshot in one transaction. Derived rows are
   replaced per save; summary revisions are append-only.

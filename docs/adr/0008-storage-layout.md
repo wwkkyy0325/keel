@@ -47,7 +47,8 @@ raw planes and the derived rows.
 ```sql
 schema_version(version integer primary key, applied_at text)
 
-sessions(id text primary key, started_at text, metadata_json text)
+sessions(id text primary key, started_at text, metadata_json text,
+         parent_session_id text, fork_turn_seq integer)
 turns(id text primary key, session_id text, seq integer, input text,
       state text, answer text, answer_json text, usage_json text,
       duration_ms integer, created_at text)
@@ -91,6 +92,10 @@ events(id integer primary key autoincrement, turn_id text, seq integer,
 context_snapshots(turn_id text primary key, session_id text,
                   estimate integer, budget integer, stages_json text,
                   messages_json text, created_at text)
+
+session_checkpoints(session_id text, turn_seq integer, snapshot_json text,
+                    todos_json text, created_at text,
+                    primary key(session_id, turn_seq))
 ```
 
 Lists such as `changes`, `pending`, `usage` and the message projection are JSON
@@ -116,6 +121,26 @@ in one column; they are read as whole values and never queried inside.
 - A turn writes its rows in one transaction. A crash leaves the previous turn
   intact; there is no half-visible turn.
 - Sequence numbers are monotonic per session, assigned inside the transaction.
+
+### Branching and deletion
+
+- A branch is a new session, not a new abstraction. `sessions.parent_session_id`
+  and `sessions.fork_turn_seq` record the origin; there is no branch table.
+- `session_checkpoints(session_id, turn_seq, snapshot_json, todos_json,
+  created_at)` holds the state after each turn and is written in the same
+  transaction as the turn. A fork copies one checkpoint, copies turns
+  `1..turn_seq` and rebuilds the projection from the snapshot.
+- Replaying the transcript is not an acceptable alternative: the memo is
+  model-written and fact extraction depends on when a segment sealed, so a
+  replay would produce a different state and silently rewrite history.
+- Checkpoints are host retention policy. They are not read by the model and
+  grow with the transcript, so a host may prune all but the newest ones; a
+  pruned turn can no longer be a fork point.
+- Deleting a session removes its own rows in one transaction. Branches are
+  separate sessions and survive; the parent link is metadata, not a foreign
+  key. A view is derived and deleting it removes no data.
+- There is no in-place history edit. "Edit an earlier message" is a fork at the
+  turn before it, which keeps the memo, facts and summaries consistent.
 
 ### Read model and one source of truth
 

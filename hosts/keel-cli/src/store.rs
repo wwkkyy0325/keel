@@ -19,7 +19,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use keel_core::{KernelError, SessionSnapshot, TodoList};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 
 /// One stored session.
 pub struct StoredSession {
@@ -65,7 +65,9 @@ impl Store {
                  started_at INTEGER NOT NULL,
                  updated_at INTEGER NOT NULL,
                  snapshot_json TEXT NOT NULL,
-                 todos_json TEXT
+                 todos_json TEXT,
+                 parent_session_id TEXT,
+                 fork_turn_seq INTEGER
              );
              CREATE TABLE IF NOT EXISTS turns (
                  id TEXT PRIMARY KEY,
@@ -162,6 +164,14 @@ impl Store {
                  created_at INTEGER NOT NULL,
                  PRIMARY KEY (session_id, revision)
              );
+             CREATE TABLE IF NOT EXISTS session_checkpoints (
+                 session_id TEXT NOT NULL,
+                 turn_seq INTEGER NOT NULL,
+                 snapshot_json TEXT NOT NULL,
+                 todos_json TEXT,
+                 created_at INTEGER NOT NULL,
+                 PRIMARY KEY (session_id, turn_seq)
+             );
              CREATE TABLE IF NOT EXISTS context_snapshots (
                  turn_id TEXT PRIMARY KEY,
                  session_id TEXT NOT NULL,
@@ -211,6 +221,18 @@ impl Store {
             "records",
             "turns",
             "ALTER TABLE records ADD COLUMN turns INTEGER NOT NULL DEFAULT 0",
+        )?;
+        ensure_column(
+            &conn,
+            "sessions",
+            "parent_session_id",
+            "ALTER TABLE sessions ADD COLUMN parent_session_id TEXT",
+        )?;
+        ensure_column(
+            &conn,
+            "sessions",
+            "fork_turn_seq",
+            "ALTER TABLE sessions ADD COLUMN fork_turn_seq INTEGER",
         )?;
         conn.execute(
             "INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (?1, ?2)",
@@ -333,11 +355,151 @@ impl Store {
                 )
                 .map_err(|error| store_error("write context snapshot", error))?;
             }
+            // The state after this turn, so a later branch can resume here
+            // without replaying a memo the model wrote.
+            tx.execute(
+                "INSERT OR REPLACE INTO session_checkpoints
+                 (session_id, turn_seq, snapshot_json, todos_json, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![session_id, turn.seq, snapshot_json, todos_json, now],
+            )
+            .map_err(|error| store_error("write checkpoint", error))?;
         }
         project(&tx, session_id, snapshot, todos, now)
             .map_err(|error| store_error("project session", error))?;
         tx.commit().map_err(|error| store_error("commit", error))?;
         Ok(())
+    }
+
+    /// Creates a new session from the checkpoint at `turn` of `source`.
+    ///
+    /// The checkpoint is the state after that turn: segments, records, memo,
+    /// facts and the task list. The transcript rows up to `turn` are copied so
+    /// the branch reads as a conversation, and the projection is rebuilt from
+    /// the snapshot. The parent is untouched.
+    pub fn fork(&mut self, source: &str, turn: u32, target: &str) -> Result<(), KernelError> {
+        if source == target {
+            return Err(invalid_store(
+                "the branch must use a different session id".to_owned(),
+            ));
+        }
+        let checkpoint: Option<(String, Option<String>)> = self
+            .conn
+            .query_row(
+                "SELECT snapshot_json, todos_json FROM session_checkpoints
+                 WHERE session_id = ?1 AND turn_seq = ?2",
+                params![source, turn],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|error| store_error("read checkpoint", error))?;
+        let Some((snapshot_json, todos_json)) = checkpoint else {
+            return Err(invalid_store(format!(
+                "session `{source}` has no checkpoint at turn {turn}"
+            )));
+        };
+        let snapshot: SessionSnapshot = serde_json::from_str(&snapshot_json)
+            .map_err(|error| invalid_store(format!("invalid session snapshot: {error}")))?;
+        let todos: Option<TodoList> = match todos_json.as_deref() {
+            Some(raw) => Some(
+                serde_json::from_str(raw)
+                    .map_err(|error| invalid_store(format!("invalid task list: {error}")))?,
+            ),
+            None => None,
+        };
+        let exists: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sessions WHERE id = ?1",
+                params![target],
+                |row| row.get(0),
+            )
+            .map_err(|error| store_error("check session", error))?;
+        if exists != 0 {
+            return Err(invalid_store(format!(
+                "session `{target}` already exists; choose another id"
+            )));
+        }
+
+        let now = now();
+        let tx = self
+            .conn
+            .transaction()
+            .map_err(|error| store_error("begin transaction", error))?;
+        tx.execute(
+            "INSERT INTO sessions
+             (id, started_at, updated_at, snapshot_json, todos_json,
+              parent_session_id, fork_turn_seq)
+             VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6)",
+            params![target, now, snapshot_json, todos_json, source, turn],
+        )
+        .map_err(|error| store_error("write branch session", error))?;
+        tx.execute(
+            "INSERT OR REPLACE INTO session_checkpoints
+             (session_id, turn_seq, snapshot_json, todos_json, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![target, turn, snapshot_json, todos_json, now],
+        )
+        .map_err(|error| store_error("copy checkpoint", error))?;
+        tx.execute(
+            "INSERT INTO turns
+             (id, session_id, seq, input, state, answer, answer_json,
+              usage_json, duration_ms, created_at)
+             SELECT ?1 || ':' || seq, ?1, seq, input, state, answer, answer_json,
+                    usage_json, duration_ms, created_at
+             FROM turns WHERE session_id = ?2 AND seq <= ?3",
+            params![target, source, turn],
+        )
+        .map_err(|error| store_error("copy turns", error))?;
+        project(&tx, target, &snapshot, todos.as_ref(), now)
+            .map_err(|error| store_error("project branch", error))?;
+        tx.commit()
+            .map_err(|error| store_error("commit branch", error))?;
+        Ok(())
+    }
+
+    /// Deletes a session and every row derived from it. Branches are separate
+    /// sessions and are not deleted with the parent.
+    pub fn delete_session(&mut self, session_id: &str) -> Result<bool, KernelError> {
+        let tx = self
+            .conn
+            .transaction()
+            .map_err(|error| store_error("begin transaction", error))?;
+        let exists: i64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM sessions WHERE id = ?1",
+                params![session_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| store_error("check session", error))?;
+        if exists == 0 {
+            return Ok(false);
+        }
+        for table in [
+            "context_snapshots",
+            "session_checkpoints",
+            "fact_history",
+            "facts",
+            "todo_history",
+            "todos",
+            "summary_covers",
+            "session_summaries",
+            "records",
+            "segment_entries",
+            "segments",
+            "turns",
+        ] {
+            tx.execute(
+                &format!("DELETE FROM {table} WHERE session_id = ?1"),
+                params![session_id],
+            )
+            .map_err(|error| store_error("delete session rows", error))?;
+        }
+        tx.execute("DELETE FROM sessions WHERE id = ?1", params![session_id])
+            .map_err(|error| store_error("delete session", error))?;
+        tx.commit()
+            .map_err(|error| store_error("commit delete", error))?;
+        Ok(true)
     }
 }
 
@@ -981,6 +1143,203 @@ mod tests {
                 assert!(message.contains("invalid task list"), "{message}");
             }
             other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    fn turn(seq: u32) -> StoredTurn<'static> {
+        StoredTurn {
+            seq,
+            input: "prompt",
+            state: "done",
+            answer: "answer",
+            answer_json: "{}",
+            usage_json: "{}",
+            duration_ms: 5,
+            context: None,
+        }
+    }
+
+    fn recorded(session: &mut keel_core::Session, input: &str) {
+        session.record_turn(keel_core::TurnRecord {
+            input,
+            text: "done",
+            tools: &[],
+            artifacts: &[],
+            pending: &[],
+            verified: true,
+        });
+    }
+
+    #[test]
+    fn each_turn_writes_a_checkpoint() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&dir.path().join("keel.db")).unwrap();
+        let mut session = keel_core::Session::new();
+        recorded(&mut session, "one");
+        store
+            .save("s", &session.snapshot(), None, Some(turn(1)))
+            .unwrap();
+
+        let (seq, json): (i64, String) = store
+            .conn
+            .query_row(
+                "SELECT turn_seq, snapshot_json FROM session_checkpoints
+                 WHERE session_id = 's'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(seq, 1);
+        let snapshot: SessionSnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(snapshot.segments.len(), 1);
+    }
+
+    #[test]
+    fn a_fork_resumes_from_the_checkpoint_and_copies_the_transcript() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&dir.path().join("keel.db")).unwrap();
+        let mut session = keel_core::Session::new();
+        let mut todos = TodoList::default();
+        todos.add_host("write chapter one").unwrap();
+
+        recorded(&mut session, "one");
+        let first = session.snapshot();
+        store
+            .save("parent", &first, Some(&todos), Some(turn(1)))
+            .unwrap();
+        recorded(&mut session, "two");
+        store
+            .save("parent", &session.snapshot(), Some(&todos), Some(turn(2)))
+            .unwrap();
+
+        store.fork("parent", 1, "child").unwrap();
+
+        let child = store.load("child").unwrap().unwrap();
+        assert_eq!(child.snapshot.segments.len(), first.segments.len());
+        assert_eq!(
+            child.snapshot.segments[0].entries.len(),
+            first.segments[0].entries.len(),
+            "the branch resumes at the checkpoint, not at the parent's head"
+        );
+        assert_eq!(child.todos.unwrap().items.len(), 1);
+        let meta: (Option<String>, Option<i64>) = store
+            .conn
+            .query_row(
+                "SELECT parent_session_id, fork_turn_seq FROM sessions WHERE id = 'child'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(meta, (Some("parent".to_owned()), Some(1)));
+        let turns: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM turns WHERE session_id = 'child'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(turns, 1);
+        let segments: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM segments WHERE session_id = 'child'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(segments, 1, "the branch projection is rebuilt");
+
+        // The branch continues on its own without touching the parent.
+        store
+            .save("child", &child.snapshot, None, Some(turn(2)))
+            .unwrap();
+        let parent_turns: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM turns WHERE session_id = 'parent'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(parent_turns, 2);
+    }
+
+    #[test]
+    fn a_fork_needs_a_checkpoint_and_a_free_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&dir.path().join("keel.db")).unwrap();
+        let mut session = keel_core::Session::new();
+        recorded(&mut session, "one");
+        store
+            .save("parent", &session.snapshot(), None, Some(turn(1)))
+            .unwrap();
+
+        let missing = store.fork("parent", 3, "child").unwrap_err();
+        assert!(format!("{missing:?}").contains("no checkpoint at turn 3"));
+
+        store
+            .save("child", &session.snapshot(), None, Some(turn(1)))
+            .unwrap();
+        let taken = store.fork("parent", 1, "child").unwrap_err();
+        assert!(format!("{taken:?}").contains("already exists"));
+
+        let same = store.fork("parent", 1, "parent").unwrap_err();
+        assert!(format!("{same:?}").contains("different session id"));
+    }
+
+    #[test]
+    fn deleting_a_session_removes_its_rows_but_not_its_branches() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&dir.path().join("keel.db")).unwrap();
+        let mut session = keel_core::Session::new();
+        recorded(&mut session, "one");
+        let mut todos = TodoList::default();
+        todos.add_host("write chapter one").unwrap();
+        let mut snapshot = session.snapshot();
+        snapshot.facts.push(keel_core::Fact {
+            key: "project".to_owned(),
+            statement: "project is blue whale".to_owned(),
+            scope: keel_core::FactScope::Session,
+            confirmed: true,
+            segment_id: 0,
+        });
+        store
+            .save("parent", &snapshot, Some(&todos), Some(turn(1)))
+            .unwrap();
+        store.fork("parent", 1, "child").unwrap();
+
+        assert!(store.delete_session("parent").unwrap());
+        assert!(!store.delete_session("parent").unwrap());
+        assert!(store.load("parent").unwrap().is_none());
+        assert!(
+            store.load("child").unwrap().is_some(),
+            "a branch outlives its parent"
+        );
+
+        for table in [
+            "turns",
+            "session_checkpoints",
+            "segments",
+            "segment_entries",
+            "records",
+            "session_summaries",
+            "summary_covers",
+            "facts",
+            "fact_history",
+            "todos",
+            "todo_history",
+            "context_snapshots",
+        ] {
+            let count: i64 = store
+                .conn
+                .query_row(
+                    &format!("SELECT COUNT(*) FROM {table} WHERE session_id = 'parent'"),
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 0, "{table} still has rows");
         }
     }
 
