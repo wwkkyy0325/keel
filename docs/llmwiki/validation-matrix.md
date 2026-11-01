@@ -1,6 +1,6 @@
 # Validation matrix
 
-Last updated: 2026-11-03. A mechanism can be covered by unit tests, synthetic
+Last updated: 2026-11-04. A mechanism can be covered by unit tests, synthetic
 runs, real runs and ablations; one column being empty is a known gap, not a
 claim of failure.
 
@@ -25,8 +25,8 @@ claim of failure.
 | Prompt cache reuse | Per-call usage lines | 24k novel, 2 turns (67–83%) | Stable-prefix rule not started | No |
 | Persona affordances | None | Not measured | None (no A/B) | No |
 | Interjections | None | None | None | No (ADR 0010 only) |
-| Session persistence (host store) | Snapshot round-trip, store tests | Two-process resume | None | No |
-| M4 plugins | Not started | Not started | Not started | Not started |
+| Session persistence (host store) | Snapshot round-trip, projection replace, history, context snapshot, fault injection (failed save rolls back) | Two-process resume | None | No |
+| M4 plugins | Schema mapping, JSON fallback, mock HTTP MCP server | Filesystem server (3 calls), memory server (3 calls) | None | No |
 
 ## Fusion evidence
 
@@ -50,10 +50,10 @@ claim of failure.
 
 | Ability | Kernel test | Real run | Gap |
 |---|---|---|---|
-| Information extraction | Fact scope tests, record extraction | 24-turn, 15-chapter, two-process memory eval | `不要` instructions still parse as constraints |
+| Information extraction | Fact scope tests, record extraction, reply-instruction filter | 24-turn, 15-chapter, two-process memory eval | Other imperative phrasing can still become a fact |
 | Multi-session reasoning | Snapshot restore test | Two-process eval: 3/3 stored facts answered | One scenario set, one model |
 | Temporal reasoning | None | Two-process eval: "before" answered, absolute time refused | No event-time model in the prompt |
-| Knowledge updates | Contradiction, supersede, forget tests | Memo rewrite; eval answered 海鸥 after the update | No subject-level supersede; both rows remain |
+| Knowledge updates | Contradiction, subject supersede, forget tests | Rerun: one current fact after the update, answered 海鸥; "before" from the memo | Supersede needs an explicit update cue; model variance not separated |
 | Abstention | Unrelated recall test | Two-process eval refused a car plate | Answer-level check is model-dependent |
 
 ## Known gaps
@@ -81,7 +81,10 @@ claim of failure.
   `cache-economics.md` predicts a small ordering penalty; the cache-order
   profile exists but has not run.
 - Persona affordances have no A/B measurement.
-- Interjections are a contract only; M4 and M5 are not started.
+- Interjections are a contract only, with no run. M4 covers the MCP path; hot
+  reload, server-initiated requests and a non-Node server family are open. M5
+  covers resume and fault injection; multi-session memory evaluation on the
+  store is open.
 
 ## How to update
 

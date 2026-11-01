@@ -1084,3 +1084,42 @@
   Report: `evals/reports/2026-11-04-mcp-plugins.md`; task doc:
   `tasks/m4-plugins.md`.
 - Verification: 268 tests; fmt and clippy clean.
+
+### Store fault injection
+
+- A save that fails after the session and turn rows were written rolls back
+  the whole transaction; the previous snapshot, the latest turn and the
+  `session_current` row stay unchanged. The test injects the failure with a
+  SQL trigger that rejects the fact insert, which runs near the end of
+  `project`, so the rollback covers both the transcript and the read model.
+- A hand-corrupted `sessions.snapshot_json` now has a test: `load` returns
+  `KernelError::InvalidConfig` with the decode error, and startup propagates
+  it instead of panicking. A corrupt task list takes the same path.
+- Validation matrix updated: the M4 row reflects the MCP tests and the two
+  servers; the persistence row lists fault injection. The domestic hosted MCP
+  test and a DSH bridge are marked deferred.
+- Verification: 270 tests; fmt and clippy clean.
+
+### Fact updates and reply instructions
+
+- An explicit update cue ("改成", "改为", "换成", "changed to", "renamed to",
+  "is now", ...) now names a subject: the normalized text before the cue. Every
+  fact whose key starts with that subject is removed before the new statement
+  is stored, so `项目代号是蓝鲸` followed by `项目代号改成海鸥` leaves one
+  current fact. The host still sees both versions through the snapshot diff and
+  `fact_history`; the memo keeps the narrative order for temporal questions.
+- Sentences that ask for an answer now ("直接回答", "just answer", "告诉我",
+  ...) are no longer constraints even when they open with `不要`. The
+  multi-session evaluation recorded four of these as workspace facts; the
+  question, not the user's preference, was being stored.
+- Both rules are kernel-side heuristics over the existing lexical extractor:
+  no prompt change, no model call. Verify: two new unit tests; 272 tests, fmt,
+  clippy and deny clean.
+- Rerun of the multi-session evaluation (11 turns, three processes on one
+  store): 11/11 Done, 8/8 answers, 0 overflow; 3 current facts, all real, and
+  0 reply instructions; "before" answered 蓝鲸 from the memo, "when" refused.
+  The store records the replaced fact as `forgotten` because it diffs keys;
+  both versions remain in `fact_history`.
+- Validation matrix: knowledge updates now list subject supersede; the
+  extraction gap is narrowed to other imperative phrasing. Report:
+  `evals/reports/2026-11-04-memory-multi-session.md`.
