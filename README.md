@@ -205,6 +205,10 @@ cargo run -p keel-cli -- --profile variants/companion/profile.deepseek.toml \
 cargo run -p keel-cli -- --store keel.db --delete-session alt
 ```
 
+Checkpoints keep the 20 most recent turns per session by default; a checkpoint
+that a branch was forked from is always kept. `--keep-checkpoints N` changes
+the cap and `--keep-checkpoints 0` keeps every checkpoint.
+
 Composed views are what a frontend renders; it does not join tables or decode
 JSON columns:
 
@@ -229,8 +233,9 @@ cargo run -p keel-cli -- --profile variants/coding/profile.toml \
 
 `--plugins-check` is the gate for a configuration page: it starts every server,
 lists its tools and exits non-zero if any fails. A changed file needs a host
-restart; state is in SQLite, so restarting does not lose a session. See
-ADR 0013.
+restart; state is in SQLite, so restarting does not lose a session. One server
+message is capped at 8 MiB; a larger stdio line or HTTP body is reported as an
+error instead of being buffered. See ADR 0013.
 
 ## Evals
 

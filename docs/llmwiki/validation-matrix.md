@@ -30,9 +30,10 @@ claim of failure.
 | Frontend views | Composed panels, ordering, decoded answer/usage/context, typed memory timeline, event stream, turn paging, golden file, real-binary contract tests | CLI smoke of session, turn, memory, events and two-page session views | None | No |
 | Companion personas | Per-turn rule checks, three memory probes | Five personas, 20 turns each, one process per persona | None | No |
 | Performance gates | Release tests: turn, context, dispatch, recall, enqueue, 500-turn stress, event persistence | Local release run | None | No |
-| M4 plugins | Schema mapping and description, roots/ping replies over stdio and HTTP, mock HTTP MCP server, process-tree kill | Filesystem, memory, Python SQLite probe and call with a roots round-trip | None | No |
+| M4 plugins | Schema mapping and description, roots/ping replies over stdio and HTTP, mock HTTP MCP server, process-tree kill, 8 MiB message cap | Filesystem, memory, Python SQLite probe and call with a roots round-trip | None | No |
 | Resource bounds | 16 MiB capture, 200 kB real command, sparse 9 MiB `read_file`, shell timeout, descendant kill, Windows `.cmd` shim | Python fixture, npm through `command::run`, Windows | None | No |
 | Trash recovery | Backup metadata, list/find, restore newest and by id, cross-path rejection, missing backup, reversible restore | Tool tests, Windows | None | No |
+| Long-session retention | `EventLog::clear` keeps sequences monotonic; the default 20-checkpoint cap keeps fork points | Unit and store tests | None | No |
 
 ## Fusion evidence
 

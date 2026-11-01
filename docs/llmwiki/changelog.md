@@ -1474,3 +1474,24 @@
   `restore_file_reports_a_missing_backup`,
   `list_trash_names_the_backups_and_their_paths`, profile validation, and a
   CLI smoke run. Task doc: `docs/llmwiki/tasks/command-and-undo.md`.
+
+### Long-session retention and MCP message caps
+
+- `EventLog` keeps a monotonic sequence counter and gains `clear()`; the
+  reference host clears the in-memory stream after each turn is printed and
+  saved. A five-turn mock session now prints `events: 14` every turn instead
+  of a growing count, and the SQLite `events` table still holds both turns.
+- The store keeps the 20 most recent checkpoints per session by default;
+  `--keep-checkpoints 0` keeps all, and a checkpoint referenced by a fork is
+  never pruned. Twenty full snapshots per session bound the write cost that
+  previously grew with the square of the session length.
+- MCP stdio messages are read with a bounded `fill_buf`/`consume` loop instead
+  of `Lines`, and HTTP bodies are read in chunks under the request timeout;
+  either over 8 MiB is reported as an error rather than buffered.
+- Verify: `clear_drops_records_and_keeps_sequence_numbers`,
+  `a_session_persists_every_turn_after_the_event_log_is_cleared`,
+  `the_default_checkpoint_cap_bounds_the_history`,
+  `a_stdio_message_is_read_up_to_its_newline`,
+  `an_oversized_stdio_message_is_refused`,
+  `an_oversized_http_body_is_refused`, and 322 workspace tests (270
+  kernel-only). Task doc: `docs/llmwiki/tasks/resource-safety.md`.

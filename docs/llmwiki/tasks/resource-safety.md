@@ -20,10 +20,18 @@ its direct child. This task closes the first three items from that review.
       Verify: `--tool-timeout-ms` reaches `ShellTool`, and a slow command stops
       at the configured timeout.
 
-## Out of scope
+## Follow-up
 
-- Event log retention across turns.
-- Checkpoint default retention.
-- MCP response size caps.
-
-Those are recorded in the design notes and are separate changes.
+- [x] Event log retention: `EventLog::clear` drops persisted records between
+      turns and keeps the sequence counter monotonic; the reference host calls
+      it after each turn is printed and saved. Verify:
+      `clear_drops_records_and_keeps_sequence_numbers`.
+- [x] Checkpoint retention default: the store keeps the 20 most recent
+      checkpoints per session unless `--keep-checkpoints` says otherwise;
+      `0` still keeps all, and fork points are pinned. Verify:
+      `the_default_checkpoint_cap_bounds_the_history`.
+- [x] MCP message caps: a stdio message or HTTP body over 8 MiB is refused
+      instead of buffered, and the HTTP body read is under the request
+      timeout. Verify: `an_oversized_stdio_message_is_refused`,
+      `an_oversized_http_body_is_refused`,
+      `a_stdio_message_is_read_up_to_its_newline`.

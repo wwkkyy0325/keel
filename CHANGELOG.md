@@ -37,6 +37,8 @@ First complete kernel and reference host.
   `list`/`find` (with defaults for existing backends), and the `list_trash`
   and `restore_file` tools restore a version through the permission gate. A
   restore backs up the current version first.
+- `EventLog::clear` lets a host drop records it has persisted; sequence
+  numbers stay monotonic within the process.
 
 ### Reference host
 
@@ -52,6 +54,12 @@ First complete kernel and reference host.
   tool uses the same value the dispatcher enforces.
 - Coding profiles expose `list_trash` and `restore_file`; the evaluation and
   novel profiles keep their previous tool list.
+- Session processes clear the in-memory event log after each turn is printed
+  and saved, so a long `--session` run does not grow with its history.
+- Checkpoints default to the 20 most recent per session; `0` keeps all, and a
+  fork point is never pruned.
+- MCP messages are capped at 8 MiB (stdio line and HTTP body), and the HTTP
+  body read is under the request timeout.
 
 ### Performance
 
