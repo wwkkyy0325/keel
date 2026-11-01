@@ -27,7 +27,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block as FrameBlock, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block as FrameBlock, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 use tokio::sync::{mpsc, oneshot};
 use unicode_width::UnicodeWidthChar;
@@ -111,12 +111,17 @@ enum Command {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum BlockKind {
     User,
+    /// Text streamed while the turn runs; replaced by `Result` when it ends.
     Assistant,
     Tool {
         name: String,
         ok: Option<bool>,
         duration_ms: u64,
     },
+    /// The accumulated answer, the only content kept after a turn.
+    Result,
+    /// Aggregate fields shown under the answer.
+    Summary,
     Notice,
     Error,
 }
@@ -161,6 +166,10 @@ struct App {
     usage: UsageTotal,
     last_seq: u64,
     streaming: Option<usize>,
+    /// First block of the running turn's process; everything from here is
+    /// dropped when the turn finishes.
+    turn_content_start: Option<usize>,
+    turn_tools: u32,
     should_quit: bool,
 }
 
@@ -188,6 +197,8 @@ impl App {
             usage: UsageTotal::default(),
             last_seq: 0,
             streaming: None,
+            turn_content_start: None,
+            turn_tools: 0,
             should_quit: false,
         }
     }
@@ -213,6 +224,8 @@ impl App {
             kind: BlockKind::User,
             text: input,
         });
+        self.turn_content_start = Some(self.blocks.len());
+        self.turn_tools = 0;
         self.blocks.push(Block {
             kind: BlockKind::Assistant,
             text: String::new(),
@@ -234,37 +247,73 @@ impl App {
     }
 
     fn finish_turn(&mut self, done: &TurnDone) {
-        if let Some(index) = self.streaming.take() {
-            let final_text = &done.outcome.answer.body;
-            if !final_text.is_empty() {
-                if let Some(block) = self.blocks.get_mut(index) {
-                    block.text = final_text.clone();
-                }
-            } else if self
-                .blocks
-                .get(index)
-                .is_some_and(|block| block.text.is_empty())
-            {
-                self.blocks.remove(index);
-            }
+        let error = done.outcome.error.as_ref().map(|error| error.to_string());
+        self.collapse(
+            &done.outcome.answer.body,
+            error.as_deref(),
+            &done.outcome.usage,
+            done.outcome.duration_ms,
+            done.outcome.answer.changes.len(),
+        );
+    }
+
+    /// Replaces the turn's process with its result: the final answer and one
+    /// line of aggregate fields. Tool lines, intermediate text and notices are
+    /// dropped; the user message stays.
+    fn collapse(
+        &mut self,
+        answer: &str,
+        error: Option<&str>,
+        usage: &TokenUsage,
+        duration_ms: u64,
+        changes: usize,
+    ) {
+        if let Some(start) = self.turn_content_start.take() {
+            self.blocks.truncate(start);
         }
-        if let Some(error) = &done.outcome.error {
-            self.error(error.to_string());
+        self.streaming = None;
+        let answer = answer.trim();
+        if !answer.is_empty() {
+            self.blocks.push(Block {
+                kind: BlockKind::Result,
+                text: answer.to_owned(),
+            });
         }
-        if !done.outcome.answer.changes.is_empty() {
-            let paths: Vec<&str> = done
-                .outcome
-                .answer
-                .changes
-                .iter()
-                .map(|change| change.path.as_str())
-                .collect();
-            self.notice(format!("changed: {}", paths.join(", ")));
+        if let Some(error) = error {
+            self.blocks.push(Block {
+                kind: BlockKind::Error,
+                text: error.to_owned(),
+            });
         }
-        self.usage.add(&done.outcome.usage);
+        let mut fields = Vec::new();
+        match self.turn_tools {
+            0 => {}
+            1 => fields.push("1 tool".to_owned()),
+            count => fields.push(format!("{count} tools")),
+        }
+        match changes {
+            0 => {}
+            1 => fields.push("1 file".to_owned()),
+            count => fields.push(format!("{count} files")),
+        }
+        fields.push(format!(
+            "{} in / {} out",
+            usage.input_tokens, usage.output_tokens
+        ));
+        if usage.cached_input_tokens > 0 {
+            fields.push(format!("{} cached", usage.cached_input_tokens));
+        }
+        fields.push(format!("{duration_ms} ms"));
+        self.blocks.push(Block {
+            kind: BlockKind::Summary,
+            text: fields.join(" · "),
+        });
+        self.turn_tools = 0;
+        self.usage.add(usage);
         self.running = false;
         self.cancel = None;
         self.status = "ready".to_owned();
+        self.follow = true;
     }
 
     fn open_interaction(&mut self, job: InteractionJob) {
@@ -286,14 +335,38 @@ impl App {
             self.last_seq = record.seq;
             match &record.event {
                 Event::ToolStarted { tool, .. } => {
-                    self.blocks.push(Block {
+                    self.turn_tools = self.turn_tools.saturating_add(1);
+                    let block = Block {
                         kind: BlockKind::Tool {
                             name: tool.clone(),
                             ok: None,
                             duration_ms: 0,
                         },
                         text: String::new(),
-                    });
+                    };
+                    match self.streaming {
+                        // No text yet: the tool belongs above the answer.
+                        Some(index)
+                            if self
+                                .blocks
+                                .get(index)
+                                .is_some_and(|block| block.text.is_empty()) =>
+                        {
+                            self.blocks.insert(index, block);
+                            self.streaming = Some(index + 1);
+                        }
+                        // Text already streamed: keep it above, start a new
+                        // assistant block after the tool for what follows.
+                        Some(_) => {
+                            self.blocks.push(block);
+                            self.blocks.push(Block {
+                                kind: BlockKind::Assistant,
+                                text: String::new(),
+                            });
+                            self.streaming = Some(self.blocks.len() - 1);
+                        }
+                        None => self.blocks.push(block),
+                    }
                     self.follow = true;
                 }
                 Event::ToolFinished {
@@ -500,34 +573,46 @@ impl App {
 
     fn transcript(&self, width: usize) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
-        for block in &self.blocks {
+        for (index, block) in self.blocks.iter().enumerate() {
             let (prefix, text, style) = match &block.kind {
-                BlockKind::User => ("> ", block.text.clone(), Style::default().fg(Color::Cyan)),
-                BlockKind::Assistant => ("", block.text.clone(), Style::default()),
+                BlockKind::User => ("› ", block.text.clone(), Style::default().fg(Color::Cyan)),
+                BlockKind::Assistant => ("", block.text.clone(), Style::default().fg(Color::White)),
                 BlockKind::Tool {
                     name,
                     ok,
                     duration_ms,
                 } => {
                     let text = match ok {
-                        None => format!("● {name} …"),
-                        Some(true) => format!("● {name} ok {duration_ms} ms"),
-                        Some(false) => format!("● {name} failed {duration_ms} ms"),
+                        None => format!("⏺ {name} …"),
+                        Some(true) => format!("⏺ {name} ok {duration_ms} ms"),
+                        Some(false) => format!("⏺ {name} failed {duration_ms} ms"),
                     };
                     let color = if matches!(ok, Some(false)) {
                         Color::Red
                     } else {
                         Color::DarkGray
                     };
-                    ("", text, Style::default().fg(color))
+                    ("  ", text, Style::default().fg(color))
                 }
+                BlockKind::Result => ("⏺ ", block.text.clone(), Style::default().fg(Color::Green)),
+                BlockKind::Summary => (
+                    "  ⎿ ",
+                    block.text.clone(),
+                    Style::default().fg(Color::DarkGray),
+                ),
                 BlockKind::Notice => ("· ", block.text.clone(), Style::default().fg(Color::Yellow)),
                 BlockKind::Error => ("! ", block.text.clone(), Style::default().fg(Color::Red)),
             };
             for line in wrap_text(&format!("{prefix}{text}"), width) {
                 lines.push(Line::from(Span::styled(line, style)));
             }
-            lines.push(Line::from(""));
+            let next_is_summary = self
+                .blocks
+                .get(index + 1)
+                .is_some_and(|next| matches!(&next.kind, BlockKind::Summary));
+            if !matches!(&block.kind, BlockKind::Summary) && !next_is_summary {
+                lines.push(Line::from(""));
+            }
         }
         lines
     }
@@ -624,7 +709,7 @@ pub async fn run(host: TuiHost) -> Result<ExitCode, KernelError> {
         host.config.profile_name.clone(),
         host.config.model_route.model.clone(),
         host.session_id.clone(),
-        format!("{:?}", host.config.permission_level).to_lowercase(),
+        host.config.permission_level.as_str().to_owned(),
     );
     let driver = Arc::new(host.driver);
     let (key_tx, mut key_rx) = mpsc::channel(64);
@@ -723,9 +808,11 @@ fn run_slash(app: &mut App, command: &str, store: Option<&Store>) {
 
 fn draw(app: &App, frame: &mut Frame) {
     let area = frame.area();
+    let prompt_height = if app.pending.is_some() { 5 } else { 0 };
     let chunks = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(3),
+        Constraint::Length(prompt_height),
         Constraint::Length(3),
         Constraint::Length(1),
     ])
@@ -749,6 +836,10 @@ fn draw(app: &App, frame: &mut Frame) {
     };
     frame.render_widget(Paragraph::new(lines).scroll((offset as u16, 0)), chunks[1]);
 
+    if let Some(job) = &app.pending {
+        draw_prompt(job, frame, chunks[2]);
+    }
+
     let before: String = app.input[..app.cursor.min(app.input.len())]
         .iter()
         .collect();
@@ -760,13 +851,17 @@ fn draw(app: &App, frame: &mut Frame) {
         Paragraph::new(input)
             .wrap(Wrap { trim: false })
             .block(FrameBlock::bordered().title(" message ")),
-        chunks[2],
+        chunks[3],
     );
 
+    let usage = format!(
+        "{} in · {} out · {} cached",
+        app.usage.input, app.usage.output, app.usage.cached
+    );
     let status = if app.running {
-        " ● working · Ctrl-C cancel · PgUp/PgDn scroll "
+        format!(" ● working · {usage} · Ctrl-C cancel · PgUp/PgDn scroll ")
     } else {
-        " ● ready · Enter send · Ctrl-C quit · /help "
+        format!(" ● ready · {usage} · Enter send · /help ")
     };
     frame.render_widget(
         Paragraph::new(status).style(Style::default().fg(if app.running {
@@ -774,47 +869,39 @@ fn draw(app: &App, frame: &mut Frame) {
         } else {
             Color::DarkGray
         })),
-        chunks[3],
+        chunks[4],
     );
-
-    if let Some(job) = &app.pending {
-        draw_modal(job, frame, area);
-    }
 }
 
-fn draw_modal(job: &InteractionJob, frame: &mut Frame, area: Rect) {
-    let width = area.width.clamp(20, 70);
-    let height = area.height.clamp(6, 14);
-    let modal = Rect {
-        x: area.x + (area.width.saturating_sub(width)) / 2,
-        y: area.y + (area.height.saturating_sub(height)) / 2,
-        width,
-        height,
-    };
-    frame.render_widget(Clear, modal);
+/// Inline approval above the input, so the conversation does not disappear
+/// behind a modal.
+fn draw_prompt(job: &InteractionJob, frame: &mut Frame, area: Rect) {
     let title = if job.request.kind == InteractionKind::PermissionApproval {
         " permission ".to_owned()
     } else {
         format!(" {} ", job.request.kind.as_str())
     };
-    let mut lines = vec![Line::from(job.request.prompt.clone()), Line::from("")];
+    let mut lines = vec![Line::from(job.request.prompt.clone())];
     if job.request.kind == InteractionKind::PermissionApproval {
-        lines.push(Line::from(" d  Deny"));
-        lines.push(Line::from(" a  Allow once"));
-        lines.push(Line::from(" s  Allow this path for the session"));
-        lines.push(Line::from(" f  Allow and switch to full auto"));
+        lines.push(Line::from(
+            " d Deny · a Allow once · s Allow path · f Full auto · Esc defer",
+        ));
     } else {
-        for (index, option) in job.request.options.iter().enumerate() {
-            lines.push(Line::from(format!(" {}. {}", index + 1, option.label)));
-        }
+        let options: Vec<String> = job
+            .request
+            .options
+            .iter()
+            .enumerate()
+            .map(|(index, option)| format!("{}. {}", index + 1, option.label))
+            .collect();
+        lines.push(Line::from(format!(" {} · Esc defer", options.join(" · "))));
     }
-    lines.push(Line::from(""));
-    lines.push(Line::from(" Esc  defer"));
     frame.render_widget(
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })
+            .style(Style::default().fg(Color::Yellow))
             .block(FrameBlock::bordered().title(title)),
-        modal,
+        area,
     );
 }
 
@@ -981,6 +1068,52 @@ mod tests {
         );
     }
 
+    fn usage() -> TokenUsage {
+        TokenUsage {
+            input_tokens: 15,
+            output_tokens: 5,
+            cached_input_tokens: 0,
+        }
+    }
+
+    #[test]
+    fn a_finished_turn_hides_its_process() {
+        let mut app = app();
+        app.start_turn("say hello".to_owned());
+        app.push_delta("partial");
+        app.blocks.push(Block {
+            kind: BlockKind::Tool {
+                name: "echo".to_owned(),
+                ok: Some(true),
+                duration_ms: 1,
+            },
+            text: String::new(),
+        });
+        app.turn_tools = 1;
+
+        app.collapse("final answer", None, &usage(), 12, 1);
+
+        assert!(app
+            .blocks
+            .iter()
+            .any(|block| matches!(&block.kind, BlockKind::Result) && block.text == "final answer"));
+        assert!(app.blocks.iter().any(
+            |block| matches!(&block.kind, BlockKind::Summary) && block.text.contains("1 tool")
+        ));
+        assert!(!app
+            .blocks
+            .iter()
+            .any(|block| matches!(&block.kind, BlockKind::Tool { .. })));
+        assert!(!app
+            .blocks
+            .iter()
+            .any(|block| block.text.contains("partial")));
+        assert!(app
+            .blocks
+            .iter()
+            .any(|block| matches!(&block.kind, BlockKind::User)));
+    }
+
     #[test]
     fn permission_keys_map_to_the_same_scopes_as_the_line_ui() {
         let mut app = app();
@@ -1033,13 +1166,37 @@ mod tests {
         app.push_delta("hello from the model");
         let rendered = frame(&app, 80, 24);
         golden("tui-streaming.txt", &rendered);
-        assert!(rendered.contains("> say hello"));
+        assert!(rendered.contains("› say hello"));
         assert!(rendered.contains("hello from the model"));
         assert!(rendered.contains("working"));
     }
 
     #[test]
-    fn the_permission_modal_lists_every_scope() {
+    fn a_finished_turn_renders_only_the_result_and_its_fields() {
+        let mut app = app();
+        app.start_turn("say hello".to_owned());
+        app.push_delta("partial");
+        app.blocks.push(Block {
+            kind: BlockKind::Tool {
+                name: "echo".to_owned(),
+                ok: Some(true),
+                duration_ms: 1,
+            },
+            text: String::new(),
+        });
+        app.turn_tools = 1;
+        app.collapse("final answer", None, &usage(), 12, 1);
+
+        let rendered = frame(&app, 80, 24);
+        golden("tui-result.txt", &rendered);
+        assert!(rendered.contains("⏺ final answer"));
+        assert!(rendered.contains("1 tool · 1 file"));
+        assert!(!rendered.contains("partial"));
+        assert!(!rendered.contains("echo"));
+    }
+
+    #[test]
+    fn the_permission_prompt_is_inline() {
         let mut app = app();
         let (reply, _answer) = oneshot::channel();
         app.open_interaction(InteractionJob {
@@ -1058,9 +1215,9 @@ mod tests {
         });
 
         let rendered = frame(&app, 80, 24);
-        golden("tui-modal.txt", &rendered);
+        golden("tui-prompt.txt", &rendered);
         assert!(rendered.contains("Allow `shell`"));
         assert!(rendered.contains("Allow once"));
-        assert!(rendered.contains("full auto"));
+        assert!(rendered.contains("Full auto"));
     }
 }

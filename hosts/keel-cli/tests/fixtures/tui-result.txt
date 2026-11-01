@@ -1,0 +1,24 @@
+ Keel · coding · mock · session s · workspace_auto
+· type a request; /help lists commands
+
+› say hello
+
+⏺ final answer
+  ⎿ 1 tool · 1 file · 15 in / 5 out · 12 ms
+
+
+
+
+
+
+
+
+
+
+
+
+
+┌ message ─────────────────────────────────────────────────────────────────────┐
+│> ▏                                                                           │
+└──────────────────────────────────────────────────────────────────────────────┘
+ ● ready · 15 in · 5 out · 0 cached · Enter send · /help
