@@ -132,6 +132,21 @@ ORDER BY revision;
 forgotten version. `todo_history.snapshot_json` is the full `TodoList` at that
 revision.
 
+The exact prompt the model received, when the host ran with
+`--context-snapshots`:
+
+```sql
+SELECT turn_id, estimate, budget, stages_json, messages_json, created_at
+FROM context_snapshots
+WHERE session_id = ?1
+ORDER BY turn_id;
+```
+
+`messages_json` is the turn-start assembly after budget, memo, recall and
+truncation, with secrets redacted. It is not the transcript; a later
+reconstruction from segments can differ. Turns run without the flag have no
+row.
+
 ## What not to do
 
 - Do not parse `sessions.snapshot_json` or `sessions.todos_json`. They exist so
@@ -157,7 +172,8 @@ level. The resume snapshot (`snapshot_json`) remains current state only.
 
 ## Not available yet
 
-- `context_snapshots`: the exact message list the model saw on a turn.
+- Event rows as a queryable audit plane; the CLI keeps the event log in memory
+  and writes turn rows.
 - `context_snapshots`: the exact message list the model saw on a turn. It is
   designed in ADR 0008 but not written.
 - Events: the audit plane lands with the frontend milestone.

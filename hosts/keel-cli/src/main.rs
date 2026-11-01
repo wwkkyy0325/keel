@@ -147,6 +147,7 @@ async fn run() -> Result<ExitCode, KernelError> {
         recall: !args.no_recall,
         memo: !args.no_memo,
         bounded_tools: !args.unbounded_tools,
+        capture_context: args.context_snapshots,
     };
     let workspace_root = permissions.root().to_path_buf();
     let driver = TurnDriver::new(
@@ -382,6 +383,7 @@ fn save_turn(
             answer_json: &answer_json,
             usage_json: &usage,
             duration_ms: outcome.duration_ms,
+            context: outcome.context.as_ref(),
         }),
     )
 }
@@ -744,6 +746,8 @@ struct Args {
     store: Option<PathBuf>,
     /// Session id inside the store.
     session_id: String,
+    /// Keep the turn-start message list in the store.
+    context_snapshots: bool,
 }
 
 fn parse_args() -> Result<Args, KernelError> {
@@ -763,6 +767,7 @@ fn parse_args() -> Result<Args, KernelError> {
     let mut turn_timeout_ms = None;
     let mut store = None;
     let mut session_id = "default".to_owned();
+    let mut context_snapshots = false;
     let mut workspace = std::env::current_dir().map_err(|error| KernelError::Io {
         message: error.to_string(),
     })?;
@@ -856,6 +861,9 @@ fn parse_args() -> Result<Args, KernelError> {
                     .next()
                     .ok_or_else(|| invalid_config("missing value for `--session-id`"))?;
             }
+            "--context-snapshots" => {
+                context_snapshots = true;
+            }
             "--turn-timeout-ms" => {
                 let value = args
                     .next()
@@ -894,6 +902,7 @@ fn parse_args() -> Result<Args, KernelError> {
         turn_timeout_ms,
         store,
         session_id,
+        context_snapshots,
     })
 }
 

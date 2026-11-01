@@ -1,12 +1,34 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 
 use crate::event::EventSink;
 use crate::ids::TurnId;
 use crate::message::{Message, MessageRole};
 use crate::session::{Fact, RecalledSegment, SegmentRecord, SessionSummary};
 use crate::todo::TodoList;
+
+/// The message list the model received at the start of a turn.
+///
+/// This is the assembled projection after budget allocation, memo absorption,
+/// recall and truncation. It is not the transcript: a later reconstruction
+/// from segments can differ. Hosts enable capture when they need the exact
+/// prompt for debugging or a frontend timeline.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextSnapshot {
+    pub estimate: u32,
+    pub budget: u32,
+    pub stages: Vec<String>,
+    pub messages: Vec<ContextMessage>,
+}
+
+/// One message inside a context snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContextMessage {
+    pub role: String,
+    pub content: String,
+}
 
 /// Inputs available to context stages.
 pub struct BuildCtx<'a> {

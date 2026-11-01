@@ -29,6 +29,9 @@ The kernel exposes a snapshot; the host decides where it lives.
       list stores the full snapshot. Migrated databases backfill version 1 on
       the next save. Verify: unit tests for fact supersede/forget and for a
       task status change; the live memory DB backfilled its facts.
+- [x] Context snapshots: opt-in capture of the turn-start message list,
+      redacted, one row per turn. Verify: driver test and store test; a live
+      turn wrote the row.
 - [ ] Fault injection: a crash mid-turn leaves the previous turn intact; a
       corrupt snapshot fails with a typed error, not a panic.
 - [ ] Multi-session memory evaluation on top of the store (LongMemEval-style

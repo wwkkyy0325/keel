@@ -88,9 +88,8 @@ fact_history(fact_id text, version integer, statement text, scope text,
 events(id integer primary key autoincrement, turn_id text, seq integer,
        kind text, payload_json text, created_at text)
 
-context_snapshots(id integer primary key autoincrement, turn_id text,
-                  estimate integer, budget integer, detail_turns integer,
-                  digest_turns integer, records integer, folded integer,
+context_snapshots(turn_id text primary key, session_id text,
+                  estimate integer, budget integer, stages_json text,
                   messages_json text, created_at text)
 ```
 
@@ -145,9 +144,12 @@ and could contradict the rows. Every current value is a query:
 
 The first implementation projects `segments`, `segment_entries`, `records`,
 `session_summaries`, `summary_covers`, `facts` (session, workspace and global
-rows) and `todos`, plus the `session_current` view. `segment_entries` is the
-ADR's `segment_messages`. `fact_history` and `todo_history` are not projected
-yet; the snapshot keeps the current state, not the history.
+rows), `todos`, `fact_history`, `todo_history` and `context_snapshots`, plus the
+`session_current` view. `segment_entries` is the ADR's `segment_messages`.
+
+Context capture is opt-in (`--context-snapshots`), covers the turn-start
+assembly only, and stores the stage list plus the redacted message JSON.
+Per-stage counts and per-call (tool round) snapshots are not carried.
 
 ### L4 and catch-up summaries
 

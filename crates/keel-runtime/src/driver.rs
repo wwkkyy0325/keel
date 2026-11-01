@@ -6,11 +6,12 @@ use std::time::Duration;
 
 use keel_core::{
     detect_secret, estimate_tokens, redact_secrets, AcceptanceItem, Answer, ArgValue, BuildCtx,
-    CancelToken, CommitCtx, CommitDecision, ErrorCode, Event, EventSink, InteractionId,
-    InteractionRequest, InteractionResponse, KernelError, Message, MessageRole, ModelChunk,
-    ModelError, ModelProvider, ModelRequest, ModelRole, OnTimeout, Policy, ReasoningLevel,
-    SecretKind, SegmentRecord, Session, SessionSnapshot, TodoList, TodoState, ToolArgs, ToolCallId,
-    ToolOutcome, TurnEvent, TurnRecord, TurnState, VerificationMode, VerificationReport,
+    CancelToken, CommitCtx, CommitDecision, ContextMessage, ContextSnapshot, ErrorCode, Event,
+    EventSink, InteractionId, InteractionRequest, InteractionResponse, KernelError, Message,
+    MessageRole, ModelChunk, ModelError, ModelProvider, ModelRequest, ModelRole, OnTimeout, Policy,
+    ReasoningLevel, SecretKind, SegmentRecord, Session, SessionSnapshot, TodoList, TodoState,
+    ToolArgs, ToolCallId, ToolOutcome, TurnEvent, TurnRecord, TurnState, VerificationMode,
+    VerificationReport,
 };
 
 use crate::context::ContextBuilder;
@@ -43,6 +44,9 @@ pub struct KernelOptions {
     pub memo: bool,
     /// Bound live tool results with the same head/tail summary used for history.
     pub bounded_tools: bool,
+    /// Keep the turn-start message list in the outcome. Off by default: the
+    /// snapshot is large and only a host that persists it needs the copy.
+    pub capture_context: bool,
 }
 
 impl Default for KernelOptions {
@@ -51,6 +55,7 @@ impl Default for KernelOptions {
             recall: true,
             memo: true,
             bounded_tools: true,
+            capture_context: false,
         }
     }
 }
@@ -94,6 +99,7 @@ struct TurnStats {
     wrap_up_report: Option<String>,
     answer: Answer,
     tool_summaries: Vec<keel_core::ToolSummary>,
+    context: Option<ContextSnapshot>,
 }
 
 struct AcceptancePlan {
@@ -123,6 +129,8 @@ pub struct TurnOutcome {
     pub reasoning_level: ReasoningLevel,
     /// Last acceptance report, when the host supplied a checklist.
     pub verification: Option<VerificationReport>,
+    /// The turn-start message list, when `capture_context` is enabled.
+    pub context: Option<ContextSnapshot>,
     /// Model text produced after the context wrap-up instruction, kept for
     /// the segment record. It is not a substitute for the final answer.
     pub wrap_up_report: Option<String>,
@@ -364,6 +372,7 @@ impl<M: ModelProvider> TurnDriver<M> {
             duration_ms: started.elapsed().as_millis() as u64,
             reasoning_level: stats.reasoning,
             verification: stats.verification,
+            context: stats.context,
             wrap_up_report: stats.wrap_up_report,
             answer: stats.answer,
         }
@@ -698,11 +707,14 @@ impl<M: ModelProvider> TurnDriver<M> {
             events: Some(self.events.as_ref() as &dyn EventSink),
         };
         let built = self.context.build(&build_ctx, &recipe, cancel).await?;
+        let context_stages = built.stages.clone();
+        let context_estimate = built.estimated_tokens;
+        let context_budget = built.budget_tokens;
         self.events.append(Event::ContextBuilt {
             turn_id,
-            stages: built.stages.clone(),
-            tokens: built.estimated_tokens,
-            budget: built.budget_tokens,
+            stages: context_stages.clone(),
+            tokens: context_estimate,
+            budget: context_budget,
         });
         self.step(fsm, turn_id, TurnEvent::Ready)?;
 
@@ -714,6 +726,26 @@ impl<M: ModelProvider> TurnDriver<M> {
             .into_iter()
             .map(|fragment| Arc::new(Message::new(fragment.role, fragment.text)))
             .collect();
+        if self.options.capture_context {
+            stats.context = Some(ContextSnapshot {
+                estimate: context_estimate,
+                budget: context_budget,
+                stages: context_stages,
+                messages: messages
+                    .iter()
+                    .map(|message| ContextMessage {
+                        role: match message.role {
+                            MessageRole::System => "system",
+                            MessageRole::User => "user",
+                            MessageRole::Assistant => "assistant",
+                            MessageRole::Tool => "tool",
+                        }
+                        .to_owned(),
+                        content: redact_secrets(&message.content),
+                    })
+                    .collect(),
+            });
+        }
 
         let mut model_calls = 0u32;
         let mut previous_used: Option<u32> = None;

@@ -19,7 +19,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use keel_core::{KernelError, SessionSnapshot, TodoList};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 
 /// One stored session.
 pub struct StoredSession {
@@ -38,6 +38,8 @@ pub struct StoredTurn<'a> {
     pub answer_json: &'a str,
     pub usage_json: &'a str,
     pub duration_ms: u64,
+    /// Turn-start message list, when the host enabled capture.
+    pub context: Option<&'a keel_core::ContextSnapshot>,
 }
 
 /// A SQLite-backed host store.
@@ -159,6 +161,15 @@ impl Store {
                  snapshot_json TEXT NOT NULL,
                  created_at INTEGER NOT NULL,
                  PRIMARY KEY (session_id, revision)
+             );
+             CREATE TABLE IF NOT EXISTS context_snapshots (
+                 turn_id TEXT PRIMARY KEY,
+                 session_id TEXT NOT NULL,
+                 estimate INTEGER NOT NULL,
+                 budget INTEGER NOT NULL,
+                 stages_json TEXT NOT NULL,
+                 messages_json TEXT NOT NULL,
+                 created_at INTEGER NOT NULL
              );
              DROP VIEW IF EXISTS session_current;
              CREATE VIEW session_current AS
@@ -300,6 +311,28 @@ impl Store {
                 ],
             )
             .map_err(|error| store_error("write turn", error))?;
+            if let Some(context) = turn.context {
+                let stages =
+                    serde_json::to_string(&context.stages).unwrap_or_else(|_| "[]".to_owned());
+                let messages =
+                    serde_json::to_string(&context.messages).unwrap_or_else(|_| "[]".to_owned());
+                tx.execute(
+                    "INSERT OR REPLACE INTO context_snapshots
+                     (turn_id, session_id, estimate, budget, stages_json, messages_json,
+                      created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    params![
+                        format!("{session_id}:{}", turn.seq),
+                        session_id,
+                        context.estimate,
+                        context.budget,
+                        stages,
+                        messages,
+                        now,
+                    ],
+                )
+                .map_err(|error| store_error("write context snapshot", error))?;
+            }
         }
         project(&tx, session_id, snapshot, todos, now)
             .map_err(|error| store_error("project session", error))?;
@@ -722,6 +755,47 @@ mod tests {
     }
 
     #[test]
+    fn a_context_snapshot_is_stored_with_the_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&dir.path().join("keel.db")).unwrap();
+        let session = keel_core::Session::new();
+        let context = keel_core::ContextSnapshot {
+            estimate: 12,
+            budget: 100,
+            stages: vec!["system".to_owned(), "latest".to_owned()],
+            messages: vec![keel_core::ContextMessage {
+                role: "user".to_owned(),
+                content: "hello".to_owned(),
+            }],
+        };
+        let turn = StoredTurn {
+            seq: 1,
+            input: "hello",
+            state: "done",
+            answer: "hi",
+            answer_json: "{}",
+            usage_json: "{}",
+            duration_ms: 5,
+            context: Some(&context),
+        };
+        store
+            .save("s", &session.snapshot(), None, Some(turn))
+            .unwrap();
+
+        let (estimate, messages): (i64, String) = store
+            .conn
+            .query_row(
+                "SELECT estimate, messages_json FROM context_snapshots
+                 WHERE turn_id = 's:1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(estimate, 12);
+        assert!(messages.contains("hello"));
+    }
+
+    #[test]
     fn fact_changes_are_appended_to_history() {
         let dir = tempfile::tempdir().unwrap();
         let mut store = Store::open(&dir.path().join("keel.db")).unwrap();
@@ -818,6 +892,7 @@ mod tests {
             answer_json: "{}",
             usage_json: "{}",
             duration_ms: 5,
+            context: None,
         };
         store
             .save("s", &session.snapshot(), None, Some(turn))

@@ -1089,3 +1089,50 @@ async fn folded_work_is_included_in_a_later_summary() {
     assert!(last.contains("[previous summary]"), "{last}");
     assert!(last.contains("[segment 0]"), "{last}");
 }
+
+#[tokio::test]
+async fn the_turn_start_context_is_captured_when_requested() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&[], 0, PermissionLevel::WorkspaceAuto);
+    let permissions = Arc::new(PermissionEngine::new(dir.path(), config.permission_level).unwrap());
+    let interactions = Arc::new(InteractionBroker::new(
+        Arc::new(DeferAllInteractionPort),
+        config.interaction,
+        events.clone(),
+    ));
+    let policy: Arc<dyn Policy> = Arc::new(config.clone());
+    let driver = TurnDriver::new(
+        MockModel::new(vec![MockStep::Text("done".to_owned())]),
+        common::standard_registry(dir.path()),
+        common::standard_context(),
+        policy,
+        TurnDriverConfig {
+            events,
+            permissions,
+            interactions,
+            system_prompt: config.system_prompt.clone(),
+            max_output_tokens: config.max_output_tokens,
+            context_window: config.context_window,
+            limits: common::test_limits(),
+            todos: None,
+            options: keel_runtime::KernelOptions {
+                capture_context: true,
+                ..Default::default()
+            },
+        },
+    );
+
+    let outcome = driver.run("hi", CancelToken::new()).await;
+
+    let snapshot = outcome.context.expect("context was not captured");
+    assert!(snapshot.estimate > 0);
+    assert!(snapshot
+        .messages
+        .iter()
+        .any(|message| message.role == "user" && message.content == "hi"));
+    assert!(snapshot
+        .messages
+        .iter()
+        .any(|message| message.role == "system"));
+}

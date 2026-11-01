@@ -1026,6 +1026,19 @@
 - `frontend-contract.md` documents the transition queries.
 - Verification: 259 tests; fmt and clippy clean.
 
+### Context snapshots
+
+- `ContextSnapshot` (estimate, budget, stages, messages) is carried on
+  `TurnOutcome` when `KernelOptions.capture_context` is set; the CLI flag is
+  `--context-snapshots`. Off by default: the snapshot is large and only a host
+  that persists it needs the copy. Message content is redacted.
+- The store writes one row per turn in `context_snapshots`: turn id, session,
+  estimate, budget, stages JSON, messages JSON. It is the turn-start assembly,
+  not the transcript and not each tool round.
+- `frontend-contract.md` and ADR 0008 describe the table; per-stage counts are
+  deliberately not carried.
+- Verification: 261 tests; fmt and clippy clean.
+
 ### Fusion run completed at 24k
 
 - The full 57-turn novel finished on DeepSeek with the 24k profile, per-turn
