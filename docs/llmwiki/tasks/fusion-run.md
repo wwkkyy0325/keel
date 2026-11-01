@@ -96,9 +96,12 @@ host is shared, so the run uses the remote DeepSeek endpoint.
 - [x] Reserve tool headroom in history assembly. Verify: the 12-turn slice
       overflowed by 154 tokens; the 11-turn rerun had 0 overflow, peak
       9,784 / 23,772, 11/11 Done and 10/10 model-written summaries.
-- [ ] Persist the session across processes (M5, ADR 0008). A resumed slice
-      wrote chapters 8–17 but the task list started at #1 (`done=0`); the memo
-      and recall also start empty. This blocks multi-session memory evaluation.
+- [x] Persist the session across processes (M5 first slice, ADR 0008):
+      `SessionSnapshot`, SQLite host store, `--store`/`--session-id`. Verify:
+      a two-process run resumed `history: detail=1` and
+      `tasks: done=1 current=#2`. See `tasks/m5-persistence.md`.
+- [ ] Queryable segment/record/summary/fact tables and the multi-session
+      memory evaluation built on the store.
 
 ## Verify criteria
 

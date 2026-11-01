@@ -958,6 +958,24 @@
   task persistence remain M5 work (ADR 0008).
 - Verification: 250 tests; fmt and clippy clean.
 
+### Session persistence, first slice
+
+- `SessionSnapshot` and `SegmentSnapshot` carry segments, entries, records,
+  the memo and scoped facts; `Session::restore` rebuilds the session. Fact
+  candidates are transient and not carried.
+- `TurnDriver::session_snapshot` and `with_session` expose the snapshot without
+  teaching the kernel about a backend.
+- The CLI host has a SQLite store (`--store`, `--session-id`): WAL, foreign
+  keys, `schema_version`, `sessions`, `turns`. One transaction per turn writes
+  the snapshot, the task list and the transcript row. Stored tasks take
+  precedence over `--todo-file` on resume.
+- Two processes on one store: the second process saw `history: detail=1` and
+  `tasks: done=1 current=#2`, and answered a chapter-1 probe from the restored
+  conversation without reading files.
+- ADR 0008 is accepted; its queryable segment/record/summary/fact tables remain
+  for the frontend. Task doc: `tasks/m5-persistence.md`.
+- Verification: 254 tests; fmt and clippy clean.
+
 ### Fusion run completed at 24k
 
 - The full 57-turn novel finished on DeepSeek with the 24k profile, per-turn

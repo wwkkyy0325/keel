@@ -25,7 +25,8 @@ claim of failure.
 | Prompt cache reuse | Per-call usage lines | 24k novel, 2 turns (67–83%) | Stable-prefix rule not started | No |
 | Persona affordances | None | Not measured | None (no A/B) | No |
 | Interjections | None | None | None | No (ADR 0010 only) |
-| M4 plugins / M5 persistence | Not started | Not started | Not started | Not started |
+| Session persistence (host store) | Snapshot round-trip, store tests | Two-process resume | None | No |
+| M4 plugins | Not started | Not started | Not started | Not started |
 
 ## Fusion evidence
 

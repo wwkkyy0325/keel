@@ -2,8 +2,14 @@
 
 ## Status
 
-Proposed. The schema is fixed here; implementation lands with M5 persistence.
-The in-memory types already match this layout.
+Accepted. The schema below is the target. The first implementation lives in the
+CLI host (`hosts/keel-cli/src/store.rs`): `sessions` holds a JSON snapshot of
+the derived plane (segments, entries, records, memo, facts) and the task list,
+and `turns` appends the transcript. The segment, record, summary and fact
+tables land with the frontend, which needs to query them directly.
+
+The kernel carries the snapshot types (`SessionSnapshot`) and knows nothing
+about SQLite; the store is a host adapter, per ADR 0012.
 
 ## Context
 
