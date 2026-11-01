@@ -1071,7 +1071,16 @@
 - Live: the official filesystem server listed a directory, and the memory
   server stored and found an entity, both with no kernel change. Windows runs
   `npx` through `cmd /c`.
+- Remote transport: `url = "https://.../mcp"` speaks streamable HTTP, accepts
+  a JSON or SSE response body and echoes `Mcp-Session-Id`. Verified against a
+  local mock HTTP MCP server. A pure SSE endpoint (`GET /sse`) is not
+  implemented.
+- Ecosystem check: DSH (DeepSeek Harness) plugins are Cordis TypeScript modules
+  bound to that runtime, not MCP; Dify and Coze plugins target their own
+  runtimes. Domestic MCP markets (ModelScope, Bailian, Tencent) are hosted
+  remote MCP; a live test needs a streamable-HTTP deployment URL and, for most
+  services, a key. A DSH bridge or Dify/Coze adapter is a separate integration.
 - Remaining: hot reload, server-initiated requests, deeper schema mapping.
   Report: `evals/reports/2026-11-04-mcp-plugins.md`; task doc:
   `tasks/m4-plugins.md`.
-- Verification: 267 tests; fmt and clippy clean.
+- Verification: 268 tests; fmt and clippy clean.

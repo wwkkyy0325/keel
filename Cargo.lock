@@ -588,6 +588,7 @@ dependencies = [
  "keel-core",
  "keel-model-openai",
  "keel-runtime",
+ "reqwest",
  "rusqlite",
  "serde",
  "serde_json",

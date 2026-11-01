@@ -20,18 +20,26 @@ question is where a plugin lives and how much ceremony surrounds it.
 
 1. **A plugin is an external process.** The host starts it; the kernel never
    loads a dynamic library and never knows the protocol.
-2. **MCP is the structured path.** `plugins.toml` lists stdio servers:
+2. **MCP is the structured path.** `plugins.toml` lists a stdio server or a
+   remote streamable-HTTP endpoint:
 
    ```toml
    [[servers]]
    name = "filesystem"
    command = "npx"
    args = ["-y", "@modelcontextprotocol/server-filesystem", "/some/dir"]
+
+   [[servers]]
+   name = "hosted"
+   url = "https://example.invalid/mcp"
    ```
 
    The host performs the MCP handshake, calls `tools/list`, and registers each
    tool as an ordinary kernel `Tool`. The model sees
-   `mcp_<server>_<tool>`.
+   `mcp_<server>_<tool>`. The HTTP transport POSTs JSON-RPC, accepts a JSON or
+   SSE body, and echoes `Mcp-Session-Id` when the server sets it. A pure SSE
+   endpoint (`GET /sse` plus a separate message POST) is not implemented; a
+   hosted service must expose streamable HTTP.
 3. **CLI is the unstructured path.** Any allowlisted command can already be
    reached through the shell tool. An MCP server is for tools that need typed
    arguments or persistent state.

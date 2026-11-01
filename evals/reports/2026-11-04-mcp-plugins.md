@@ -58,6 +58,36 @@ succeeded on the first call.
 This is the right trade for a compatibility-first adapter: a partly mapped flat
 schema silently drops fields, while the JSON mode can express anything.
 
+## Remote MCP and other ecosystems
+
+The two live servers above are stdio. Domestic MCP markets (ModelScope,
+Alibaba Cloud Bailian, Tencent Cloud) mostly expose **hosted remote MCP**, so
+the adapter now supports streamable HTTP as well:
+
+```toml
+[[servers]]
+name = "hosted"
+url = "https://example.invalid/mcp"
+```
+
+It POSTs JSON-RPC, accepts JSON or SSE response bodies, and echoes
+`Mcp-Session-Id` when the server sets it. A pure SSE endpoint (`GET /sse` plus
+a separate message POST) is not implemented; a hosted deployment must use
+streamable HTTP. Verified against a local mock HTTP MCP server (initialize,
+tools/list, tools/call); a live domestic endpoint still needs an account URL
+and, for many services, an API key.
+
+**DeepSeek Harness (DSH).** DSH is a separate agent runtime built on Cordis;
+its plugins are TypeScript/ESM modules that call `ctx.tools.register(...)`
+inside the harness process. They are not MCP servers and cannot be loaded by
+Keel as-is. Options are a Cordis-hosted bridge that republishes DSH tools over
+MCP, or invoking a headless `dsh` run through the shell tool as an external
+agent. Neither is implemented.
+
+**Dify / Coze.** Their plugin packages target their own runtimes and HTTP APIs,
+not MCP. A host-side adapter would call the platform API; it is a different
+integration path from this adapter.
+
 ## Limits
 
 - Flat parameters only; nested schemas need the JSON string. The model must

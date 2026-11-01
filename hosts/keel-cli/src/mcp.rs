@@ -1,13 +1,14 @@
-//! Minimal MCP (Model Context Protocol) stdio client.
+//! Minimal MCP (Model Context Protocol) client.
 //!
-//! One plugin is one MCP server process. The host spawns it, lists its tools
-//! and registers each one as a kernel tool. The kernel never knows MCP exists;
-//! it sees ordinary typed tools. The protocol is public and documented at
+//! A plugin is either a local MCP server process (stdio) or a remote MCP
+//! endpoint (streamable HTTP / SSE). The host connects it, lists its tools and
+//! registers each one as a kernel tool. The kernel never knows MCP exists; it
+//! sees ordinary typed tools. The protocol is public and documented at
 //! modelcontextprotocol.io.
 //!
-//! The trust boundary is the host: an MCP server is an external process the
-//! user installed. The permission gate still runs for every call, but the
-//! kernel cannot sandbox what the server does inside its own process.
+//! The trust boundary is the host: a server is an external process or service
+//! the user chose. The permission gate still runs for every call, but the
+//! kernel cannot sandbox what the server does on its own side.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -32,9 +33,14 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 #[derive(Deserialize)]
 pub struct ServerConfig {
     pub name: String,
-    pub command: String,
+    /// Local stdio server command. Exactly one of `command` and `url` is set.
+    #[serde(default)]
+    pub command: Option<String>,
     #[serde(default)]
     pub args: Vec<String>,
+    /// Remote streamable-HTTP endpoint.
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -43,18 +49,33 @@ struct PluginFile {
     servers: Vec<ServerConfig>,
 }
 
-/// A running MCP server and its JSON-RPC channel.
-struct McpServer {
+struct StdioTransport {
     child: Child,
     stdin: ChildStdin,
     lines: Lines<BufReader<ChildStdout>>,
-    next_id: u64,
 }
 
-impl Drop for McpServer {
+enum Transport {
+    Stdio(Box<StdioTransport>),
+    Http {
+        client: reqwest::Client,
+        url: String,
+        session: Option<String>,
+    },
+}
+
+impl Drop for Transport {
     fn drop(&mut self) {
-        let _ = self.child.start_kill();
+        if let Transport::Stdio(inner) = self {
+            let _ = inner.child.start_kill();
+        }
     }
+}
+
+/// A connected MCP server and its JSON-RPC channel.
+struct McpServer {
+    transport: Transport,
+    next_id: u64,
 }
 
 impl McpServer {
@@ -76,49 +97,109 @@ impl McpServer {
             .take()
             .ok_or_else(|| "server has no stdout".to_owned())?;
         Ok(Self {
-            child,
-            stdin,
-            lines: BufReader::new(stdout).lines(),
+            transport: Transport::Stdio(Box::new(StdioTransport {
+                child,
+                stdin,
+                lines: BufReader::new(stdout).lines(),
+            })),
             next_id: 1,
         })
     }
 
-    async fn send(&mut self, message: Value) -> Result<(), String> {
-        let mut line = message.to_string();
-        line.push('\n');
-        self.stdin
-            .write_all(line.as_bytes())
-            .await
-            .map_err(|error| format!("cannot write to server: {error}"))?;
-        self.stdin
-            .flush()
-            .await
-            .map_err(|error| format!("cannot flush server stdin: {error}"))
+    fn http(url: String) -> Self {
+        Self {
+            transport: Transport::Http {
+                client: reqwest::Client::new(),
+                url,
+                session: None,
+            },
+            next_id: 1,
+        }
+    }
+
+    /// Sends one JSON-RPC message. For HTTP it returns the response body.
+    async fn send(&mut self, message: &Value) -> Result<Option<String>, String> {
+        match &mut self.transport {
+            Transport::Stdio(inner) => {
+                let mut line = message.to_string();
+                line.push('\n');
+                inner
+                    .stdin
+                    .write_all(line.as_bytes())
+                    .await
+                    .map_err(|error| format!("cannot write to server: {error}"))?;
+                inner
+                    .stdin
+                    .flush()
+                    .await
+                    .map_err(|error| format!("cannot flush server stdin: {error}"))?;
+                Ok(None)
+            }
+            Transport::Http {
+                client,
+                url,
+                session,
+            } => {
+                let mut request = client
+                    .post(url.as_str())
+                    .header("Content-Type", "application/json")
+                    .header("Accept", "application/json, text/event-stream");
+                if let Some(session) = session.as_deref() {
+                    request = request.header("Mcp-Session-Id", session);
+                }
+                let response = timeout(REQUEST_TIMEOUT, request.json(message).send())
+                    .await
+                    .map_err(|_| "HTTP request timed out".to_owned())?
+                    .map_err(|error| format!("HTTP request failed: {error}"))?;
+                if let Some(id) = response.headers().get("mcp-session-id") {
+                    if let Ok(id) = id.to_str() {
+                        *session = Some(id.to_owned());
+                    }
+                }
+                let status = response.status();
+                let body = response
+                    .text()
+                    .await
+                    .map_err(|error| format!("cannot read HTTP body: {error}"))?;
+                if !status.is_success() {
+                    return Err(format!("HTTP {status}: {body}"));
+                }
+                Ok(Some(body))
+            }
+        }
     }
 
     async fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
         let id = self.next_id;
         self.next_id = self.next_id.saturating_add(1);
-        self.send(json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}))
-            .await?;
-        loop {
-            let line = timeout(REQUEST_TIMEOUT, self.lines.next_line())
-                .await
-                .map_err(|_| format!("`{method}` timed out"))?
-                .map_err(|error| format!("cannot read from server: {error}"))?
-                .ok_or_else(|| "server closed its stdout".to_owned())?;
-            let value: Value = serde_json::from_str(&line)
-                .map_err(|error| format!("invalid JSON from server: {error}"))?;
-            if value.get("id").and_then(Value::as_u64) != Some(id) {
-                // Notifications and server-initiated requests are ignored in
-                // this version; the tool path does not depend on them.
-                continue;
+        let message = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
+        let body = self.send(&message).await?;
+        match &mut self.transport {
+            Transport::Stdio(inner) => loop {
+                let line = timeout(REQUEST_TIMEOUT, inner.lines.next_line())
+                    .await
+                    .map_err(|_| format!("`{method}` timed out"))?
+                    .map_err(|error| format!("cannot read from server: {error}"))?
+                    .ok_or_else(|| "server closed its stdout".to_owned())?;
+                let value: Value = serde_json::from_str(&line)
+                    .map_err(|error| format!("invalid JSON from server: {error}"))?;
+                if value.get("id").and_then(Value::as_u64) != Some(id) {
+                    // Notifications and server-initiated requests are ignored
+                    // in this version; the tool path does not depend on them.
+                    continue;
+                }
+                return response_result(value);
+            },
+            Transport::Http { .. } => {
+                let body = body.ok_or_else(|| "empty HTTP response".to_owned())?;
+                parse_http_response(&body, id)
             }
-            if let Some(error) = value.get("error") {
-                return Err(format!("server error: {error}"));
-            }
-            return Ok(value.get("result").cloned().unwrap_or(Value::Null));
         }
+    }
+
+    async fn notify(&mut self, method: &str) -> Result<(), String> {
+        let message = json!({"jsonrpc": "2.0", "method": method});
+        self.send(&message).await.map(|_| ())
     }
 
     async fn initialize(&mut self) -> Result<(), String> {
@@ -131,8 +212,7 @@ impl McpServer {
             }),
         )
         .await?;
-        self.send(json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))
-            .await
+        self.notify("notifications/initialized").await
     }
 
     async fn list_tools(&mut self) -> Result<Vec<Value>, String> {
@@ -148,6 +228,38 @@ impl McpServer {
         self.request("tools/call", json!({"name": name, "arguments": arguments}))
             .await
     }
+}
+
+fn response_result(value: Value) -> Result<Value, String> {
+    if let Some(error) = value.get("error") {
+        return Err(format!("server error: {error}"));
+    }
+    Ok(value.get("result").cloned().unwrap_or(Value::Null))
+}
+
+/// Parses a JSON or SSE response and returns the result for `id`.
+fn parse_http_response(body: &str, id: u64) -> Result<Value, String> {
+    if let Ok(value) = serde_json::from_str::<Value>(body) {
+        if value.get("id").and_then(Value::as_u64) == Some(id) || value.get("result").is_some() {
+            return response_result(value);
+        }
+    }
+    for line in body.lines() {
+        let Some(data) = line.strip_prefix("data:") else {
+            continue;
+        };
+        let data = data.trim();
+        if data.is_empty() || data == "[DONE]" {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(data) else {
+            continue;
+        };
+        if value.get("id").and_then(Value::as_u64) == Some(id) {
+            return response_result(value);
+        }
+    }
+    Err("no matching JSON-RPC response".to_owned())
 }
 
 /// A kernel tool backed by one MCP tool.
@@ -326,12 +438,22 @@ pub async fn load(
     })?;
     let mut names = Vec::new();
     for server in file.servers {
-        let mut running = match McpServer::spawn(&server.command, &server.args).await {
-            Ok(server) => server,
-            Err(error) => {
-                eprintln!("plugin `{}` skipped: {error}", server.name);
-                continue;
+        let mut running = if let Some(url) = &server.url {
+            McpServer::http(url.clone())
+        } else if let Some(command) = &server.command {
+            match McpServer::spawn(command, &server.args).await {
+                Ok(server) => server,
+                Err(error) => {
+                    eprintln!("plugin `{}` skipped: {error}", server.name);
+                    continue;
+                }
             }
+        } else {
+            eprintln!(
+                "plugin `{}` skipped: set either `command` or `url`",
+                server.name
+            );
+            continue;
         };
         if let Err(error) = running.initialize().await {
             eprintln!("plugin `{}` skipped: {error}", server.name);
@@ -538,6 +660,106 @@ mod tests {
         });
         let text = render_content(&result);
         assert_eq!(text, "first\n[image content omitted]\nsecond");
+    }
+
+    #[tokio::test]
+    async fn a_remote_http_server_is_listed_and_called() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        async fn mock_server() -> String {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            tokio::spawn(async move {
+                loop {
+                    let Ok((mut socket, _)) = listener.accept().await else {
+                        return;
+                    };
+                    tokio::spawn(async move {
+                        let mut buffer = Vec::new();
+                        let mut chunk = [0u8; 4096];
+                        let end = loop {
+                            let read = socket.read(&mut chunk).await.unwrap_or(0);
+                            if read == 0 {
+                                return;
+                            }
+                            buffer.extend_from_slice(&chunk[..read]);
+                            if let Some(index) =
+                                buffer.windows(4).position(|window| window == b"\r\n\r\n")
+                            {
+                                break index + 4;
+                            }
+                        };
+                        let headers = String::from_utf8_lossy(&buffer[..end]).to_ascii_lowercase();
+                        let length = headers
+                            .lines()
+                            .find_map(|line| {
+                                line.strip_prefix("content-length:")
+                                    .and_then(|value| value.trim().parse::<usize>().ok())
+                            })
+                            .unwrap_or(0);
+                        while buffer.len() < end + length {
+                            let read = socket.read(&mut chunk).await.unwrap_or(0);
+                            if read == 0 {
+                                return;
+                            }
+                            buffer.extend_from_slice(&chunk[..read]);
+                        }
+                        let body = String::from_utf8_lossy(&buffer[end..end + length]);
+                        let value: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+                        let method = value.get("method").and_then(Value::as_str).unwrap_or("");
+                        let id = value.get("id").cloned().unwrap_or(Value::Null);
+                        let result = match method {
+                            "initialize" => json!({
+                                "protocolVersion": "2024-11-05",
+                                "capabilities": {},
+                                "serverInfo": {"name": "mock", "version": "1"}
+                            }),
+                            "tools/list" => json!({
+                                "tools": [{
+                                    "name": "echo",
+                                    "description": "echo text",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {"text": {"type": "string"}},
+                                        "required": ["text"]
+                                    }
+                                }]
+                            }),
+                            "tools/call" => json!({
+                                "content": [{"type": "text", "text": "echo: mock"}]
+                            }),
+                            _ => json!({}),
+                        };
+                        let (status, body) = if id.is_null() {
+                            ("202 Accepted", String::new())
+                        } else {
+                            (
+                                "200 OK",
+                                json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string(),
+                            )
+                        };
+                        let response = format!(
+                            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nMcp-Session-Id: test\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        let _ = socket.write_all(response.as_bytes()).await;
+                    });
+                }
+            });
+            format!("http://{address}/mcp")
+        }
+
+        let mut server = McpServer::http(mock_server().await);
+        server.initialize().await.unwrap();
+        let tools = server.list_tools().await.unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["name"], "echo");
+        let result = server
+            .call_tool("echo", json!({"text": "hi"}))
+            .await
+            .unwrap();
+        assert_eq!(render_content(&result), "echo: mock");
     }
 
     #[test]

@@ -20,6 +20,14 @@ unchanged. MCP is the structured path; the shell tool is the unstructured one.
 - [x] Fix the array-of-objects crash: nested schemas switch to one JSON
       `arguments` string. Verify: six mapping unit tests; the memory retry
       succeeded.
+- [x] Add remote transport: `url = "https://.../mcp"` uses streamable HTTP
+      (JSON or SSE response body, `Mcp-Session-Id` echo). Verify: a local mock
+      HTTP MCP server completes initialize, tools/list and tools/call.
+- [ ] Live test against a domestic hosted MCP (ModelScope/Bailian/Tencent)
+      using a streamable-HTTP deployment URL and its key in the environment.
+- [ ] A DSH bridge: DSH plugins are Cordis TS modules, not MCP. Either run a
+      headless `dsh` as an external agent or host Cordis and republish its tools
+      over MCP.
 - [ ] Hot reload of `plugins.toml` without restarting the host.
 - [ ] Handle server-initiated requests (sampling, roots) instead of ignoring
       them.
