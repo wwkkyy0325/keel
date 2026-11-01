@@ -9,6 +9,7 @@ use std::cell::Cell;
 use std::collections::HashSet;
 use std::io;
 use std::io::IsTerminal;
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -30,7 +31,8 @@ use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block as FrameBlock, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
+    Block as FrameBlock, BorderType, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+    Wrap,
 };
 use ratatui::{Frame, Terminal};
 use tokio::sync::{mpsc, oneshot};
@@ -101,6 +103,7 @@ pub struct TuiHost {
     pub todos: Option<Arc<Mutex<TodoList>>>,
     pub store: Option<Store>,
     pub session_id: String,
+    pub workspace: PathBuf,
     pub interactions: mpsc::Receiver<InteractionJob>,
     pub ui: mpsc::Receiver<UiEvent>,
 }
@@ -158,9 +161,8 @@ impl UsageTotal {
 }
 
 struct App {
-    profile: String,
+    workspace: String,
     model: String,
-    session_id: String,
     permission: String,
     blocks: Vec<Block>,
     input: Vec<char>,
@@ -192,11 +194,10 @@ struct App {
 }
 
 impl App {
-    fn new(profile: String, model: String, session_id: String, permission: String) -> Self {
+    fn new(workspace: String, model: String, permission: String) -> Self {
         Self {
-            profile,
+            workspace,
             model,
-            session_id,
             permission,
             blocks: vec![Block {
                 kind: BlockKind::Notice,
@@ -436,7 +437,7 @@ impl App {
         }
         // Tab and Shift+Tab switch the session mode, even while a prompt is
         // open; the prompt itself is navigated with the arrow keys.
-        if key.code == KeyCode::Tab {
+        if key.code == KeyCode::BackTab {
             return Some(Command::ToggleMode);
         }
         if self.pending.is_some() {
@@ -812,10 +813,15 @@ pub async fn run(host: TuiHost) -> Result<ExitCode, KernelError> {
     }
     let _guard = TerminalGuard::enter()?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout())).map_err(io_error)?;
+    let workspace = host
+        .workspace
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_owned)
+        .unwrap_or_else(|| host.workspace.display().to_string());
     let mut app = App::new(
-        host.config.profile_name.clone(),
+        workspace,
         host.config.model_route.model.clone(),
-        host.session_id.clone(),
         host.config.permission_level.as_str().to_owned(),
     );
     app.base_full_auto = host.config.permission_level == PermissionLevel::FullAuto;
@@ -952,7 +958,6 @@ fn draw(app: &App, frame: &mut Frame) {
         (prompt_lines + job.request.options.len() + 3).min(14) as u16
     });
     let chunks = Layout::vertical([
-        Constraint::Length(1),
         Constraint::Min(3),
         Constraint::Length(prompt_height),
         Constraint::Length(3),
@@ -960,18 +965,9 @@ fn draw(app: &App, frame: &mut Frame) {
     ])
     .split(area);
 
-    let header = format!(
-        " Keel · {} · {} · session {} · {} ",
-        app.profile, app.model, app.session_id, app.permission
-    );
-    frame.render_widget(
-        Paragraph::new(header).style(Style::default().add_modifier(Modifier::BOLD)),
-        chunks[0],
-    );
-
-    let lines = app.transcript(chunks[1].width as usize);
+    let lines = app.transcript(chunks[0].width as usize);
     let content = lines.len();
-    let visible = chunks[1].height as usize;
+    let visible = chunks[0].height as usize;
     app.content_lines.set(content);
     app.viewport_lines.set(visible);
     let offset = if app.follow {
@@ -979,18 +975,18 @@ fn draw(app: &App, frame: &mut Frame) {
     } else {
         app.scroll.min(content.saturating_sub(visible))
     };
-    frame.render_widget(Paragraph::new(lines).scroll((offset as u16, 0)), chunks[1]);
+    frame.render_widget(Paragraph::new(lines).scroll((offset as u16, 0)), chunks[0]);
     if content > visible {
         let mut state = ScrollbarState::new(content).position(offset);
         frame.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight),
-            chunks[1],
+            chunks[0],
             &mut state,
         );
     }
 
     if let Some(job) = &app.pending {
-        draw_prompt(job, app.pending_choice, frame, chunks[2]);
+        draw_prompt(job, app.pending_choice, frame, chunks[1]);
     }
 
     let before: String = app.input[..app.cursor.min(app.input.len())]
@@ -1003,34 +999,30 @@ fn draw(app: &App, frame: &mut Frame) {
     frame.render_widget(
         Paragraph::new(input)
             .wrap(Wrap { trim: false })
-            .block(FrameBlock::bordered().title(" message ")),
-        chunks[3],
+            .block(FrameBlock::bordered().border_type(BorderType::Rounded)),
+        chunks[2],
     );
 
-    let usage = if app.usage.cached > 0 {
+    let left = if app.running {
         format!(
-            "{} in · {} out · {} cached",
-            app.usage.input, app.usage.output, app.usage.cached
+            " ● working · {} · {} · {}",
+            app.workspace, app.model, app.permission
         )
     } else {
-        format!("{} in · {} out", app.usage.input, app.usage.output)
-    };
-    let left = if app.running {
-        format!(" ● working · {usage}")
-    } else {
-        format!(" ● ready · {usage}")
+        format!(
+            " ● ready · {} · {} · {}",
+            app.workspace, app.model, app.permission
+        )
     };
     let right = if app.running {
-        "Ctrl-C cancel · PgUp/PgDn "
-    } else if app.show_process && !app.hidden.is_empty() {
-        "Ctrl-O hide · Tab mode · /help "
-    } else if !app.hidden.is_empty() {
-        "Ctrl-O details · Tab mode · /help "
+        "Ctrl-C · PgUp/PgDn "
+    } else if app.hidden.is_empty() {
+        "Shift+Tab · /help "
     } else {
-        "Tab mode · /help "
+        "Ctrl-O · Shift+Tab · /help "
     };
     let footer = Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)])
-        .split(chunks[4]);
+        .split(chunks[3]);
     let status_style = Style::default().fg(if app.running {
         Color::Yellow
     } else {
@@ -1073,7 +1065,7 @@ fn draw_prompt(job: &InteractionJob, selected: usize, frame: &mut Frame, area: R
         ]));
     }
     lines.push(Line::from(
-        " ↑↓ select · Enter confirm · Esc defer · Tab mode",
+        " ↑↓ select · Enter confirm · Esc defer · Shift+Tab mode",
     ));
     frame.render_widget(
         Paragraph::new(lines)
@@ -1101,9 +1093,8 @@ mod tests {
 
     fn app() -> App {
         App::new(
-            "coding".to_owned(),
+            "Keel".to_owned(),
             "mock".to_owned(),
-            "s".to_owned(),
             "workspace_auto".to_owned(),
         )
     }
@@ -1380,10 +1371,13 @@ mod tests {
     }
 
     #[test]
-    fn tab_requests_a_mode_toggle() {
+    fn shift_tab_requests_a_mode_toggle() {
         let mut app = app();
-        assert_eq!(app.handle_key(key(KeyCode::Tab)), Some(Command::ToggleMode));
-        assert_eq!(app.handle_key(ctrl('o')), None);
+        assert_eq!(
+            app.handle_key(key(KeyCode::BackTab)),
+            Some(Command::ToggleMode)
+        );
+        assert_eq!(app.handle_key(key(KeyCode::Tab)), None);
     }
 
     #[test]
@@ -1406,10 +1400,9 @@ mod tests {
     fn the_empty_screen_has_a_header_input_and_status() {
         let rendered = frame(&app(), 80, 24);
         golden("tui-empty.txt", &rendered);
-        assert!(rendered.contains("Keel · coding · mock · session s"));
+        assert!(rendered.contains("● ready · Keel · mock · workspace_auto"));
         assert!(rendered.contains("> ▏"));
-        assert!(rendered.contains("● ready"));
-        assert!(rendered.contains("Tab mode"));
+        assert!(rendered.contains("Shift+Tab"));
     }
 
     #[test]

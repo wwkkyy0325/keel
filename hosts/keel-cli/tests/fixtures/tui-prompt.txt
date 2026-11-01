@@ -1,5 +1,5 @@
- Keel · coding · mock · session s · workspace_auto
 · type a request; /help lists commands
+
 
 
 
@@ -16,9 +16,9 @@
 │› Allow once                                                                  │
 │  Allow this path                                                             │
 │  Full auto                                                                   │
-│ ↑↓ select · Enter confirm · Esc defer · Tab mode                             │
+│ ↑↓ select · Enter confirm · Esc defer · Shift+Tab mode                       │
 └──────────────────────────────────────────────────────────────────────────────┘
-┌ message ─────────────────────────────────────────────────────────────────────┐
+╭──────────────────────────────────────────────────────────────────────────────╮
 │> ▏                                                                           │
-└──────────────────────────────────────────────────────────────────────────────┘
- ● ready · 0 in · 0 out                                        Tab mode · /help
+╰──────────────────────────────────────────────────────────────────────────────╯
+ ● ready · Keel · mock · workspace_auto                       Shift+Tab · /help

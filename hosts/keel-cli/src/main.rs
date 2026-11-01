@@ -487,6 +487,7 @@ async fn run() -> Result<ExitCode, KernelError> {
             todos,
             store,
             session_id: args.session_id,
+            workspace: workspace_root,
             interactions,
             ui: ui_rx,
         })
