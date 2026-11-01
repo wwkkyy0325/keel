@@ -189,6 +189,26 @@ not mean rebuilding the file or running destructive git commands:
 Shell commands can still modify files without a backup; use `write_file` for
 edits that must be undoable.
 
+## Terminal UI
+
+`--tui` runs an interactive terminal host: streaming transcript, one line per
+tool call, a permission modal, and slash commands. It needs a real terminal.
+
+```bash
+cargo run -p keel-cli -- --tui --profile variants/coding/profile.deepseek.toml \
+  --store keel.db --session-id mem
+```
+
+- `Enter` sends; `Ctrl-C` cancels a running turn (quits when idle);
+  `PgUp`/`PgDn` scroll; `Ctrl-L` clears the transcript.
+- `/help`, `/clear`, `/cost`, `/sessions`, `/cancel`, `/quit`.
+- Start with `--store` and `--session-id` to resume; the header shows the
+  profile, model, session and permission level.
+
+The UI is deliberately small: no markdown rendering, syntax highlighting,
+mouse or model picker. It is a reference host, not a product; see
+`docs/llmwiki/tasks/tui.md`.
+
 ## Store, branches and views
 
 `--store` keeps sessions in SQLite; a new process resumes from the snapshot.

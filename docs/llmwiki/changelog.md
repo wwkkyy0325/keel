@@ -1495,3 +1495,25 @@
   `an_oversized_stdio_message_is_refused`,
   `an_oversized_http_body_is_refused`, and 322 workspace tests (270
   kernel-only). Task doc: `docs/llmwiki/tasks/resource-safety.md`.
+
+### Interactive terminal host
+
+- Added `--tui`: a ratatui/crossterm front end for the reference host with a
+  streaming transcript, tool status lines, a permission modal, slash commands,
+  Ctrl-C cancellation and session persistence. The kernel is untouched; the UI
+  lives under `hosts/keel-cli` and is not a kernel dependency.
+- Streaming uses a `HostModel::Tui` decorator that forwards `TextDelta` to the
+  UI and passes the same chunk to the driver, so the kernel never learns about
+  the TUI. Tool progress drains `EventLog` by sequence; interactions cross a
+  channel-backed `InteractionPort` and reuse the line UI's `parse_response`.
+- The frontend is tested headlessly: the reducer has unit tests (CJK
+  backspace, history, slash parsing, modal scopes, cancel/quit), and the
+  renderer is exercised through `TestBackend` with goldens for the empty
+  screen, streaming and the permission modal. A piped stdin exits with a
+  clear error instead of entering raw mode.
+- Slash commands are `/help`, `/clear`, `/cost`, `/sessions`, `/cancel` and
+  `/quit`. Session switching is by `--store` + `--session-id`; `/resume` is
+  not part of the simplified UI.
+- Verify: `the_tui_requires_an_interactive_terminal` and the 11 `tui::tests`
+  reducer/render tests; 334 workspace tests (270 kernel-only). Task doc:
+  `docs/llmwiki/tasks/tui.md`. A real-terminal smoke run is still manual.

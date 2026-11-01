@@ -60,6 +60,10 @@ First complete kernel and reference host.
   fork point is never pruned.
 - MCP messages are capped at 8 MiB (stdio line and HTTP body), and the HTTP
   body read is under the request timeout.
+- `--tui` runs an interactive terminal host: streaming text, tool progress
+  lines, a permission modal, slash commands, Ctrl-C cancellation and session
+  persistence. The renderer is tested with `TestBackend` goldens; the kernel
+  has no UI dependency.
 
 ### Performance
 
