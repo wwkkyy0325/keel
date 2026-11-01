@@ -31,9 +31,10 @@ unchanged. MCP is the structured path; the shell tool is the unstructured one.
       instead of adding a runtime adapter now.
 - [x] `--plugins-check`: probe every configured server (spawn, initialize,
       tools/list), print one status line per server and exit non-zero when any
-      fails. This is the interface a configuration page calls before saving.
-      Verify: a wrapped and a direct server reported ready, a missing command
-      reported failed, exit code 1.
+      fails. `--json` emits the same rows as `{name, tools, error,
+      duration_ms}` for a configuration page. Verify: a wrapped and a direct
+      server reported ready, a missing command reported failed, exit code 1;
+      the JSON form parsed with the same two rows.
 - [x] Kill the server process tree on drop: `taskkill /T /F` on Windows, the
       process group on Unix. Verify: the Python servers, including the
       grandchild started through `cmd /c`, were gone after the probe.

@@ -522,6 +522,7 @@ impl Tool for McpTool {
 }
 
 /// One server probe, for `--plugins-check` and a configuration page.
+#[derive(serde::Serialize)]
 pub struct ServerStatus {
     pub name: String,
     pub tools: usize,
@@ -915,6 +916,21 @@ mod tests {
             text.chars().count() <= 901,
             "the description must stay bounded"
         );
+    }
+
+    #[test]
+    fn a_server_status_serializes_for_a_config_page() {
+        let status = ServerStatus {
+            name: "sqlite".to_owned(),
+            tools: 2,
+            error: Some("boom".to_owned()),
+            duration_ms: 12,
+        };
+        let value = serde_json::to_value(&status).unwrap();
+        assert_eq!(value["name"], "sqlite");
+        assert_eq!(value["tools"], 2);
+        assert_eq!(value["error"], "boom");
+        assert_eq!(value["duration_ms"], 12);
     }
 
     #[test]

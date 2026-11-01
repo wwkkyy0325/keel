@@ -103,3 +103,17 @@ PATH, so it does not add a runtime dependency to the workspace.
 - CLI smoke: three turns with `--keep-checkpoints 2` left `[2, 3]`; a fork
   from turn 1 failed with the typed error above. The transcript still has all
   three turns.
+
+## Follow-up: JSON plugin status
+
+`--plugins-check --json` returns the same rows in a stable shape for a
+configuration page:
+
+```json
+[
+  {"name": "sqlite", "tools": 2, "error": null, "duration_ms": 145},
+  {"name": "broken", "tools": 0, "error": "cannot start `nope`: program not found", "duration_ms": 0}
+]
+```
+
+The exit code is still 1 when any entry has a non-null `error`.

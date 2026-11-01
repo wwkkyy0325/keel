@@ -55,12 +55,17 @@ async fn main() -> ExitCode {
 async fn run() -> Result<ExitCode, KernelError> {
     dotenvy::dotenv().ok();
     let args = parse_args()?;
+    if args.json && !args.plugins_check {
+        return Err(invalid_config(
+            "`--json` is only supported with `--plugins-check`",
+        ));
+    }
     if args.plugins_check {
         let path = args
             .plugins
             .as_deref()
             .ok_or_else(|| invalid_config("`--plugins-check` needs `--plugins <file>`"))?;
-        return check_plugins(path, &args.workspace).await;
+        return check_plugins(path, &args.workspace, args.json).await;
     }
     let mut store = match &args.store {
         Some(path) => Some(store::Store::open(path)?),
@@ -801,6 +806,8 @@ struct Args {
     delete_session: Option<String>,
     /// Keep at most this many branch checkpoints per session; 0 keeps all.
     keep_checkpoints: u32,
+    /// Machine-readable output for `--plugins-check`.
+    json: bool,
 }
 
 fn parse_args() -> Result<Args, KernelError> {
@@ -826,6 +833,7 @@ fn parse_args() -> Result<Args, KernelError> {
     let mut fork_from = None;
     let mut delete_session = None;
     let mut keep_checkpoints = 0u32;
+    let mut json = false;
     let mut workspace = std::env::current_dir().map_err(|error| KernelError::Io {
         message: error.to_string(),
     })?;
@@ -931,6 +939,9 @@ fn parse_args() -> Result<Args, KernelError> {
             "--plugins-check" => {
                 plugins_check = true;
             }
+            "--json" => {
+                json = true;
+            }
             "--fork-from" => {
                 fork_from = Some(
                     args.next()
@@ -995,6 +1006,7 @@ fn parse_args() -> Result<Args, KernelError> {
         fork_from,
         delete_session,
         keep_checkpoints,
+        json,
     })
 }
 
@@ -1038,29 +1050,40 @@ fn parse_fork(value: &str) -> Result<(String, u32), KernelError> {
 async fn check_plugins(
     path: &std::path::Path,
     root: &std::path::Path,
+    json: bool,
 ) -> Result<ExitCode, KernelError> {
     let statuses = mcp::check(path, root).await?;
-    let mut failed = 0;
-    for status in &statuses {
-        match &status.error {
-            Some(error) => {
-                failed += 1;
-                println!(
-                    "server {}: failed after {} ms: {error}",
-                    status.name, status.duration_ms
-                );
+    if json {
+        let rendered = serde_json::to_string_pretty(&statuses)
+            .map_err(|error| invalid_config(format!("cannot encode plugin status: {error}")))?;
+        println!("{rendered}");
+    } else {
+        let mut failed = 0;
+        for status in &statuses {
+            match &status.error {
+                Some(error) => {
+                    failed += 1;
+                    println!(
+                        "server {}: failed after {} ms: {error}",
+                        status.name, status.duration_ms
+                    );
+                }
+                None => println!(
+                    "server {}: ready, {} tools, {} ms",
+                    status.name, status.tools, status.duration_ms
+                ),
             }
-            None => println!(
-                "server {}: ready, {} tools, {} ms",
-                status.name, status.tools, status.duration_ms
-            ),
         }
+        println!(
+            "{}/{} servers ready",
+            statuses.len() - failed,
+            statuses.len()
+        );
     }
-    println!(
-        "{}/{} servers ready",
-        statuses.len() - failed,
-        statuses.len()
-    );
+    let failed = statuses
+        .iter()
+        .filter(|status| status.error.is_some())
+        .count();
     Ok(if failed == 0 {
         ExitCode::SUCCESS
     } else {

@@ -1189,3 +1189,12 @@
   `[1, 4, 5]` (newest two plus the fork point) and a fork from a pruned turn
   fails with a typed error; a three-turn CLI smoke with `--keep-checkpoints 2`
   left `[2, 3]` and refused a fork from turn 1.
+
+### Plugin status as JSON
+
+- `--plugins-check --json` prints the probes as
+  `[{name, tools, error, duration_ms}]` for a configuration page, with the same
+  exit-code rule: non-zero when any server failed. `--json` without
+  `--plugins-check` is rejected.
+- Verify: `a_server_status_serializes_for_a_config_page` and a live two-server
+  probe that printed one ready entry and one failed entry.
