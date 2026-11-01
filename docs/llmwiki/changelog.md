@@ -1517,3 +1517,20 @@
 - Verify: `the_tui_requires_an_interactive_terminal` and the 11 `tui::tests`
   reducer/render tests; 334 workspace tests (270 kernel-only). Task doc:
   `docs/llmwiki/tasks/tui.md`. A real-terminal smoke run is still manual.
+
+### Result-only turn view
+
+- A finished turn now hides its process: the streamed assistant text, tool
+  lines and in-turn notices are dropped, and the transcript keeps the user
+  message, the final answer and one aggregate line
+  (`1 tool · 1 file · 15 in / 5 out · 12 ms`). The running turn still shows
+  live text and tool status; the collapse happens when the outcome arrives.
+- The permission prompt moved inline above the input instead of a centered
+  modal, matching the conversation flow.
+- New goldens: `tui-result.txt`, `tui-prompt.txt`; `tui-empty.txt` and
+  `tui-streaming.txt` updated for the card prefixes (`›`, `⏺`, `⎿`) and the
+  usage segment in the status line.
+- Verify: `a_finished_turn_hides_its_process`,
+  `a_finished_turn_renders_only_the_result_and_its_fields`,
+  `the_permission_prompt_is_inline`, and 336 workspace tests (270
+  kernel-only). Task doc: `docs/llmwiki/tasks/tui.md`.

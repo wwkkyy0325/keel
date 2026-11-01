@@ -202,6 +202,9 @@ cargo run -p keel-cli -- --tui --profile variants/coding/profile.deepseek.toml \
 - `Enter` sends; `Ctrl-C` cancels a running turn (quits when idle);
   `PgUp`/`PgDn` scroll; `Ctrl-L` clears the transcript.
 - `/help`, `/clear`, `/cost`, `/sessions`, `/cancel`, `/quit`.
+- While a turn runs, streamed text and tool lines are visible. When it
+  finishes they collapse to the answer plus one aggregate line (`tools ·
+  files · tokens · duration`), so the transcript keeps results, not process.
 - Start with `--store` and `--session-id` to resume; the header shows the
   profile, model, session and permission level.
 

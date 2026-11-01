@@ -28,6 +28,15 @@ no markdown rendering, syntax highlighting, mouse or model picker.
 - [x] Turn completion saves through the existing store, clears the event stream
       and updates usage. Verify: the existing session persistence tests plus
       `a_session_persists_every_turn_after_the_event_log_is_cleared`.
+- [x] A finished turn hides its process: streamed text, tool lines and notices
+      are dropped, and the transcript keeps the user message, the answer and
+      one aggregate line (`tools · files · tokens · duration`). Verify:
+      `a_finished_turn_hides_its_process`,
+      `a_finished_turn_renders_only_the_result_and_its_fields`, golden
+      `tui-result.txt`.
+- [x] The permission prompt is inline above the input rather than a centered
+      modal. Verify: `the_permission_prompt_is_inline`, golden
+      `tui-prompt.txt`.
 - [ ] Real-terminal smoke (raw mode restore, resize, Ctrl-C) is manual; CI
       cannot open a TTY.
 
