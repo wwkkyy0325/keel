@@ -65,6 +65,9 @@ derived project; publishing the kernel is not required for personal use.
   decoded answers, a typed memory timeline and turn paging.
 - MCP plugins over stdio and streamable HTTP, `--plugins-check [--json]`,
   roots/ping replies and process-tree cleanup.
+- Bounded tool execution: command output keeps a head and tail (64 KiB per
+  stream) instead of buffering everything, `read_file` refuses files over
+  8 MiB, and a timed-out or cancelled command kills its process tree.
 - Per-call usage and cache telemetry, plus a cost model in
   `docs/llmwiki/cache-economics.md`.
 
@@ -154,6 +157,18 @@ Keel uses two permission levels: `workspace_auto` is the logical sandbox and
 Deletion is recoverable through the trash; interactions (questions, plan
 approval, permission confirmation and escalation) are kernel primitives, not
 domain tools. See ADR 0002 and ADR 0003.
+
+Tool calls stop at 30 s and the turn at 180 s. A first build or `npm install`
+may need more; raise the limits with `--tool-timeout-ms` and
+`--turn-timeout-ms`:
+
+```bash
+cargo run -p keel-cli -- --profile variants/coding/profile.deepseek.toml \
+  --tool-timeout-ms 300000 --turn-timeout-ms 900000 --input "run the full suite"
+```
+
+A timed-out or cancelled command is killed with the processes it started, so a
+stray server does not keep a port after the turn.
 
 ## Store, branches and views
 

@@ -31,6 +31,7 @@ claim of failure.
 | Companion personas | Per-turn rule checks, three memory probes | Five personas, 20 turns each, one process per persona | None | No |
 | Performance gates | Release tests: turn, context, dispatch, recall, enqueue, 500-turn stress, event persistence | Local release run | None | No |
 | M4 plugins | Schema mapping and description, roots/ping replies over stdio and HTTP, mock HTTP MCP server, process-tree kill | Filesystem, memory, Python SQLite probe and call with a roots round-trip | None | No |
+| Resource bounds | 16 MiB capture, 200 kB real command, sparse 9 MiB `read_file`, shell timeout, descendant kill | Python fixture, Windows | None | No |
 
 ## Fusion evidence
 

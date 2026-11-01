@@ -26,6 +26,10 @@ First complete kernel and reference host.
   the kernel event stream as structured data.
 - Versioned session snapshots (`SNAPSHOT_VERSION = 1`); a newer format is
   refused rather than misread.
+- Bounded command execution: both pipes are streamed into a head and tail
+  (64 KiB per stream) instead of being buffered in full; a timeout or
+  cancellation kills the process tree; `read_file` refuses files over 8 MiB
+  before reading them.
 
 ### Reference host
 
@@ -37,6 +41,8 @@ First complete kernel and reference host.
 - MCP plugins over stdio and streamable HTTP, schema mapping, roots/ping
   replies, process-tree cleanup and `--plugins-check [--json]`.
 - Cache and usage telemetry; cost model in `docs/llmwiki/cache-economics.md`.
+- `--tool-timeout-ms` overrides the per-tool timeout for long builds; the shell
+  tool uses the same value the dispatcher enforces.
 
 ### Performance
 

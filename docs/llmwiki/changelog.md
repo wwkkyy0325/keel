@@ -1424,3 +1424,25 @@
   0.004/0.020 ms, recall 0.090/0.169 ms; 500 turns in 13.8 ms. Report:
   `evals/reports/2026-11-04-kernel-performance.md`; task doc:
   `docs/llmwiki/tasks/performance.md`.
+
+### Resource bounds for tool execution
+
+- `command::run` now drains stdout and stderr while the process runs and keeps
+  at most 64 KiB per stream: a 48 KiB head and a 16 KiB tail, with the omitted
+  byte count in between. A command that prints without end can no longer fill
+  memory before the timeout.
+- `TreeGuard` kills the whole process tree when the command is cancelled or
+  times out. Windows uses `taskkill /T /F`; Unix runs the child in its own
+  process group and signals the group. A completed command is not killed, so a
+  program that detaches on purpose still leaves its descendants.
+- `read_file` checks the file size first and refuses anything over 8 MiB with
+  `InvalidArguments`, instead of reading it and returning a tool error later.
+- `ShellTool` takes its timeout from the host instead of a hard-coded 60 s that
+  the 30 s dispatcher timeout always beat. `--tool-timeout-ms` overrides the
+  dispatcher limit for long builds; `--turn-timeout-ms` still caps the turn.
+- Verify: `a_capture_keeps_a_bounded_head_and_tail`,
+  `a_large_output_is_truncated_and_bounded`,
+  `a_timeout_takes_the_descendants_with_it`,
+  `read_file_refuses_a_file_over_the_limit`, `shell_stops_at_its_own_timeout`,
+  and 309 workspace tests (262 kernel-only). Task doc:
+  `docs/llmwiki/tasks/resource-safety.md`.
