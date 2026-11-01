@@ -1246,3 +1246,7 @@
 - Tests in `hosts/keel-cli/src/view.rs` cover the list, both the parent and the
   branch view, every panel, repeat output, and the missing-session case; a CLI
   smoke ran both views against the memory store.
+- Task doc: `docs/llmwiki/tasks/frontend-views.md` tracks the remaining
+  composed panels (turn detail with decoded context snapshots, typed memory
+  timeline, long-session limits, golden files) and the rule that a screen
+  field lands with its view and test.
