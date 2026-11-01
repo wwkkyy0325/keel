@@ -201,6 +201,10 @@ cargo run -p keel-cli -- --tui --profile variants/coding/profile.deepseek.toml \
 
 - `Enter` sends; `Ctrl-C` cancels a running turn (quits when idle);
   `PgUp`/`PgDn` scroll; `Ctrl-L` clears the transcript.
+- In a permission prompt, `↑`/`↓` selects an option and `Enter` confirms
+  (default: Allow once); `Esc` defers. `d`/`a`/`s`/`f` remain shortcuts.
+- `Tab` or `Shift+Tab` switches `workspace_auto` ↔ `full_auto`; the header
+  shows the current mode.
 - `/help`, `/clear`, `/cost`, `/sessions`, `/cancel`, `/quit`.
 - While a turn runs, streamed text and tool lines are visible. When it
   finishes they collapse to the answer plus one aggregate line (`tools ·

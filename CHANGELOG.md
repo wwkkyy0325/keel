@@ -69,6 +69,11 @@ First complete kernel and reference host.
 - `--demo` (mock provider only) paces a scripted turn: preamble, a `shell`
   permission prompt, a two-second command, then an answer streamed piece by
   piece, so the streaming and approval paths can be seen without a model key.
+- Permission prompts list every option vertically; `↑`/`↓` selects and `Enter`
+  confirms, with the default on Allow once. `Tab`/`Shift+Tab` switches the
+  session between `workspace_auto` and `full_auto`, reflected in the header;
+  the driver exposes `escalate_full_auto` and `revoke_permission_grants` for
+  that host switch.
 
 ### Performance
 

@@ -37,6 +37,13 @@ no markdown rendering, syntax highlighting, mouse or model picker.
 - [x] The permission prompt is inline above the input rather than a centered
       modal. Verify: `the_permission_prompt_is_inline`, golden
       `tui-prompt.txt`.
+- [x] Prompt options are a vertical list: `↑`/`↓` selects, `Enter` confirms,
+      the default is Allow once, and letters remain shortcuts. Verify:
+      `arrows_select_a_scope_and_enter_confirms_it`.
+- [x] `Tab`/`Shift+Tab` switches the session mode; the header is the single
+      place that shows it. The driver exposes `escalate_full_auto` and
+      `revoke_permission_grants`. Verify: `tab_requests_a_mode_toggle`; the
+      grant primitives are covered by the permission tests.
 - [x] `--demo` (mock only) gives the UI something to show: a preamble, a
       `shell` call that waits two seconds, and an answer streamed in six-char
       pieces. A `Paced` model wrapper delays chunks; `DemoModel` alternates a

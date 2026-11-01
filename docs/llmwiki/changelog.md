@@ -1549,3 +1549,18 @@
   `the_demo_script_runs_a_sleeping_shell_tool`, and 338 workspace tests (270
   kernel-only). The demo needs a terminal, so the end-to-end check is manual.
   Task doc: `docs/llmwiki/tasks/tui.md`.
+
+### Selectable permission prompt and mode switch
+
+- The inline permission prompt is now a vertical option list: `↑`/`↓` moves,
+  `Enter` confirms, the default selection is `Allow once`, and `d`/`a`/`s`/`f`
+  stay as shortcuts. Prompt text is split on its newlines and the panel height
+  accounts for wrapped lines, so the command no longer runs into the reason.
+- `Tab` and `Shift+Tab` toggle the session between `workspace_auto` and
+  `full_auto`; the header is the single mode indicator. The driver gained
+  `escalate_full_auto(ttl)` and `revoke_permission_grants()` for hosts that
+  offer the switch; the same grant path and expiry still apply.
+- Verify: `arrows_select_a_scope_and_enter_confirms_it`,
+  `tab_requests_a_mode_toggle`, `the_permission_prompt_is_inline`, updated
+  goldens, and 340 workspace tests (270 kernel-only). Task doc:
+  `docs/llmwiki/tasks/tui.md`.
