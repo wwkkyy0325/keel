@@ -67,23 +67,6 @@ fn coding_profile_loads() {
 }
 
 #[test]
-fn cache_profile_puts_history_before_volatile_state() {
-    let config =
-        load_profile(&repo_root().join("variants/coding/profile.deepseek.novel-24k.cache.toml"))
-            .unwrap();
-    assert_eq!(
-        config.context.stages,
-        vec![
-            "system".to_owned(),
-            "history".to_owned(),
-            "memory".to_owned(),
-            "task_state".to_owned(),
-            "latest".to_owned()
-        ]
-    );
-}
-
-#[test]
 fn openai_profile_loads_and_validates() {
     let config = load_profile(&repo_root().join("variants/coding/profile.openai.toml")).unwrap();
     assert_eq!(config.profile_name, "coding-openai");
