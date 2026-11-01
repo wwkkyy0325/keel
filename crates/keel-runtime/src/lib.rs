@@ -41,8 +41,8 @@ pub use summarizer::{
     MEMO_BUDGET_CEILING, MEMO_BUDGET_FLOOR, SUMMARY_INPUT_MARGIN,
 };
 pub use tools::{
-    CodeSearchTool, EchoTool, ListDirTool, ListTrashTool, ReadFileTool, RestoreFileTool, ShellTool,
-    TodoTool, WriteFileTool,
+    CodeSearchTool, DeleteFileTool, EchoTool, ListDirTool, ListTrashTool, MakeDirTool,
+    MoveFileTool, ReadFileTool, RestoreFileTool, ShellTool, TodoTool, WriteFileTool,
 };
 pub use trash::{LocalTrashStore, TrashEntry, TrashStore};
 pub use verification::AcceptanceVerifier;

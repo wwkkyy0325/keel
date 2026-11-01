@@ -12,10 +12,10 @@ use keel_core::{
     PermissionLevel, Policy, PromotionMode, TurnId, TurnState, VerificationMode,
 };
 use keel_runtime::{
-    validate_config, CodeSearchTool, ContextBuilder, DeferAllInteractionPort, EchoTool, EventLog,
-    HistoryStage, InteractionBroker, LatestStage, ListDirTool, LocalTrashStore, MemoryStage,
-    PermissionEngine, ReadFileTool, RuntimeConfig, SystemStage, ToolRegistry, TurnDriver,
-    TurnDriverConfig, TurnLimits, WriteFileTool,
+    validate_config, CodeSearchTool, ContextBuilder, DeferAllInteractionPort, DeleteFileTool,
+    EchoTool, EventLog, HistoryStage, InteractionBroker, LatestStage, ListDirTool, LocalTrashStore,
+    MakeDirTool, MemoryStage, MoveFileTool, PermissionEngine, ReadFileTool, RuntimeConfig,
+    SystemStage, ToolRegistry, TurnDriver, TurnDriverConfig, TurnLimits, WriteFileTool,
 };
 
 pub fn runtime_config(
@@ -60,6 +60,7 @@ pub fn standard_registry(root: &Path) -> Arc<ToolRegistry> {
     registry.register(Arc::new(EchoTool::new())).unwrap();
     registry.register(Arc::new(ReadFileTool::new())).unwrap();
     registry.register(Arc::new(ListDirTool::new())).unwrap();
+    registry.register(Arc::new(MakeDirTool::new())).unwrap();
     registry.register(Arc::new(CodeSearchTool::new())).unwrap();
     registry
         .register(Arc::new(keel_runtime::ShellTool::coding_defaults()))
@@ -68,6 +69,12 @@ pub fn standard_registry(root: &Path) -> Arc<ToolRegistry> {
         Arc::new(LocalTrashStore::new(root.to_path_buf()));
     registry
         .register(Arc::new(WriteFileTool::new(trash.clone())))
+        .unwrap();
+    registry
+        .register(Arc::new(MoveFileTool::new(trash.clone())))
+        .unwrap();
+    registry
+        .register(Arc::new(DeleteFileTool::new(trash.clone())))
         .unwrap();
     registry
         .register(Arc::new(keel_runtime::ListTrashTool::new(trash.clone())))

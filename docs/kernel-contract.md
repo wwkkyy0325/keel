@@ -41,6 +41,15 @@ Stable within a major version:
   A tool declared `read_only` may only declare read access; the dispatcher
   rejects a write or execute request before the permission gate runs, so the
   concurrent read batch cannot hide a mutation.
+- Path confinement: before the gate, the dispatcher canonicalizes every
+  declared path (for a write target that does not exist yet, through its
+  deepest existing ancestor), so a symlink inside the workspace cannot point
+  the check outside it. `..` never climbs above the drive or filesystem root.
+  A dangling symlink is refused. The exception is `.keel/outputs`, which is
+  readable so a truncated tool result can be re-read; the rest of `.keel` is
+  denied and the exception never allows a write. This is a permission
+  boundary, not an OS sandbox: an approved command or MCP server is not
+  confined.
 - Built-in tool resource bounds: command output is captured as a bounded head
   and tail (64 KiB per stream), `read_file` refuses a file over 8 MiB, and a
   timed-out or cancelled command kills its process tree. A host may wrap the
@@ -148,6 +157,8 @@ with its UI, and does not need the reference CLI.
 | Event order for a tool turn | `a_tool_turn_emits_the_host_contract_events_in_order` |
 | `InteractionPort` | `crates/keel-runtime/tests/interactions.rs` |
 | `PermissionGate` | `crates/keel-runtime` permission unit tests; `permission_decisions_are_recorded_as_events` |
+| Path confinement | `a_symlink_cannot_read_outside_the_workspace`, `a_symlink_cannot_write_outside_the_workspace`, `parent_components_do_not_pop_the_filesystem_root` |
+| Tool output spill | `reading_a_spilled_output_is_allowed`, `the_rest_of_keel_stays_denied` |
 | `Summarizer` | `crates/keel-runtime` summarizer unit tests |
 | `TrashStore` | `crates/keel-runtime` trash unit tests |
 | Session snapshot | `a_snapshot_restores_the_derived_state`, `a_snapshot_from_a_newer_format_is_rejected` |

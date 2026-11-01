@@ -18,12 +18,12 @@ use keel_core::{
 };
 use keel_model_openai::{OpenAiConfig, OpenAiProvider};
 use keel_runtime::{
-    load_profile, validate_config, AcceptanceVerifier, CodeSearchTool, ContextBuilder, EchoTool,
-    EventLog, HistoryStage, InteractionBroker, KernelOptions, LatestStage, ListDirTool,
-    ListTrashTool, LocalTrashStore, MemoryStage, MockModel, MockStep, PermissionEngine,
-    ProviderSummarizer, ReadFileTool, RestoreFileTool, RuntimeConfig, ShellTool, Summarizer,
-    SystemStage, TaskStateStage, TodoTool, ToolRegistry, TrashStore, TurnDriver, TurnDriverConfig,
-    TurnOutcome, WriteFileTool,
+    load_profile, validate_config, AcceptanceVerifier, CodeSearchTool, ContextBuilder,
+    DeleteFileTool, EchoTool, EventLog, HistoryStage, InteractionBroker, KernelOptions,
+    LatestStage, ListDirTool, ListTrashTool, LocalTrashStore, MakeDirTool, MemoryStage, MockModel,
+    MockStep, MoveFileTool, PermissionEngine, ProviderSummarizer, ReadFileTool, RestoreFileTool,
+    RuntimeConfig, ShellTool, Summarizer, SystemStage, TaskStateStage, TodoTool, ToolRegistry,
+    TrashStore, TurnDriver, TurnDriverConfig, TurnOutcome, WriteFileTool,
 };
 use terminal::TerminalInteractionPort;
 
@@ -373,11 +373,14 @@ async fn run() -> Result<ExitCode, KernelError> {
     registry.register(Arc::new(EchoTool::new()))?;
     registry.register(Arc::new(ReadFileTool::new()))?;
     registry.register(Arc::new(ListDirTool::new()))?;
+    registry.register(Arc::new(MakeDirTool::new()))?;
     registry.register(Arc::new(CodeSearchTool::new()))?;
     registry.register(Arc::new(
         ShellTool::coding_defaults().with_timeout(limits.tool_timeout),
     ))?;
     registry.register(Arc::new(WriteFileTool::new(trash.clone())))?;
+    registry.register(Arc::new(MoveFileTool::new(trash.clone())))?;
+    registry.register(Arc::new(DeleteFileTool::new(trash.clone())))?;
     registry.register(Arc::new(ListTrashTool::new(trash.clone())))?;
     registry.register(Arc::new(RestoreFileTool::new(trash)))?;
     if let Some(todos) = &todos {

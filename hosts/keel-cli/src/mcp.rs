@@ -157,6 +157,9 @@ impl McpServer {
         let mut command = Command::new(program);
         command
             .args(args)
+            // Relative paths in a server should resolve against the workspace
+            // it serves, matching the `roots` reply below.
+            .current_dir(root)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())

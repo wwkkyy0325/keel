@@ -1,12 +1,13 @@
 use std::collections::{BTreeSet, VecDeque};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use keel_core::{
-    redact_secrets, AccessKind, CancelToken, ErrorCode, Event, GrantScope, InteractionKind,
-    InteractionOption, InteractionRequest, InteractionResponse, PermissionDecision, PermissionGate,
-    PermissionRequest, RiskLevel, Tool, ToolArgs, ToolCallId, ToolCallRequest, ToolCtx, ToolError,
-    ToolResult, TurnId,
+    redact_secrets, resolve_path, simplify_path, AccessKind, CancelToken, ErrorCode, Event,
+    GrantScope, InteractionKind, InteractionOption, InteractionRequest, InteractionResponse,
+    PermissionDecision, PermissionGate, PermissionRequest, RiskLevel, Tool, ToolArgs, ToolCallId,
+    ToolCallRequest, ToolCtx, ToolError, ToolResult, TurnId,
 };
 use tokio::task::JoinSet;
 
@@ -268,6 +269,11 @@ impl ToolDispatcher {
     ) -> Result<(), ToolError> {
         let risk = tool.schema().risk;
         for mut request in tool.permission_requests(args)? {
+            // Follow symlinks before the gate compares paths: a link inside
+            // the workspace must not be approved for a target outside it.
+            if let Some(path) = request.path.take() {
+                request.path = Some(confine_path(self.permission.root(), &path).await?);
+            }
             // The registered name wins; a tool must not rename itself in an
             // audit record.
             request.tool = tool_name.to_owned();
@@ -464,6 +470,52 @@ async fn run_tool(
 
 fn elapsed_ms(duration: Duration) -> u64 {
     duration.as_millis().min(u128::from(u64::MAX)) as u64
+}
+
+/// Resolves a tool path and follows every symlink in the existing part of it.
+///
+/// The permission gate compares paths lexically, so a link inside the
+/// workspace that points outside would otherwise be approved. Canonicalizing
+/// the deepest existing ancestor also covers a write target that does not
+/// exist yet; a dangling symlink is refused instead of followed.
+async fn confine_path(root: &Path, path: &Path) -> Result<PathBuf, ToolError> {
+    let candidate = resolve_path(root, path);
+    let mut existing = candidate.as_path();
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+    loop {
+        match tokio::fs::symlink_metadata(existing).await {
+            Ok(_) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let Some(name) = existing.file_name() else {
+                    return Err(ToolError::permission_denied(format!(
+                        "cannot resolve `{}`",
+                        candidate.display()
+                    )));
+                };
+                tail.push(name.to_os_string());
+                existing = existing.parent().ok_or_else(|| {
+                    ToolError::permission_denied(format!(
+                        "cannot resolve `{}`",
+                        candidate.display()
+                    ))
+                })?;
+            }
+            Err(error) => {
+                return Err(ToolError::permission_denied(format!(
+                    "cannot resolve `{}`: {error}",
+                    candidate.display()
+                )))
+            }
+        }
+    }
+
+    let mut resolved = tokio::fs::canonicalize(existing).await.map_err(|error| {
+        ToolError::permission_denied(format!("cannot resolve `{}`: {error}", existing.display()))
+    })?;
+    for part in tail.iter().rev() {
+        resolved.push(part);
+    }
+    Ok(simplify_path(resolved))
 }
 
 /// Bytes of tool output kept for a live UI. The field is skipped during

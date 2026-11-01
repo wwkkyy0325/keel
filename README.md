@@ -72,7 +72,11 @@ derived project; publishing the kernel is not required for personal use.
   PATH, so allowlisted names start without a shell.
 - Explicit undo: `list_trash` lists recoverable versions and `restore_file`
   restores the newest one, or a specific entry; the current version is backed
-  up first.
+  up first. `delete_file` backs a file up before removing it; `move_file`
+  backs up an existing destination; `make_dir` creates parents.
+- Symlink-safe paths: the dispatcher canonicalizes every requested path before
+  the permission gate, so a link inside the workspace cannot redirect a read
+  or write outside it; `..` never climbs above the root.
 - Per-call usage and cache telemetry, plus a cost model in
   `docs/llmwiki/cache-economics.md`.
 
@@ -147,9 +151,9 @@ cargo run -p keel-cli -- --profile variants/coding/profile.openai.toml --input "
 The CLI loads `.env` automatically. Credentials stay in `.env`, never in the
 chat or a profile; the OS keyring is not wired yet.
 
-The workspace defaults to the current directory. Use `--workspace PATH` to run
-against a separate eval workspace while still loading `.env` and the profile
-from this repository:
+The workspace defaults to the current directory: start the CLI in the folder
+you want it to work in. `--workspace PATH` is for scripts and evals that run
+from another directory while still loading `.env` and the profile here:
 
 ```bash
 cargo run -p keel-cli -- \
@@ -158,11 +162,14 @@ cargo run -p keel-cli -- \
   --input "fix the mean function"
 ```
 
-Keel uses two permission levels: `workspace_auto` is the logical sandbox and
-`full_auto` removes the workspace boundary while keeping the hard deny list.
-Deletion is recoverable through the trash; interactions (questions, plan
-approval, permission confirmation and escalation) are kernel primitives, not
-domain tools. See ADR 0002 and ADR 0003.
+Keel uses two permission levels: `workspace_auto` is the permission boundary
+and `full_auto` removes the workspace boundary while keeping the hard deny
+list. It gates tool calls, not processes: an approved `shell` command or an
+MCP server is not confined to the workspace. Paths are canonicalized before
+the gate, so a symlink inside the workspace cannot redirect a read or write
+outside it. Deletion is recoverable through the trash; interactions
+(questions, plan approval, permission confirmation and escalation) are kernel
+primitives, not domain tools. See ADR 0002 and ADR 0003.
 
 Tool calls stop at 30 s and the turn at 180 s. A first build or `npm install`
 may need more; raise the limits with `--tool-timeout-ms` and
@@ -186,9 +193,15 @@ not mean rebuilding the file or running destructive git commands:
 - `restore_file` with `path` restores the newest backup for that file; with
   `entry` it restores a specific version. The current version is backed up
   first, so a restore is itself reversible.
+- `delete_file` copies a regular file into the trash before removing it, so a
+  deletion is recoverable.
+- `move_file` moves a file or directory on one volume; an existing destination
+  file is backed up first. Moving it back is the inverse operation.
+- `make_dir` creates a directory and any missing parents; it is idempotent.
 
-Shell commands can still modify files without a backup; use `write_file` for
-edits that must be undoable.
+Shell commands can still modify or delete files without a backup; use the
+typed file tools for edits that must be undoable. `.keel/outputs` is readable
+so a truncated tool result can be re-read; the rest of `.keel` stays denied.
 
 ## Terminal UI
 

@@ -138,8 +138,10 @@ cancellation and interjection distinct. See ADR 0010.
 ## Permissions
 
 - Two levels: `workspace_auto` and `full_auto`.
-- `workspace_auto` is the logical sandbox: actions inside the workspace run
-  automatically; outside actions require confirmation.
+- `workspace_auto` is the permission boundary: actions inside the workspace
+  run automatically; outside actions require confirmation. It gates tool
+  calls, not processes: an approved `shell` command or MCP server is not
+  confined to the workspace.
 - `full_auto` removes the workspace boundary but never the hard deny list.
 - The deny list covers system/privileged paths, credential stores, secret
   files, other users' homes, privilege escalation, destructive storage
@@ -154,11 +156,19 @@ cancellation and interjection distinct. See ADR 0010.
   call, allow a path prefix, or escalate the session to `full_auto`. Path
   grants and escalation carry a TTL and can be revoked; only the user or host
   approves, and grants never bypass the deny list.
-- Deletion is soft: the target moves to a `TrashStore`. Overwrite backs up the
-  previous version first. A failed trash operation aborts; there is no hard
-  delete fallback. The agent never empties or restores the trash.
-- Path scan covers absolute paths, traversal, deny patterns and later symlink
-  and admin hardening.
+- Deletion is soft: the target is copied into a `TrashStore` before removal.
+  Overwrite backs up the previous version first. A failed trash operation
+  aborts; there is no hard delete fallback. The agent never empties the trash;
+  a restore is itself backed up.
+- Path scan covers absolute paths and traversal; `..` never climbs above the
+  drive or filesystem root. Before the gate, the dispatcher canonicalizes the
+  requested path (including a not-yet-existing write target, through its
+  deepest existing ancestor), so a symlink inside the workspace cannot point
+  the check outside it. A dangling symlink is refused.
+- `.keel/outputs` is readable so truncated tool output can be re-read; the
+  rest of `.keel` stays denied, and the exception never permits a write.
+- This is a permission boundary, not an OS sandbox. Container/seatbelt/job
+  confinement of commands and plugins is a host option, not a kernel claim.
 - Audit is always on; it is not sampled and not optional.
 
 ## Secrets

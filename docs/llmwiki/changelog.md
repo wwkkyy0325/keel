@@ -1625,3 +1625,20 @@
 - Verify: `a_fractional_number_switches_to_json_mode`,
   `a_read_only_tool_may_not_request_write_access`, and the full suite.
   Task doc: `docs/llmwiki/tasks/tool-contract-hardening.md`.
+
+### Sandbox boundary and file tools
+
+- The dispatcher canonicalizes every declared path before the permission gate.
+  A symlink inside the workspace can no longer redirect a read or write
+  outside it; a missing write target is resolved through its deepest existing
+  ancestor, and a dangling symlink is refused.
+- `..` no longer climbs above the drive or filesystem root. The old
+  normalization could turn an escape into a relative path that later resolved
+  against the process cwd.
+- `.keel/outputs` is readable so truncated tool output can be re-read. The
+  rest of `.keel` stays denied and the exception is read-only.
+- MCP servers spawn with the workspace as their working directory.
+- New built-in tools `make_dir`, `move_file` and `delete_file`; delete copies
+  to the trash first, move backs up an existing destination.
+- Verify: the symlink, normalization and spill tests, `file_tool_tests`, the
+  full workspace suite and a terminal smoke run.

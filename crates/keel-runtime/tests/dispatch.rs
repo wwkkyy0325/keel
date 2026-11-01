@@ -13,7 +13,8 @@ use keel_core::{
     ToolCallId, ToolCallRequest, ToolCtx, ToolError, ToolResult, ToolSchema, TurnId,
 };
 use keel_runtime::{
-    EchoTool, EventLog, InteractionBroker, PermissionEngine, ToolDispatcher, ToolRegistry,
+    EchoTool, EventLog, InteractionBroker, LocalTrashStore, PermissionEngine, ReadFileTool,
+    ToolDispatcher, ToolRegistry, TrashStore, WriteFileTool,
 };
 
 #[derive(Default)]
@@ -128,6 +129,90 @@ impl Tool for MislabelledTool {
         self.called.fetch_add(1, Ordering::SeqCst);
         ToolResult::success(ctx.call_id, "mislabelled", "ok")
     }
+}
+
+/// Returns false when the platform refuses to create a symlink (for example,
+/// Windows without Developer Mode), so the escape test can skip.
+fn symlink_file(original: &Path, link: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(original, link).is_ok()
+    }
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_file(original, link).is_ok()
+    }
+}
+
+#[tokio::test]
+async fn a_symlink_cannot_read_outside_the_workspace() {
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(outside.path(), "secret").unwrap();
+    let link = dir.path().join("link.txt");
+    if !symlink_file(outside.path(), &link) {
+        return;
+    }
+
+    let registry = registry(vec![Arc::new(ReadFileTool::new())]);
+    let (dispatcher, _events) = dispatcher(
+        registry,
+        dir.path(),
+        Duration::from_secs(1),
+        PermissionLevel::WorkspaceAuto,
+    );
+    let mut args = ToolArgs::new();
+    args.insert("path", ArgValue::String("link.txt".to_owned()));
+    let results = dispatcher
+        .dispatch(
+            TurnId::new(1),
+            vec![call(1, "read_file", args)],
+            &visible(&["read_file"]),
+            &CancelToken::new(),
+        )
+        .await;
+
+    assert_eq!(
+        results[0].error().map(|error| error.code),
+        Some(ErrorCode::PermissionDenied)
+    );
+}
+
+#[tokio::test]
+async fn a_symlink_cannot_write_outside_the_workspace() {
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(outside.path(), "original").unwrap();
+    let link = dir.path().join("link.txt");
+    if !symlink_file(outside.path(), &link) {
+        return;
+    }
+
+    let trash: Arc<dyn TrashStore> = Arc::new(LocalTrashStore::new(dir.path().to_path_buf()));
+    let registry = registry(vec![Arc::new(WriteFileTool::new(trash))]);
+    let (dispatcher, _events) = dispatcher(
+        registry,
+        dir.path(),
+        Duration::from_secs(1),
+        PermissionLevel::WorkspaceAuto,
+    );
+    let mut args = ToolArgs::new();
+    args.insert("path", ArgValue::String("link.txt".to_owned()));
+    args.insert("content", ArgValue::String("changed".to_owned()));
+    let results = dispatcher
+        .dispatch(
+            TurnId::new(1),
+            vec![call(1, "write_file", args)],
+            &visible(&["write_file"]),
+            &CancelToken::new(),
+        )
+        .await;
+
+    assert_eq!(
+        results[0].error().map(|error| error.code),
+        Some(ErrorCode::PermissionDenied)
+    );
+    assert_eq!(std::fs::read_to_string(outside.path()).unwrap(), "original");
 }
 
 fn registry(tools: Vec<Arc<dyn Tool>>) -> Arc<ToolRegistry> {

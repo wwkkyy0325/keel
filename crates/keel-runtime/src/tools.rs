@@ -131,6 +131,317 @@ impl Tool for ReadFileTool {
     }
 }
 
+/// Creates a directory and any missing parents.
+pub struct MakeDirTool;
+
+impl MakeDirTool {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for MakeDirTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl Tool for MakeDirTool {
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "make_dir".to_owned(),
+            description: "Create a directory and any missing parents.".to_owned(),
+            risk: RiskLevel::Mutating,
+            params: vec![ParamSpec {
+                name: "path".to_owned(),
+                kind: ParamKind::String,
+                required: true,
+            }],
+        }
+    }
+
+    fn permission_requests(&self, args: &ToolArgs) -> Result<Vec<PermissionRequest>, ToolError> {
+        let path = args.require_str("path")?;
+        Ok(vec![PermissionRequest {
+            tool: "make_dir".to_owned(),
+            access: AccessKind::Write,
+            path: Some(PathBuf::from(path)),
+            detail: None,
+        }])
+    }
+
+    async fn call(&self, args: ToolArgs, ctx: &ToolCtx) -> ToolResult {
+        if ctx.cancel.is_cancelled() {
+            return ToolResult::failure(ctx.call_id, "make_dir", ToolError::cancelled());
+        }
+        let path = match args.require_str("path") {
+            Ok(path) => path,
+            Err(error) => return ToolResult::failure(ctx.call_id, "make_dir", error),
+        };
+        let resolved = resolve_path(&ctx.workspace_root, Path::new(path));
+
+        match tokio::fs::metadata(&resolved).await {
+            Ok(metadata) if metadata.is_dir() => ToolResult::success(
+                ctx.call_id,
+                "make_dir",
+                format!("{} already exists", resolved.display()),
+            ),
+            Ok(_) => ToolResult::failure(
+                ctx.call_id,
+                "make_dir",
+                ToolError::invalid_arguments(format!(
+                    "`{}` exists and is not a directory",
+                    resolved.display()
+                )),
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                match tokio::fs::create_dir_all(&resolved).await {
+                    Ok(()) => ToolResult::success(
+                        ctx.call_id,
+                        "make_dir",
+                        format!("created {}", resolved.display()),
+                    ),
+                    Err(error) => ToolResult::failure(ctx.call_id, "make_dir", io_error(&error)),
+                }
+            }
+            Err(error) => ToolResult::failure(ctx.call_id, "make_dir", io_error(&error)),
+        }
+    }
+}
+
+/// Deletes one regular file after copying it into the trash.
+pub struct DeleteFileTool {
+    trash: Arc<dyn TrashStore>,
+}
+
+impl DeleteFileTool {
+    pub fn new(trash: Arc<dyn TrashStore>) -> Self {
+        Self { trash }
+    }
+}
+
+#[async_trait]
+impl Tool for DeleteFileTool {
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "delete_file".to_owned(),
+            description: "Delete one regular file; the file is copied into the trash first."
+                .to_owned(),
+            risk: RiskLevel::Mutating,
+            params: vec![ParamSpec {
+                name: "path".to_owned(),
+                kind: ParamKind::String,
+                required: true,
+            }],
+        }
+    }
+
+    fn permission_requests(&self, args: &ToolArgs) -> Result<Vec<PermissionRequest>, ToolError> {
+        let path = args.require_str("path")?;
+        Ok(vec![PermissionRequest {
+            tool: "delete_file".to_owned(),
+            access: AccessKind::Write,
+            path: Some(PathBuf::from(path)),
+            detail: None,
+        }])
+    }
+
+    async fn call(&self, args: ToolArgs, ctx: &ToolCtx) -> ToolResult {
+        if ctx.cancel.is_cancelled() {
+            return ToolResult::failure(ctx.call_id, "delete_file", ToolError::cancelled());
+        }
+        let path = match args.require_str("path") {
+            Ok(path) => path,
+            Err(error) => return ToolResult::failure(ctx.call_id, "delete_file", error),
+        };
+        let resolved = resolve_path(&ctx.workspace_root, Path::new(path));
+
+        let metadata = match tokio::fs::symlink_metadata(&resolved).await {
+            Ok(metadata) => metadata,
+            Err(error) => return ToolResult::failure(ctx.call_id, "delete_file", io_error(&error)),
+        };
+        if metadata.file_type().is_symlink() {
+            return ToolResult::failure(
+                ctx.call_id,
+                "delete_file",
+                ToolError::invalid_arguments(format!(
+                    "`{}` is a symlink; delete its target explicitly",
+                    resolved.display()
+                )),
+            );
+        }
+        if metadata.is_dir() {
+            return ToolResult::failure(
+                ctx.call_id,
+                "delete_file",
+                ToolError::invalid_arguments(format!(
+                    "`{}` is a directory; delete_file removes regular files only",
+                    resolved.display()
+                )),
+            );
+        }
+
+        let entry = match self.trash.backup(&resolved).await {
+            Ok(entry) => entry,
+            Err(error) => return ToolResult::failure(ctx.call_id, "delete_file", error),
+        };
+        match tokio::fs::remove_file(&resolved).await {
+            Ok(()) => ToolResult::success(
+                ctx.call_id,
+                "delete_file",
+                format!(
+                    "deleted {} (backup in trash as {})",
+                    resolved.display(),
+                    entry.id
+                ),
+            ),
+            Err(error) => ToolResult::failure(ctx.call_id, "delete_file", io_error(&error)),
+        }
+    }
+}
+
+/// Moves one file or directory on the same volume.
+pub struct MoveFileTool {
+    trash: Arc<dyn TrashStore>,
+}
+
+impl MoveFileTool {
+    pub fn new(trash: Arc<dyn TrashStore>) -> Self {
+        Self { trash }
+    }
+}
+
+#[async_trait]
+impl Tool for MoveFileTool {
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "move_file".to_owned(),
+            description: "Move a file or directory; an existing destination file is backed up \
+                          first. Moves stay on one volume."
+                .to_owned(),
+            risk: RiskLevel::Mutating,
+            params: vec![
+                ParamSpec {
+                    name: "from".to_owned(),
+                    kind: ParamKind::String,
+                    required: true,
+                },
+                ParamSpec {
+                    name: "to".to_owned(),
+                    kind: ParamKind::String,
+                    required: true,
+                },
+            ],
+        }
+    }
+
+    fn permission_requests(&self, args: &ToolArgs) -> Result<Vec<PermissionRequest>, ToolError> {
+        let from = args.require_str("from")?;
+        let to = args.require_str("to")?;
+        Ok(vec![
+            PermissionRequest {
+                tool: "move_file".to_owned(),
+                access: AccessKind::Write,
+                path: Some(PathBuf::from(from)),
+                detail: Some("source".to_owned()),
+            },
+            PermissionRequest {
+                tool: "move_file".to_owned(),
+                access: AccessKind::Write,
+                path: Some(PathBuf::from(to)),
+                detail: Some("destination".to_owned()),
+            },
+        ])
+    }
+
+    async fn call(&self, args: ToolArgs, ctx: &ToolCtx) -> ToolResult {
+        if ctx.cancel.is_cancelled() {
+            return ToolResult::failure(ctx.call_id, "move_file", ToolError::cancelled());
+        }
+        let from = match args.require_str("from") {
+            Ok(path) => path,
+            Err(error) => return ToolResult::failure(ctx.call_id, "move_file", error),
+        };
+        let to = match args.require_str("to") {
+            Ok(path) => path,
+            Err(error) => return ToolResult::failure(ctx.call_id, "move_file", error),
+        };
+        let source = resolve_path(&ctx.workspace_root, Path::new(from));
+        let destination = resolve_path(&ctx.workspace_root, Path::new(to));
+
+        let source_meta = match tokio::fs::symlink_metadata(&source).await {
+            Ok(metadata) => metadata,
+            Err(error) => return ToolResult::failure(ctx.call_id, "move_file", io_error(&error)),
+        };
+        if source_meta.file_type().is_symlink() {
+            return ToolResult::failure(
+                ctx.call_id,
+                "move_file",
+                ToolError::invalid_arguments(format!(
+                    "`{}` is a symlink; move its target explicitly",
+                    source.display()
+                )),
+            );
+        }
+
+        let backup = match tokio::fs::symlink_metadata(&destination).await {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "move_file",
+                    ToolError::invalid_arguments(format!(
+                        "`{}` is a symlink; choose another destination",
+                        destination.display()
+                    )),
+                )
+            }
+            Ok(metadata) if metadata.is_dir() => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "move_file",
+                    ToolError::invalid_arguments(format!(
+                        "`{}` is a directory; refusing to overwrite it",
+                        destination.display()
+                    )),
+                )
+            }
+            Ok(_) => match self.trash.backup(&destination).await {
+                Ok(entry) => Some(entry),
+                Err(error) => return ToolResult::failure(ctx.call_id, "move_file", error),
+            },
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                return ToolResult::failure(ctx.call_id, "move_file", io_error(&error));
+            }
+        };
+
+        if let Some(parent) = destination.parent() {
+            if let Err(error) = tokio::fs::create_dir_all(parent).await {
+                return ToolResult::failure(ctx.call_id, "move_file", io_error(&error));
+            }
+        }
+
+        match tokio::fs::rename(&source, &destination).await {
+            Ok(()) => {
+                let note = backup
+                    .map(|entry| format!(" (previous destination in trash as {})", entry.id))
+                    .unwrap_or_default();
+                ToolResult::success(
+                    ctx.call_id,
+                    "move_file",
+                    format!(
+                        "moved {} to {}{note}",
+                        source.display(),
+                        destination.display()
+                    ),
+                )
+            }
+            Err(error) => ToolResult::failure(ctx.call_id, "move_file", io_error(&error)),
+        }
+    }
+}
+
 /// Lists one directory without following symlinks.
 pub struct ListDirTool;
 
@@ -1163,5 +1474,148 @@ mod todo_tool_tests {
 
         let result = tool.call(update, &ctx()).await;
         assert!(result.error().is_some(), "closed lists reject updates");
+    }
+}
+
+#[cfg(test)]
+mod file_tool_tests {
+    use super::*;
+    use keel_core::{CancelToken, ToolCallId, TurnId};
+
+    fn ctx(root: &Path) -> ToolCtx {
+        ToolCtx {
+            turn_id: TurnId::new(1),
+            call_id: ToolCallId::new(1),
+            workspace_root: root.to_path_buf(),
+            cancel: CancelToken::new(),
+        }
+    }
+
+    fn args(pairs: &[(&str, &str)]) -> ToolArgs {
+        let mut args = ToolArgs::new();
+        for (key, value) in pairs {
+            args.insert(*key, ArgValue::String((*value).to_owned()));
+        }
+        args
+    }
+
+    fn content(result: &ToolResult) -> &str {
+        match &result.outcome {
+            keel_core::ToolOutcome::Success { content } => content,
+            keel_core::ToolOutcome::Failure { error } => panic!("tool failed: {error}"),
+        }
+    }
+
+    fn trash(root: &Path) -> Arc<dyn TrashStore> {
+        Arc::new(crate::trash::LocalTrashStore::new(root.to_path_buf()))
+    }
+
+    #[tokio::test]
+    async fn make_dir_is_idempotent_and_refuses_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = MakeDirTool::new();
+
+        let result = tool.call(args(&[("path", "a/b")]), &ctx(dir.path())).await;
+        assert!(content(&result).contains("created"));
+        assert!(dir.path().join("a/b").is_dir());
+
+        let result = tool.call(args(&[("path", "a/b")]), &ctx(dir.path())).await;
+        assert!(content(&result).contains("already exists"));
+
+        std::fs::write(dir.path().join("file"), "x").unwrap();
+        let result = tool.call(args(&[("path", "file")]), &ctx(dir.path())).await;
+        assert!(result.error().is_some());
+    }
+
+    #[tokio::test]
+    async fn delete_file_backs_up_before_removing() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("junk.txt"), "junk").unwrap();
+        let trash = trash(dir.path());
+        let tool = DeleteFileTool::new(trash.clone());
+
+        let result = tool
+            .call(args(&[("path", "junk.txt")]), &ctx(dir.path()))
+            .await;
+
+        assert!(content(&result).contains("backup in trash as"));
+        assert!(!dir.path().join("junk.txt").exists());
+        let entries = trash.list(10).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].original.ends_with("junk.txt"));
+    }
+
+    #[tokio::test]
+    async fn delete_file_refuses_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("nested")).unwrap();
+        let tool = DeleteFileTool::new(trash(dir.path()));
+
+        let result = tool
+            .call(args(&[("path", "nested")]), &ctx(dir.path()))
+            .await;
+
+        assert!(result.error().is_some());
+        assert!(dir.path().join("nested").is_dir());
+    }
+
+    #[tokio::test]
+    async fn move_file_backs_up_an_existing_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("new.txt"), "new").unwrap();
+        std::fs::write(dir.path().join("old.txt"), "old").unwrap();
+        let tool = MoveFileTool::new(trash(dir.path()));
+
+        let result = tool
+            .call(
+                args(&[("from", "new.txt"), ("to", "old.txt")]),
+                &ctx(dir.path()),
+            )
+            .await;
+
+        assert!(content(&result).contains("moved"));
+        assert!(!dir.path().join("new.txt").exists());
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("old.txt")).unwrap(),
+            "new"
+        );
+    }
+
+    #[tokio::test]
+    async fn move_file_creates_the_destination_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "a").unwrap();
+        let tool = MoveFileTool::new(trash(dir.path()));
+
+        let result = tool
+            .call(
+                args(&[("from", "a.txt"), ("to", "nested/a.txt")]),
+                &ctx(dir.path()),
+            )
+            .await;
+
+        assert!(content(&result).contains("moved"));
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("nested/a.txt")).unwrap(),
+            "a"
+        );
+    }
+
+    #[tokio::test]
+    async fn move_file_reports_a_missing_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = MoveFileTool::new(trash(dir.path()));
+
+        let result = tool
+            .call(
+                args(&[("from", "missing.txt"), ("to", "b.txt")]),
+                &ctx(dir.path()),
+            )
+            .await;
+
+        assert_eq!(
+            result.error().map(|error| error.code),
+            Some(keel_core::ErrorCode::NotFound)
+        );
     }
 }

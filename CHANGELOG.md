@@ -45,6 +45,17 @@ First complete kernel and reference host.
 - A tool declared `read_only` may only declare read access. The dispatcher
   rejects a write or execute request before the permission gate, so a
   mislabelled tool cannot hide inside the concurrent read batch.
+- Path confinement before the gate: the dispatcher canonicalizes every
+  requested path, including a not-yet-existing write target through its
+  deepest existing ancestor, so a symlink inside the workspace cannot point a
+  read or write outside it. `..` no longer climbs above the drive or
+  filesystem root; a dangling symlink is refused.
+- `.keel/outputs` is readable so a truncated tool result can be re-read; the
+  rest of `.keel` stays denied and the exception never permits a write.
+- New built-in tools: `make_dir`, `move_file` and `delete_file`.
+  `delete_file` copies the file into the trash before removing it; `move_file`
+  backs up an existing destination and stays on one volume. The coding
+  profiles expose all three.
 
 ### Reference host
 
@@ -92,6 +103,7 @@ First complete kernel and reference host.
 - MCP `number` parameters no longer flatten to integers. The tool uses the
   single JSON `arguments` mode instead, so fractional values survive the
   kernel's integer-only parameter model.
+- MCP servers start in the workspace directory, matching the `roots` reply.
 
 ### Performance
 

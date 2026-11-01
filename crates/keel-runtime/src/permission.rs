@@ -7,11 +7,12 @@ use keel_core::{
     PermissionLevel, PermissionRequest,
 };
 
-/// Minimal M1 permission engine.
+/// Permission engine.
 ///
-/// The workspace root is the logical sandbox for `WorkspaceAuto`. `FullAuto`
-/// removes that boundary but never the hard deny list. Symlink-aware checks
-/// and the full admin/deny catalogue land with the M5 permission milestone.
+/// The workspace root is the permission boundary for `WorkspaceAuto`.
+/// `FullAuto` removes that boundary but never the hard deny list. The
+/// dispatcher canonicalizes each requested path before the gate, so a symlink
+/// inside the workspace cannot redirect the check outside it.
 pub struct PermissionEngine {
     root: PathBuf,
     base_level: PermissionLevel,
@@ -119,6 +120,13 @@ impl PermissionGate for PermissionEngine {
         };
 
         let resolved = resolve_path(&self.root, path);
+        // Truncated tool output is written to `.keel/outputs` and the model is
+        // told to read it back. The rest of `.keel` stays denied, and the
+        // exception is read-only.
+        let spill = self.root.join(".keel").join("outputs");
+        if request.access == AccessKind::Read && resolved.starts_with(&spill) {
+            return PermissionDecision::Allow;
+        }
         if is_denied(&resolved) {
             return PermissionDecision::Deny {
                 code: ErrorCode::PermissionDenied,
@@ -296,6 +304,36 @@ mod tests {
                 "{relative} must be denied"
             );
         }
+    }
+
+    #[test]
+    fn reading_a_spilled_output_is_allowed() {
+        for level in [PermissionLevel::WorkspaceAuto, PermissionLevel::FullAuto] {
+            let (engine, dir) = engine(level);
+            let path = resolve_path(
+                engine.root(),
+                &dir.path().join(".keel/outputs/turn-1-call-0.txt"),
+            );
+            assert_eq!(
+                engine.check(&request(AccessKind::Read, &path)),
+                PermissionDecision::Allow
+            );
+        }
+    }
+
+    #[test]
+    fn the_rest_of_keel_stays_denied() {
+        let (engine, dir) = engine(PermissionLevel::FullAuto);
+        let trash = resolve_path(engine.root(), &dir.path().join(".keel/trash/item"));
+        assert!(matches!(
+            engine.check(&request(AccessKind::Read, &trash)),
+            PermissionDecision::Deny { .. }
+        ));
+        let output = resolve_path(engine.root(), &dir.path().join(".keel/outputs/item"));
+        assert!(matches!(
+            engine.check(&request(AccessKind::Write, &output)),
+            PermissionDecision::Deny { .. }
+        ));
     }
 
     #[test]

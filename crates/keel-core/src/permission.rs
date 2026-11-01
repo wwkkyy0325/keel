@@ -68,8 +68,9 @@ pub trait PermissionGate: Send + Sync {
 }
 
 /// Resolves a tool path against the workspace root and normalizes it without
-/// touching the filesystem. Symlink-aware resolution is a later hardening
-/// step; lexical normalization is enough to stop `..` traversal here.
+/// touching the filesystem. `..` never climbs above the drive or filesystem
+/// root. The dispatcher canonicalizes the result before the permission gate,
+/// so a symlink inside the workspace cannot point the check at another path.
 pub fn resolve_path(root: &Path, path: &Path) -> PathBuf {
     let candidate = if path.is_absolute() {
         path.to_path_buf()
@@ -96,21 +97,86 @@ pub fn simplify_path(path: PathBuf) -> PathBuf {
 }
 
 fn normalize(path: &Path) -> PathBuf {
-    let mut parts: Vec<std::ffi::OsString> = Vec::new();
+    enum Piece {
+        Prefix(std::ffi::OsString),
+        Root(std::ffi::OsString),
+        Normal(std::ffi::OsString),
+    }
+
+    let mut parts: Vec<Piece> = Vec::new();
     for component in path.components() {
         match component {
             Component::CurDir => {}
             Component::ParentDir => {
-                parts.pop();
+                // Only a normal component can be popped. Popping the drive or
+                // filesystem root would turn an absolute path into a relative
+                // one, which would then resolve against the process cwd.
+                if matches!(parts.last(), Some(Piece::Normal(_))) {
+                    parts.pop();
+                }
             }
-            Component::Prefix(prefix) => parts.push(prefix.as_os_str().to_os_string()),
-            Component::RootDir => parts.push(component.as_os_str().to_os_string()),
-            Component::Normal(part) => parts.push(part.to_os_string()),
+            Component::Prefix(prefix) => {
+                parts.push(Piece::Prefix(prefix.as_os_str().to_os_string()));
+            }
+            Component::RootDir => parts.push(Piece::Root(component.as_os_str().to_os_string())),
+            Component::Normal(part) => parts.push(Piece::Normal(part.to_os_string())),
         }
     }
     let mut normalized = PathBuf::new();
     for part in parts {
-        normalized.push(part);
+        match part {
+            Piece::Prefix(value) | Piece::Root(value) | Piece::Normal(value) => {
+                normalized.push(value);
+            }
+        }
     }
     normalized
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parent_components_do_not_pop_the_filesystem_root() {
+        #[cfg(windows)]
+        let (root, expected) = (Path::new(r"C:\ws\proj"), Path::new(r"C:\etc"));
+        #[cfg(not(windows))]
+        let (root, expected) = (Path::new("/ws/proj"), Path::new("/etc"));
+
+        assert_eq!(resolve_path(root, Path::new("../../../etc")), expected);
+    }
+
+    #[test]
+    fn an_absolute_path_keeps_its_drive_and_root() {
+        #[cfg(windows)]
+        {
+            assert_eq!(
+                resolve_path(Path::new(r"C:\ws"), Path::new(r"C:\..\Windows")),
+                PathBuf::from(r"C:\Windows")
+            );
+        }
+        #[cfg(not(windows))]
+        {
+            assert_eq!(
+                resolve_path(Path::new("/ws"), Path::new("/../etc")),
+                PathBuf::from("/etc")
+            );
+        }
+    }
+
+    #[test]
+    fn inner_parent_components_still_collapse() {
+        #[cfg(windows)]
+        let root = Path::new(r"C:\ws");
+        #[cfg(not(windows))]
+        let root = Path::new("/ws");
+
+        #[cfg(windows)]
+        let expected = PathBuf::from(r"C:\ws\b");
+        #[cfg(not(windows))]
+        let expected = PathBuf::from("/ws/b");
+
+        assert_eq!(resolve_path(root, Path::new("a/../b")), expected);
+    }
 }
