@@ -19,12 +19,27 @@ The kernel exposes a snapshot; the host decides where it lives.
       Verify: two processes on one store: the second saw `history: detail=1`,
       `tasks: done=1 current=#2`, and answered a chapter-1 probe without
       reading files.
-- [ ] Queryable segment, record, summary and fact tables for a frontend.
-      Today they are inside the snapshot JSON.
+- [x] Project the snapshot into queryable tables: `segments`,
+      `segment_entries`, `records`, `session_summaries`, `summary_covers`,
+      `facts`, `todos`, and the `session_current` view. Verify: a live turn
+      projected 1 segment, 8 entries, 2 tasks and a correct view row; a second
+      save replaces rows without duplication.
+- [ ] `fact_history` and `todo_history`; today the snapshot keeps current state,
+      not the superseded history.
 - [ ] Fault injection: a crash mid-turn leaves the previous turn intact; a
       corrupt snapshot fails with a typed error, not a panic.
 - [ ] Multi-session memory evaluation on top of the store (LongMemEval-style
       extraction, update, temporal, abstention).
+
+## State ownership
+
+- Kernel: `sessions.snapshot_json`, used only to resume.
+- Frontend: the normalized tables and `session_current`, never the snapshot.
+- Both are written from one snapshot in one transaction. Derived rows are
+  replaced per save; summary revisions are append-only.
+- No stored session status. Latest turn, current segment, current summary,
+  active facts and task progress are queries, so they cannot contradict each
+  other or a stale column.
 
 ## Notes
 

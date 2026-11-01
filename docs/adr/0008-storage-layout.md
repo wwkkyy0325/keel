@@ -2,11 +2,11 @@
 
 ## Status
 
-Accepted. The schema below is the target. The first implementation lives in the
-CLI host (`hosts/keel-cli/src/store.rs`): `sessions` holds a JSON snapshot of
-the derived plane (segments, entries, records, memo, facts) and the task list,
-and `turns` appends the transcript. The segment, record, summary and fact
-tables land with the frontend, which needs to query them directly.
+Accepted. The first implementation lives in the CLI host
+(`hosts/keel-cli/src/store.rs`): `sessions` holds a JSON snapshot of the derived
+plane (segments, entries, records, memo, facts) and the task list; `turns`
+appends the transcript; the normalized tables and `session_current` are the
+frontend read model. `fact_history` and `todo_history` remain.
 
 The kernel carries the snapshot types (`SessionSnapshot`) and knows nothing
 about SQLite; the store is a host adapter, per ADR 0012.
@@ -117,6 +117,37 @@ in one column; they are read as whole values and never queried inside.
 - A turn writes its rows in one transaction. A crash leaves the previous turn
   intact; there is no half-visible turn.
 - Sequence numbers are monotonic per session, assigned inside the transaction.
+
+### Read model and one source of truth
+
+Two readers, no shared mutable state:
+
+- The kernel resumes from `sessions.snapshot_json`. It is opaque and versioned;
+  a frontend must not parse it.
+- A frontend reads the normalized tables and the `session_current` view. It
+  never reads the snapshot.
+
+Both are written from one `SessionSnapshot` in the same transaction, so the
+projection cannot lag a turn. Segment, entry, record, fact and task rows are
+replaced per save; summary revisions are append-only.
+
+There is **no stored session status**. A status column would be a second source
+and could contradict the rows. Every current value is a query:
+
+| Question | Source |
+|---|---|
+| latest turn | `MAX(turns.seq)` |
+| current summary | `MAX(session_summaries.revision)` |
+| current segment | the segment with the highest `seq` |
+| active facts | `facts.active = 1` |
+| task progress | `todos.status` |
+| dashboard | `session_current` (one row per session) |
+
+The first implementation projects `segments`, `segment_entries`, `records`,
+`session_summaries`, `summary_covers`, `facts` (session, workspace and global
+rows) and `todos`, plus the `session_current` view. `segment_entries` is the
+ADR's `segment_messages`. `fact_history` and `todo_history` are not projected
+yet; the snapshot keeps the current state, not the history.
 
 ### L4 and catch-up summaries
 

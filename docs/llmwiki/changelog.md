@@ -976,6 +976,24 @@
   for the frontend. Task doc: `tasks/m5-persistence.md`.
 - Verification: 254 tests; fmt and clippy clean.
 
+### Frontend read model
+
+- The store projects the snapshot into `segments`, `segment_entries`,
+  `records`, `session_summaries`, `summary_covers`, `facts`, `todos` and the
+  `session_current` view. Derived rows are replaced per save; summary
+  revisions are append-only.
+- One writer, two readers: the kernel resumes from `snapshot_json`, a frontend
+  reads the tables and never the snapshot. Both are written from one snapshot
+  in one transaction, so they cannot disagree.
+- There is no stored session status. Latest turn, current segment, current
+  summary, active facts and task progress are queries, so a stale column cannot
+  contradict the rows.
+- Live check: four turns projected one segment, eight entries, tasks 1/2 and
+  `session_current.last_turn_seq = 4`; a second save replaced rows without
+  duplication.
+- `fact_history` and `todo_history` remain for a later slice.
+- Verification: 255 tests; fmt and clippy clean.
+
 ### Fusion run completed at 24k
 
 - The full 57-turn novel finished on DeepSeek with the 24k profile, per-turn
