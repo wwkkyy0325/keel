@@ -276,7 +276,7 @@ async fn run() -> Result<ExitCode, KernelError> {
         None => driver,
     };
     let driver = match restored_session {
-        Some(snapshot) => driver.with_session(Session::restore(snapshot)),
+        Some(snapshot) => driver.with_session(Session::restore(snapshot)?),
         None => driver,
     };
 

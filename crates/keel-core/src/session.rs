@@ -4,6 +4,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::context::is_cjk;
+use crate::error::KernelError;
 use crate::secret::redact_secrets;
 
 use crate::message::{Message, MessageRole};
@@ -295,13 +296,27 @@ pub struct Segment {
     pub record: Option<SegmentRecord>,
 }
 
+/// The snapshot format this kernel writes and can read.
+///
+/// A host may keep snapshots across kernel upgrades. `restore` refuses a
+/// snapshot written by a newer format instead of silently dropping fields it
+/// does not understand.
+pub const SNAPSHOT_VERSION: u32 = 1;
+
+fn snapshot_version() -> u32 {
+    SNAPSHOT_VERSION
+}
+
 /// A serializable view of one session, for a host store.
 ///
 /// The snapshot carries the planes the kernel needs to continue a session:
 /// segments, entries, records, the memo and facts. Fact candidates are
 /// transient extraction state and are not carried.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionSnapshot {
+    /// Format version; absent in snapshots written before the field existed.
+    #[serde(default = "snapshot_version")]
+    pub format_version: u32,
     pub segments: Vec<SegmentSnapshot>,
     pub next_segment_id: u32,
     pub last_verified: bool,
@@ -311,6 +326,23 @@ pub struct SessionSnapshot {
     pub summary: Option<SessionSummary>,
     pub next_summary_revision: u32,
     pub summary_missing: bool,
+}
+
+impl Default for SessionSnapshot {
+    fn default() -> Self {
+        Self {
+            format_version: SNAPSHOT_VERSION,
+            segments: Vec::new(),
+            next_segment_id: 0,
+            last_verified: false,
+            facts: Vec::new(),
+            workspace_facts: Vec::new(),
+            global_facts: Vec::new(),
+            summary: None,
+            next_summary_revision: 0,
+            summary_missing: false,
+        }
+    }
 }
 
 /// One segment inside a session snapshot.
@@ -394,6 +426,7 @@ impl Session {
     /// process.
     pub fn snapshot(&self) -> SessionSnapshot {
         SessionSnapshot {
+            format_version: SNAPSHOT_VERSION,
             segments: self
                 .segments
                 .iter()
@@ -435,7 +468,19 @@ impl Session {
     }
 
     /// Rebuilds a session from a host store snapshot.
-    pub fn restore(snapshot: SessionSnapshot) -> Self {
+    ///
+    /// Fails when the snapshot was written by a newer format; a host that
+    /// upgrades the kernel should migrate or keep the old kernel for that
+    /// session rather than guess.
+    pub fn restore(snapshot: SessionSnapshot) -> Result<Self, KernelError> {
+        if snapshot.format_version > SNAPSHOT_VERSION {
+            return Err(KernelError::Unsupported {
+                feature: format!(
+                    "session snapshot version {} (this kernel supports {SNAPSHOT_VERSION})",
+                    snapshot.format_version
+                ),
+            });
+        }
         let segments: Vec<Segment> = snapshot
             .segments
             .into_iter()
@@ -466,7 +511,7 @@ impl Session {
         let next_segment_id = snapshot
             .next_segment_id
             .max(segments.iter().map(|segment| segment.id).max().unwrap_or(0));
-        Self {
+        Ok(Self {
             segments,
             next_segment_id,
             last_verified: snapshot.last_verified,
@@ -477,7 +522,7 @@ impl Session {
             summary: snapshot.summary,
             next_summary_revision: snapshot.next_summary_revision,
             summary_missing: snapshot.summary_missing,
-        }
+        })
     }
 
     /// Decides the segment boundary for an input before the turn runs.
@@ -1710,7 +1755,7 @@ mod tests {
         record(&mut session, "fix the parser", "done");
         session.set_summary("memo text", &[1], 256);
 
-        let restored = Session::restore(session.snapshot());
+        let restored = Session::restore(session.snapshot()).expect("snapshot restores");
 
         assert_eq!(restored.segments().len(), session.segments().len());
         assert_eq!(restored.history().len(), session.history().len());
@@ -1719,6 +1764,14 @@ mod tests {
             restored.summary().map(|summary| summary.text.as_str()),
             Some("memo text")
         );
+    }
+
+    #[test]
+    fn a_snapshot_from_a_newer_format_is_rejected() {
+        let mut snapshot = Session::new().snapshot();
+        snapshot.format_version = SNAPSHOT_VERSION + 1;
+        let error = Session::restore(snapshot).expect_err("a newer format must fail");
+        assert!(matches!(error, KernelError::Unsupported { .. }));
     }
 
     #[test]
