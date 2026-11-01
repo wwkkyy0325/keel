@@ -1,0 +1,8 @@
+[[items]]
+id = "task-016-query-acceptance"
+description = "Parse query strings with decoding and repeated keys"
+required = true
+kind = "command"
+program = "python"
+args = ["-c", "from query import parse_query; assert parse_query('a=1&a=2&q=hi+there') == {'a': ['1', '2'], 'q': ['hi there']}"]
+expected_exit = 0

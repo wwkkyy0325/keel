@@ -1,0 +1,8 @@
+[[items]]
+id = "task-020-duration-acceptance"
+description = "Parse compact durations"
+required = true
+kind = "command"
+program = "python"
+args = ["-c", "from durations import parse; assert parse('1h30m') == 5400 and parse('45s') == 45"]
+expected_exit = 0

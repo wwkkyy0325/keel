@@ -12,8 +12,9 @@ the deterministic parts.
       latency, tokens and cache hits. Verify:
       `evals/reports/2026-11-04-coding-suite.md`: 43/46, 302k tokens, 82.4%
       cache hit, ¥0.36; harness usage parsing fixed in the same change.
-- [ ] Grow the coding set to twenty cases (15 now; task-011 to task-015 were
-      added and validated).
+- [x] Grow the coding set to twenty cases. Verify: task-011 to task-020 were
+      added and validated (setup fails, reference passes); the curated suite
+      passed 20/20.
 - [ ] Five companion personas and a 20-turn run per persona.
 - [x] CI runs fmt, clippy, tests and `cargo deny`; the harness job compiles the
       scripts and validates the dataset importer without a model key.
@@ -28,6 +29,7 @@ the deterministic parts.
 |---|---|---|---|---|---|
 | 2026-11-04 | `variants/coding/profile.eval.toml` | 46 | 43 | 302,068 | curated 10/10, HumanEval 20/20, MBPP 13/16; 4 skipped at 300k; ¥0.36; report `2026-11-04-coding-suite.md` |
 | 2026-11-04 | `variants/coding/profile.eval.toml` | 15 | 14 | 189,069 | curated set only; 84.9% cache hit; ¥0.26; task-008 ended without a final answer while its tests passed |
+| 2026-11-04 | `variants/coding/profile.eval.toml` | 20 | 20 | 286,042 | full curated set; 85.6% cache hit; ¥0.42; slowest case 37 s |
 
 ## Notes
 

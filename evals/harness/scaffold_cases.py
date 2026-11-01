@@ -1011,6 +1011,343 @@ if __name__ == "__main__":
             "assert wrap('one two three', 7) == 'one two\\nthree'"
         ),
     },
+    {
+        "id": "task-016-query",
+        "title": "Parse query strings with decoding and repeated keys",
+        "description": (
+            "`query.parse_query(text)` splits on `&` and keeps the last value "
+            "for a key, without decoding. Return a mapping from key to a list "
+            "of values, decode percent escapes and `+` as a space, keep "
+            "repeated keys in order, treat a pair with no `=` as an empty "
+            "value, and skip empty segments."
+        ),
+        "setup": {
+            "query.py": """def parse_query(text):
+    result = {}
+    for pair in text.split("&"):
+        if not pair:
+            continue
+        key, _, value = pair.partition("=")
+        result[key] = value
+    return result
+"""
+        },
+        "reference": {
+            "query.py": """from urllib.parse import unquote_plus
+
+
+def parse_query(text):
+    result = {}
+    for pair in text.split("&"):
+        if not pair:
+            continue
+        key, _, value = pair.partition("=")
+        result.setdefault(unquote_plus(key), []).append(unquote_plus(value))
+    return result
+"""
+        },
+        "tests": """import unittest
+
+from query import parse_query
+
+
+class QueryTests(unittest.TestCase):
+    def test_basic(self):
+        self.assertEqual(parse_query("a=1&b=2"), {"a": ["1"], "b": ["2"]})
+
+    def test_repeated_key_keeps_order(self):
+        self.assertEqual(parse_query("a=1&a=3"), {"a": ["1", "3"]})
+
+    def test_decoding(self):
+        self.assertEqual(parse_query("q=hello+world%21"), {"q": ["hello world!"]})
+
+    def test_missing_value(self):
+        self.assertEqual(parse_query("flag"), {"flag": [""]})
+
+    def test_empty_segments(self):
+        self.assertEqual(
+            parse_query("a=1&&b=2&"), {"a": ["1"], "b": ["2"]}
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
+""",
+        "acceptance": (
+            "from query import parse_query; "
+            "assert parse_query('a=1&a=2&q=hi+there') == {'a': ['1', '2'], 'q': ['hi there']}"
+        ),
+    },
+    {
+        "id": "task-017-ranges",
+        "title": "Merge overlapping and adjacent ranges",
+        "description": (
+            "`ranges.merge(ranges)` returns its input unchanged. Merge "
+            "inclusive integer ranges that overlap or touch (one ends where "
+            "the next begins), return them sorted, preserve gaps, and raise "
+            "`ValueError` when a range starts after it ends."
+        ),
+        "setup": {
+            "ranges.py": """def merge(ranges):
+    return list(ranges)
+"""
+        },
+        "reference": {
+            "ranges.py": """def merge(ranges):
+    merged = []
+    for start, end in sorted(ranges):
+        if start > end:
+            raise ValueError("start must not exceed end")
+        if merged and start <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+"""
+        },
+        "tests": """import unittest
+
+from ranges import merge
+
+
+class MergeTests(unittest.TestCase):
+    def test_overlap(self):
+        self.assertEqual(merge([(1, 3), (2, 5), (8, 9)]), [(1, 5), (8, 9)])
+
+    def test_adjacent(self):
+        self.assertEqual(merge([(1, 2), (3, 4)]), [(1, 4)])
+
+    def test_gap_is_kept(self):
+        self.assertEqual(merge([(1, 2), (4, 5)]), [(1, 2), (4, 5)])
+
+    def test_unsorted_input(self):
+        self.assertEqual(merge([(8, 9), (1, 3), (2, 5)]), [(1, 5), (8, 9)])
+
+    def test_invalid_range(self):
+        with self.assertRaises(ValueError):
+            merge([(3, 1)])
+
+
+if __name__ == "__main__":
+    unittest.main()
+""",
+        "acceptance": (
+            "from ranges import merge; "
+            "assert merge([(1, 3), (2, 5), (8, 9)]) == [(1, 5), (8, 9)]"
+        ),
+    },
+    {
+        "id": "task-018-fsm",
+        "title": "Reject unknown states and events in a state machine",
+        "description": (
+            "`machine.run(transitions, start, events)` silently ignores an "
+            "event with no transition and starts from an unknown state. Raise "
+            "`ValueError` for an unknown start state and for an event that is "
+            "not defined for the current state, and return the final state "
+            "for a valid sequence. An empty event list returns the start."
+        ),
+        "setup": {
+            "machine.py": """def run(transitions, start, events):
+    state = start
+    for event in events:
+        state = transitions[state].get(event, state)
+    return state
+"""
+        },
+        "reference": {
+            "machine.py": """def run(transitions, start, events):
+    if start not in transitions:
+        raise ValueError("unknown start state")
+    state = start
+    for event in events:
+        table = transitions.get(state, {})
+        if event not in table:
+            raise ValueError("unknown event " + event + " in " + state)
+        state = table[event]
+    return state
+"""
+        },
+        "tests": """import unittest
+
+from machine import run
+
+
+TRANSITIONS = {
+    "idle": {"start": "running"},
+    "running": {"stop": "idle"},
+}
+
+
+class MachineTests(unittest.TestCase):
+    def test_sequence(self):
+        self.assertEqual(run(TRANSITIONS, "idle", ["start"]), "running")
+        self.assertEqual(run(TRANSITIONS, "idle", ["start", "stop"]), "idle")
+
+    def test_empty_events(self):
+        self.assertEqual(run(TRANSITIONS, "idle", []), "idle")
+
+    def test_unknown_event(self):
+        with self.assertRaises(ValueError):
+            run(TRANSITIONS, "running", ["start"])
+
+    def test_unknown_start(self):
+        with self.assertRaises(ValueError):
+            run(TRANSITIONS, "done", [])
+
+
+if __name__ == "__main__":
+    unittest.main()
+""",
+        "acceptance": (
+            "from machine import run; t = {'a': {'go': 'b'}, 'b': {'go': 'a'}}; "
+            "assert run(t, 'a', ['go', 'go']) == 'a'"
+        ),
+    },
+    {
+        "id": "task-019-words",
+        "title": "Rank words by frequency, then alphabetically",
+        "description": (
+            "`words.top(text, count)` returns the first whitespace tokens. "
+            "Return the `count` most frequent lowercase words as "
+            "`(word, count)` pairs, ordered by count descending and then word "
+            "ascending. Count only letters, digits and apostrophes; return an "
+            "empty list for a non-positive count."
+        ),
+        "setup": {
+            "words.py": """def top(text, count):
+    return text.split()[:count]
+"""
+        },
+        "reference": {
+            "words.py": """import re
+from collections import Counter
+
+
+def top(text, count):
+    if count <= 0:
+        return []
+    counts = Counter(re.findall(r"[a-z0-9']+", text.lower()))
+    return sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:count]
+"""
+        },
+        "tests": """import unittest
+
+from words import top
+
+
+class WordTests(unittest.TestCase):
+    def test_counts(self):
+        self.assertEqual(top("b a b c b a", 2), [("b", 3), ("a", 2)])
+
+    def test_ties_are_alphabetical(self):
+        self.assertEqual(top("b a", 2), [("a", 1), ("b", 1)])
+
+    def test_case_and_punctuation(self):
+        self.assertEqual(
+            top("Hello, hello! World.", 2), [("hello", 2), ("world", 1)]
+        )
+
+    def test_apostrophe_is_kept(self):
+        self.assertEqual(top("don't don't stop", 2), [("don't", 2), ("stop", 1)])
+
+    def test_non_positive_count(self):
+        self.assertEqual(top("a b", 0), [])
+
+    def test_count_larger_than_vocabulary(self):
+        self.assertEqual(top("a b", 5), [("a", 1), ("b", 1)])
+
+
+if __name__ == "__main__":
+    unittest.main()
+""",
+        "acceptance": (
+            "from words import top; "
+            "assert top('b a b c b a', 2) == [('b', 3), ('a', 2)]"
+        ),
+    },
+    {
+        "id": "task-020-duration",
+        "title": "Parse compact durations",
+        "description": (
+            "`durations.parse(text)` reads only the last character and fails "
+            "on multi-part input. Parse a compact duration such as `1h30m` or "
+            "`45s` into seconds, accept `s`, `m` and `h` in any order with "
+            "optional spaces, reject an empty string, a repeated unit, a "
+            "missing unit and any other character with `ValueError`."
+        ),
+        "setup": {
+            "durations.py": """def parse(text):
+    unit = text[-1]
+    return int(text[:-1]) * {"s": 1, "m": 60, "h": 3600}[unit]
+"""
+        },
+        "reference": {
+            "durations.py": """import re
+
+UNITS = {"s": 1, "m": 60, "h": 3600}
+
+
+def parse(text):
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("empty duration")
+    compact = text.replace(" ", "").lower()
+    total = 0
+    seen = set()
+    position = 0
+    for match in re.finditer(r"(\\d+)([smh])", compact):
+        if match.start() != position:
+            raise ValueError("invalid duration: " + text)
+        unit = match.group(2)
+        if unit in seen:
+            raise ValueError("duplicate unit: " + unit)
+        seen.add(unit)
+        total += int(match.group(1)) * UNITS[unit]
+        position = match.end()
+    if position != len(compact):
+        raise ValueError("invalid duration: " + text)
+    return total
+"""
+        },
+        "tests": """import unittest
+
+from durations import parse
+
+
+class DurationTests(unittest.TestCase):
+    def test_parts(self):
+        self.assertEqual(parse("1h30m"), 5400)
+        self.assertEqual(parse("45s"), 45)
+        self.assertEqual(parse("2m"), 120)
+
+    def test_spaces_and_order(self):
+        self.assertEqual(parse("1h 30m"), 5400)
+        self.assertEqual(parse("30m1h"), 5400)
+
+    def test_duplicate_unit(self):
+        with self.assertRaises(ValueError):
+            parse("1h1h")
+
+    def test_missing_unit(self):
+        with self.assertRaises(ValueError):
+            parse("10")
+
+    def test_empty(self):
+        with self.assertRaises(ValueError):
+            parse("")
+
+    def test_unknown_character(self):
+        with self.assertRaises(ValueError):
+            parse("1d")
+
+
+if __name__ == "__main__":
+    unittest.main()
+""",
+        "acceptance": (
+            "from durations import parse; "
+            "assert parse('1h30m') == 5400 and parse('45s') == 45"
+        ),
+    },
 ]
 
 

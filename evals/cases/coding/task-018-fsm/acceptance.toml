@@ -1,0 +1,8 @@
+[[items]]
+id = "task-018-fsm-acceptance"
+description = "Reject unknown states and events in a state machine"
+required = true
+kind = "command"
+program = "python"
+args = ["-c", "from machine import run; t = {'a': {'go': 'b'}, 'b': {'go': 'a'}}; assert run(t, 'a', ['go', 'go']) == 'a'"]
+expected_exit = 0

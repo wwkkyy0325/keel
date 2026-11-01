@@ -1304,3 +1304,14 @@
   final answer while its workspace tests passed, matching the model-variance
   category from the first suite. Report: `2026-11-04-coding-suite.md`.
 - The curated set is now 15 of the M6 target of 20.
+
+### Curated set reaches twenty cases
+
+- Added `task-016-query`, `task-017-ranges`, `task-018-fsm`, `task-019-words`
+  and `task-020-duration`, each validated as setup-fails and reference-passes
+  before the model ran.
+- Full curated suite: **20/20 passed**, 286,042 tokens, 85.6% cache hit, about
+  ¥0.42; the slowest case took 37 s. `task-008-greeting` passed in this run,
+  confirming the earlier failure as model variance.
+- M6 now has the twenty coding cases; the companion personas, reproducible
+  report and license audit remain. Report: `2026-11-04-coding-suite.md`.

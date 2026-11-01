@@ -1,0 +1,8 @@
+[case]
+id = "task-016-query"
+kind = "coding"
+timeout_seconds = 300
+profile = "variants/coding/profile.eval.toml"
+model = "deepseek-flash"
+acceptance = "acceptance.toml"
+seeds = [1]

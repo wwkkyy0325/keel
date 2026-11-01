@@ -93,3 +93,25 @@ without closing the turn. The same case passed in the earlier 46-case run, so
 this is model variance and a turn-closure weakness, not a case defect. A turn
 that ends without an answer is reported as Error by design; the host recovery
 checks the checklist but does not relabel the turn.
+
+## Twenty-case curated set (2026-11-04)
+
+The last five cases were added: `task-016-query` (query strings),
+`task-017-ranges` (interval merging), `task-018-fsm` (state machine errors),
+`task-019-words` (frequency ranking) and `task-020-duration` (compact
+durations). All twenty were re-run with the same profile and budget:
+
+| Metric | Value |
+|---|---|
+| Cases | 20 |
+| Passed | **20** |
+| Tokens | 286,042 (35,223 uncached, 208,768 cached, 42,051 output) |
+| Cache hit | 85.6% |
+| Cost | about ¥0.42 at peak prices |
+| Slowest | task-004-cli-args, 37 s |
+
+Each new case was validated before the run: the setup fails `verify.sh` and
+the reference passes it. This run includes the previously variable
+`task-008-greeting`, which passed here, so the earlier failure remains
+classified as model variance rather than a case defect. The curated set now
+meets the M6 target of twenty cases.

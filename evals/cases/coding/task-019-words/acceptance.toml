@@ -1,0 +1,8 @@
+[[items]]
+id = "task-019-words-acceptance"
+description = "Rank words by frequency, then alphabetically"
+required = true
+kind = "command"
+program = "python"
+args = ["-c", "from words import top; assert top('b a b c b a', 2) == [('b', 3), ('a', 2)]"]
+expected_exit = 0
