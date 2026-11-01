@@ -913,13 +913,15 @@
 - The CLI now prints one `call:` line per main model call with `input`,
   `cached`, `hit` and `tools`, so cross-turn and within-turn reuse can be told
   apart. The turn aggregate line already carried `cached=` and `hit=`.
-- Added `variants/coding/profile.deepseek.novel-24k.cache.toml`, which moves
-  `history` before `memory` and `task_state` so volatile blocks sit last. It is
-  an ablation arm, not the default; acceptance and task compliance are the
-  guardrail.
+- Stage order is decided by priority, not by the profile list: system 0,
+  memory 5, task_state 6, history 9, latest 10. A profile that lists stages in
+  another order only changes tie-breaks, so an "inverted" profile cannot move
+  the task block; that experiment was withdrawn.
 - `docs/llmwiki/cache-economics.md` fixes the pricing arithmetic: at DeepSeek's
   50:1 hit-to-miss ratio the current order costs about one yuan more per
   50-turn run than the best alternative, while output tokens and window size
-  dominate the real decision. An append-only transcript only wins near a 98%
-  hit rate and needs a 1M window.
+  dominate the real decision. A large context only wins around 100k at a 98%
+  hit rate; from 200k up the extra tokens outweigh the discount. One uncached
+  1M prefix costs as much as the whole bounded run, which is why a rebuild
+  design must stay in a small working set.
 - Verification: 247 tests; fmt and clippy clean.

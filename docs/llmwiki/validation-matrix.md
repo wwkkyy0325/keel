@@ -22,7 +22,7 @@ claim of failure.
 | Interactions | Unit tests | None in the novel workload | None | No |
 | Permissions / trash / audit | M2 unit tests | None in the novel workload | None | No |
 | Provider compatibility | 14B/26B probes | 24-turn, local chapter | None | No |
-| Prompt cache reuse | Per-call usage lines | 24k novel, 2 turns (67–83%) | Cache-order profile pending | No |
+| Prompt cache reuse | Per-call usage lines | 24k novel, 2 turns (67–83%) | Stable-prefix rule not started | No |
 | Persona affordances | None | Not measured | None (no A/B) | No |
 | Interjections | None | None | None | No (ADR 0010 only) |
 | M4 plugins / M5 persistence | Not started | Not started | Not started | Not started |
