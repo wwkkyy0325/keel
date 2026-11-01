@@ -104,6 +104,65 @@ async fn echo_turn_reaches_done_and_replays_states() {
     assert_eq!(tool_finished(&events, outcome.turn_id), vec![(true, None)]);
 }
 
+fn event_names(events: &EventLog, turn_id: TurnId) -> Vec<&'static str> {
+    events
+        .for_turn(turn_id)
+        .into_iter()
+        .map(|record| record.event.name())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_tool_turn_emits_the_host_contract_events_in_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&["write_file"], 4, PermissionLevel::WorkspaceAuto);
+    let mut args = ToolArgs::new();
+    args.insert("path", ArgValue::String("note.txt".to_owned()));
+    args.insert("content", ArgValue::String("hello".to_owned()));
+    let model = MockModel::new(vec![
+        MockStep::ToolCall {
+            name: "write_file".to_owned(),
+            args,
+        },
+        MockStep::Text("done".to_owned()),
+    ]);
+
+    let driver = common::build_driver(
+        model,
+        config,
+        events.clone(),
+        dir.path(),
+        common::test_limits(),
+    );
+    let outcome = driver.run("write a note", CancelToken::new()).await;
+    assert_eq!(outcome.state, TurnState::Done);
+
+    let names = event_names(&events, outcome.turn_id);
+    assert_eq!(names.first().copied(), Some("turn_started"), "{names:?}");
+    assert_eq!(names.last().copied(), Some("turn_report"), "{names:?}");
+    for required in [
+        "model_started",
+        "permission_decided",
+        "tool_started",
+        "tool_finished",
+        "turn_finished",
+    ] {
+        assert!(names.contains(&required), "missing {required}: {names:?}");
+    }
+    let index = |name: &str| {
+        names
+            .iter()
+            .position(|value| *value == name)
+            .unwrap_or_else(|| panic!("missing {name}: {names:?}"))
+    };
+    assert!(index("model_started") < index("permission_decided"));
+    assert!(index("permission_decided") < index("tool_started"));
+    assert!(index("tool_started") < index("tool_finished"));
+    assert!(index("tool_finished") < index("turn_finished"));
+    assert!(index("turn_finished") < index("turn_report"));
+}
+
 #[tokio::test]
 async fn text_only_turn_reaches_done() {
     let dir = tempfile::tempdir().unwrap();
