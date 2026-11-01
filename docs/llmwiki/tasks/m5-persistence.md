@@ -32,10 +32,16 @@ The kernel exposes a snapshot; the host decides where it lives.
 - [x] Context snapshots: opt-in capture of the turn-start message list,
       redacted, one row per turn. Verify: driver test and store test; a live
       turn wrote the row.
-- [ ] Fault injection: a crash mid-turn leaves the previous turn intact; a
-      corrupt snapshot fails with a typed error, not a panic.
-- [ ] Multi-session memory evaluation on top of the store (LongMemEval-style
-      extraction, update, temporal, abstention).
+- [x] Fault injection: a crash mid-turn leaves the previous turn intact; a
+      corrupt snapshot fails with a typed error, not a panic. Verify: an
+      SQL trigger rejects the fact insert after the session and turn rows were
+      written; the save fails, the previous turn, view row and snapshot are
+      unchanged. A hand-corrupted `snapshot_json` loads as
+      `KernelError::InvalidConfig`, never a panic.
+- [x] Multi-session memory evaluation on top of the store (LongMemEval-style
+      extraction, update, temporal, abstention). Verify: two runs, 9 and 11
+      turns across two and three processes; 8/8 and 6/6 answers; see
+      `docs/llmwiki/tasks/memory-eval.md` and the report.
 
 ## State ownership
 

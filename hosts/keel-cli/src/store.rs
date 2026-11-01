@@ -873,6 +873,118 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_save_leaves_the_previous_turn_intact() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&dir.path().join("keel.db")).unwrap();
+        let session = keel_core::Session::new();
+        let first = StoredTurn {
+            seq: 1,
+            input: "hello",
+            state: "done",
+            answer: "hi",
+            answer_json: "{}",
+            usage_json: "{}",
+            duration_ms: 5,
+            context: None,
+        };
+        store
+            .save("s", &session.snapshot(), None, Some(first))
+            .unwrap();
+
+        // Fail the next save after the session and turn rows are written, so
+        // the test proves the transaction rolls back rather than leaving a
+        // half-applied turn behind.
+        store
+            .conn
+            .execute_batch(
+                "CREATE TRIGGER reject_facts BEFORE INSERT ON facts
+                 BEGIN SELECT RAISE(ABORT, 'injected failure'); END;",
+            )
+            .unwrap();
+        let mut snapshot = session.snapshot();
+        snapshot.facts.push(keel_core::Fact {
+            key: "project".to_owned(),
+            statement: "project is blue whale".to_owned(),
+            scope: keel_core::FactScope::Session,
+            confirmed: true,
+            segment_id: 0,
+        });
+        let second = StoredTurn {
+            seq: 2,
+            input: "next",
+            state: "done",
+            answer: "next done",
+            answer_json: "{}",
+            usage_json: "{}",
+            duration_ms: 5,
+            context: None,
+        };
+        let error = store.save("s", &snapshot, None, Some(second)).unwrap_err();
+        assert!(
+            format!("{error:?}").contains("injected failure"),
+            "the injected fault must be the failure: {error:?}"
+        );
+
+        let loaded = store.load("s").unwrap().unwrap();
+        assert!(loaded.snapshot.facts.is_empty());
+        let turns: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM turns", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(turns, 1, "the failed turn must not be visible");
+        let state: String = store
+            .conn
+            .query_row(
+                "SELECT last_turn_state FROM session_current WHERE session_id = 's'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(state, "done");
+    }
+
+    #[test]
+    fn a_corrupt_snapshot_fails_as_a_typed_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&dir.path().join("keel.db")).unwrap();
+        store
+            .save("s", &keel_core::Session::new().snapshot(), None, None)
+            .unwrap();
+        store
+            .conn
+            .execute("UPDATE sessions SET snapshot_json = '{' WHERE id = 's'", [])
+            .unwrap();
+
+        let error = store.load("s").err().expect("load must not panic");
+        match error {
+            KernelError::InvalidConfig { message } => {
+                assert!(message.contains("invalid session snapshot"), "{message}");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+
+        store
+            .save(
+                "s",
+                &keel_core::Session::new().snapshot(),
+                Some(&TodoList::default()),
+                None,
+            )
+            .unwrap();
+        store
+            .conn
+            .execute("UPDATE sessions SET todos_json = 'nope' WHERE id = 's'", [])
+            .unwrap();
+        let error = store.load("s").err().expect("load must not panic");
+        match error {
+            KernelError::InvalidConfig { message } => {
+                assert!(message.contains("invalid task list"), "{message}");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
     fn an_unknown_session_loads_as_none() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(&dir.path().join("keel.db")).unwrap();
