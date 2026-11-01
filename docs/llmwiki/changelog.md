@@ -1409,3 +1409,18 @@
   `a_failed_turn_exposes_its_error_text`,
   `the_events_view_pages_with_the_turn_window`, the CLI events assertion, and
   301 workspace tests (254 kernel-only).
+
+### Performance gates
+
+- Added release-only ignored tests in
+  `crates/keel-runtime/tests/performance.rs`: turn overhead (p50 < 5 ms,
+  p99 < 20 ms), 10k-message context assembly (< 20 ms), tool dispatch (< 1 ms),
+  memory recall over 200 segments (< 50 ms), event enqueue (< 1 ms) and a
+  500-turn stress run.
+- Measured the cost of event recording: serialize 50 events 0.003 ms; save a
+  turn with 50 events 1.602 ms p50 vs 1.232 ms without (about 0.37 ms); the
+  kernel never emits per-token events, so the stream is per boundary.
+- Results: turn 0.015/0.060 ms, context 1.835/3.197 ms, dispatch
+  0.004/0.020 ms, recall 0.090/0.169 ms; 500 turns in 13.8 ms. Report:
+  `evals/reports/2026-11-04-kernel-performance.md`; task doc:
+  `docs/llmwiki/tasks/performance.md`.

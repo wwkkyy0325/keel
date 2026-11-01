@@ -226,6 +226,9 @@ cargo fmt --check
 cargo clippy --workspace -- -D warnings
 cargo test --workspace
 cargo deny check
+
+# Performance gates (release; ignored by default)
+cargo test --release -p keel-runtime --test performance -- --ignored --nocapture
 ```
 
 ## License

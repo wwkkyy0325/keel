@@ -38,6 +38,15 @@ First complete kernel and reference host.
   replies, process-tree cleanup and `--plugins-check [--json]`.
 - Cache and usage telemetry; cost model in `docs/llmwiki/cache-economics.md`.
 
+### Performance
+
+- Release-only gates for turn overhead, 10k-message context assembly, tool
+  dispatch, memory recall and event enqueue, plus a 500-turn stress run.
+- Event persistence adds about 0.37 ms at p50 to a turn with 50 events;
+  serialization is 0.003 ms and enqueue is under a microsecond. The kernel emits
+  no per-token events.
+- Report: `evals/reports/2026-11-04-kernel-performance.md`.
+
 ### Examples
 
 - `crates/keel-runtime/examples/minimal_turn.rs` runs one turn without the

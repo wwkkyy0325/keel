@@ -29,6 +29,7 @@ claim of failure.
 | Branching / deletion | Checkpoint per turn, fork restore, pruning with pinned fork points, fork/delete errors | Mock parent/branch/delete and a retention smoke | None | No |
 | Frontend views | Composed panels, ordering, decoded answer/usage/context, typed memory timeline, event stream, turn paging, golden file, real-binary contract tests | CLI smoke of session, turn, memory, events and two-page session views | None | No |
 | Companion personas | Per-turn rule checks, three memory probes | Five personas, 20 turns each, one process per persona | None | No |
+| Performance gates | Release tests: turn, context, dispatch, recall, enqueue, 500-turn stress, event persistence | Local release run | None | No |
 | M4 plugins | Schema mapping and description, roots/ping replies over stdio and HTTP, mock HTTP MCP server, process-tree kill | Filesystem, memory, Python SQLite probe and call with a roots round-trip | None | No |
 
 ## Fusion evidence
