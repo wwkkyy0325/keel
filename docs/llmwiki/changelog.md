@@ -1315,3 +1315,19 @@
   confirming the earlier failure as model variance.
 - M6 now has the twenty coding cases; the companion personas, reproducible
   report and license audit remain. Report: `2026-11-04-coding-suite.md`.
+
+### Companion persona evaluation
+
+- Five personas with dedicated prompts and profiles: archivist, coach, pirate,
+  poet and engineer (`variants/companion/personas/`, `profile.<name>.toml`).
+  Each prompt states measurable surface rules and the base prohibitions.
+- `evals/harness/run_companions.py` runs one process per persona for twenty
+  turns on one store with per-turn acceptance, then reads `turns.answer_json`
+  from SQLite. It checks persona rules every turn and three durable facts in
+  turns 17-19, prints per-persona failures and writes a JSON report.
+- Results: 5/5 personas, 100/100 turns `Done`, all rule counters 20/20, 15/15
+  memory probes, 231,519 tokens. Report: `2026-11-04-companion-personas.md`.
+- The first run flagged an engineer memory miss for `周二 20:00`; the checker
+  required the literal “八点”. It now accepts equivalent time spellings and
+  the rerun passed. This normalised the checker, not the memory bar.
+- Verify: `python -m py_compile evals/harness/*.py`; the companion run above.
