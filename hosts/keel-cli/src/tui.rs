@@ -5,6 +5,8 @@
 //! a terminal. The loop only wires channels: model deltas, kernel events,
 //! interactions, turns and keys.
 
+use std::cell::Cell;
+use std::collections::HashSet;
 use std::io;
 use std::io::IsTerminal;
 use std::process::ExitCode;
@@ -24,10 +26,12 @@ use keel_core::{
 };
 use keel_runtime::{EventLog, RuntimeConfig, TurnDriver, TurnOutcome};
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block as FrameBlock, Paragraph, Wrap};
+use ratatui::widgets::{
+    Block as FrameBlock, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
+};
 use ratatui::{Frame, Terminal};
 use tokio::sync::{mpsc, oneshot};
 use unicode_width::UnicodeWidthChar;
@@ -35,6 +39,10 @@ use unicode_width::UnicodeWidthChar;
 use crate::store::Store;
 use crate::terminal::parse_response;
 use crate::HostModel;
+
+/// The UI mode is session-scoped; the kernel still keeps a TTL so a forgotten
+/// full-auto grant expires even if the UI never toggles it back.
+const MODE_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
 /// Text the model produced for the current turn, forwarded while it streams.
 #[derive(Debug, Clone)]
@@ -161,6 +169,11 @@ struct App {
     history_pos: Option<usize>,
     scroll: usize,
     follow: bool,
+    /// Blocks hidden after their turn finished; `Ctrl-O` reveals them.
+    hidden: HashSet<usize>,
+    show_process: bool,
+    content_lines: Cell<usize>,
+    viewport_lines: Cell<usize>,
     running: bool,
     cancel: Option<CancelToken>,
     pending: Option<InteractionJob>,
@@ -195,6 +208,10 @@ impl App {
             history_pos: None,
             scroll: 0,
             follow: true,
+            hidden: HashSet::new(),
+            show_process: false,
+            content_lines: Cell::new(0),
+            viewport_lines: Cell::new(1),
             running: false,
             cancel: None,
             pending: None,
@@ -277,7 +294,9 @@ impl App {
         changes: usize,
     ) {
         if let Some(start) = self.turn_content_start.take() {
-            self.blocks.truncate(start);
+            for index in start..self.blocks.len() {
+                self.hidden.insert(index);
+            }
         }
         self.streaming = None;
         let answer = answer.trim();
@@ -417,7 +436,7 @@ impl App {
         }
         // Tab and Shift+Tab switch the session mode, even while a prompt is
         // open; the prompt itself is navigated with the arrow keys.
-        if key.code == KeyCode::Tab || key.code == KeyCode::BackTab {
+        if key.code == KeyCode::Tab {
             return Some(Command::ToggleMode);
         }
         if self.pending.is_some() {
@@ -440,6 +459,12 @@ impl App {
                 }
                 KeyCode::Char('l') => {
                     self.blocks.clear();
+                    self.hidden.clear();
+                    None
+                }
+                KeyCode::Char('o') => {
+                    self.show_process = !self.show_process;
+                    self.follow = true;
                     None
                 }
                 _ => None,
@@ -508,12 +533,11 @@ impl App {
                 None
             }
             KeyCode::PageUp => {
-                self.follow = false;
-                self.scroll = self.scroll.saturating_sub(10);
+                self.page_up();
                 None
             }
             KeyCode::PageDown => {
-                self.scroll = self.scroll.saturating_add(10);
+                self.page_down();
                 None
             }
             _ => None,
@@ -531,6 +555,36 @@ impl App {
         self.history_pos = Some(position);
         self.input = self.history[position].chars().collect();
         self.cursor = self.input.len();
+    }
+
+    fn page_up(&mut self) {
+        let max = self
+            .content_lines
+            .get()
+            .saturating_sub(self.viewport_lines.get());
+        let current = if self.follow {
+            max
+        } else {
+            self.scroll.min(max)
+        };
+        self.scroll = current.saturating_sub(10);
+        self.follow = false;
+    }
+
+    fn page_down(&mut self) {
+        let max = self
+            .content_lines
+            .get()
+            .saturating_sub(self.viewport_lines.get());
+        let current = if self.follow {
+            max
+        } else {
+            self.scroll.min(max)
+        };
+        self.scroll = (current + 10).min(max);
+        if self.scroll >= max {
+            self.follow = true;
+        }
     }
 
     fn history_down(&mut self) {
@@ -573,7 +627,7 @@ impl App {
             KeyCode::Enter if count > 0 => {
                 let option = &job.request.options[self.pending_choice.min(count - 1)];
                 let response = if job.request.kind == InteractionKind::PermissionApproval {
-                    parse_response(&job.request, &option.id)
+                    permission_response(&job.request, &option.id)
                 } else {
                     InteractionResponse::Selected {
                         option: option.id.clone(),
@@ -600,7 +654,7 @@ impl App {
                 Some(parse_response(&job.request, "allow_scope"))
             }
             KeyCode::Char('f') | KeyCode::Char('4') if permission => {
-                Some(parse_response(&job.request, "full_auto"))
+                Some(permission_response(&job.request, "full_auto"))
             }
             KeyCode::Char(character) if !permission => character
                 .to_digit(10)
@@ -628,13 +682,18 @@ impl App {
             self.full_auto = true;
             self.permission = "full_auto".to_owned();
         }
-        self.notice(format!("interaction: {}", describe(&response)));
         self.answer(job, response);
     }
 
     fn transcript(&self, width: usize) -> Vec<Line<'static>> {
+        let visible: Vec<(usize, &Block)> = self
+            .blocks
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| self.show_process || !self.hidden.contains(index))
+            .collect();
         let mut lines = Vec::new();
-        for (index, block) in self.blocks.iter().enumerate() {
+        for (position, (_, block)) in visible.iter().enumerate() {
             let (prefix, text, style) = match &block.kind {
                 BlockKind::User => ("› ", block.text.clone(), Style::default().fg(Color::Cyan)),
                 BlockKind::Assistant => ("", block.text.clone(), Style::default().fg(Color::White)),
@@ -667,27 +726,14 @@ impl App {
             for line in wrap_text(&format!("{prefix}{text}"), width) {
                 lines.push(Line::from(Span::styled(line, style)));
             }
-            let next_is_summary = self
-                .blocks
-                .get(index + 1)
-                .is_some_and(|next| matches!(&next.kind, BlockKind::Summary));
+            let next_is_summary = visible
+                .get(position + 1)
+                .is_some_and(|(_, next)| matches!(&next.kind, BlockKind::Summary));
             if !matches!(&block.kind, BlockKind::Summary) && !next_is_summary {
                 lines.push(Line::from(""));
             }
         }
         lines
-    }
-}
-
-fn describe(response: &InteractionResponse) -> &'static str {
-    match response {
-        InteractionResponse::Approved { .. } => "approved",
-        InteractionResponse::Rejected { .. } => "denied",
-        InteractionResponse::Deferred => "deferred",
-        InteractionResponse::Cancelled => "cancelled",
-        InteractionResponse::Selected { .. } => "selected",
-        InteractionResponse::Freeform { .. } => "answered",
-        InteractionResponse::TimedOut => "timed out",
     }
 }
 
@@ -790,6 +836,7 @@ pub async fn run(host: TuiHost) -> Result<ExitCode, KernelError> {
             Some(key) = key_rx.recv() => {
                 let CrosstermEvent::Key(key) = key else { continue };
                 match app.handle_key(key) {
+
                     Some(Command::Submit(input)) => start_turn(&mut app, driver.clone(), turn_tx.clone(), input),
                     Some(Command::Slash(command)) => run_slash(&mut app, &command, store.as_ref()),
                     Some(Command::ToggleMode) => toggle_mode(&mut app, &driver),
@@ -824,21 +871,30 @@ pub async fn run(host: TuiHost) -> Result<ExitCode, KernelError> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// The UI mode lasts for the session, so its full-auto option uses the same
+/// long TTL as the Tab switch; other scopes keep the line UI's defaults.
+fn permission_response(request: &InteractionRequest, id: &str) -> InteractionResponse {
+    if id == "full_auto" {
+        InteractionResponse::Approved {
+            scope: GrantScope::FullAutoSession { ttl: MODE_TTL },
+        }
+    } else {
+        parse_response(request, id)
+    }
+}
+
 fn toggle_mode(app: &mut App, driver: &TurnDriver<HostModel>) {
     if app.base_full_auto {
-        app.notice("mode: full_auto (fixed by the profile)");
         return;
     }
     if app.full_auto {
         driver.revoke_permission_grants();
         app.full_auto = false;
         app.permission = "workspace_auto".to_owned();
-        app.notice("mode: workspace_auto");
     } else {
-        driver.escalate_full_auto(Duration::from_secs(8 * 60 * 60));
+        driver.escalate_full_auto(MODE_TTL);
         app.full_auto = true;
         app.permission = "full_auto".to_owned();
-        app.notice("mode: full_auto (8 h)");
     }
 }
 
@@ -914,13 +970,24 @@ fn draw(app: &App, frame: &mut Frame) {
     );
 
     let lines = app.transcript(chunks[1].width as usize);
+    let content = lines.len();
     let visible = chunks[1].height as usize;
+    app.content_lines.set(content);
+    app.viewport_lines.set(visible);
     let offset = if app.follow {
-        lines.len().saturating_sub(visible)
+        content.saturating_sub(visible)
     } else {
-        app.scroll.min(lines.len().saturating_sub(visible))
+        app.scroll.min(content.saturating_sub(visible))
     };
     frame.render_widget(Paragraph::new(lines).scroll((offset as u16, 0)), chunks[1]);
+    if content > visible {
+        let mut state = ScrollbarState::new(content).position(offset);
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight),
+            chunks[1],
+            &mut state,
+        );
+    }
 
     if let Some(job) = &app.pending {
         draw_prompt(job, app.pending_choice, frame, chunks[2]);
@@ -940,22 +1007,41 @@ fn draw(app: &App, frame: &mut Frame) {
         chunks[3],
     );
 
-    let usage = format!(
-        "{} in · {} out · {} cached",
-        app.usage.input, app.usage.output, app.usage.cached
-    );
-    let status = if app.running {
-        format!(" ● working · {usage} · Ctrl-C cancel · PgUp/PgDn scroll ")
+    let usage = if app.usage.cached > 0 {
+        format!(
+            "{} in · {} out · {} cached",
+            app.usage.input, app.usage.output, app.usage.cached
+        )
     } else {
-        format!(" ● ready · {usage} · Enter send · Tab mode · /help ")
+        format!("{} in · {} out", app.usage.input, app.usage.output)
     };
+    let left = if app.running {
+        format!(" ● working · {usage}")
+    } else {
+        format!(" ● ready · {usage}")
+    };
+    let right = if app.running {
+        "Ctrl-C cancel · PgUp/PgDn "
+    } else if app.show_process && !app.hidden.is_empty() {
+        "Ctrl-O hide · Tab mode · /help "
+    } else if !app.hidden.is_empty() {
+        "Ctrl-O details · Tab mode · /help "
+    } else {
+        "Tab mode · /help "
+    };
+    let footer = Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)])
+        .split(chunks[4]);
+    let status_style = Style::default().fg(if app.running {
+        Color::Yellow
+    } else {
+        Color::DarkGray
+    });
+    frame.render_widget(Paragraph::new(left).style(status_style), footer[0]);
     frame.render_widget(
-        Paragraph::new(status).style(Style::default().fg(if app.running {
-            Color::Yellow
-        } else {
-            Color::DarkGray
-        })),
-        chunks[4],
+        Paragraph::new(right)
+            .alignment(Alignment::Right)
+            .style(Style::default().fg(Color::DarkGray)),
+        footer[1],
     );
 }
 
@@ -1193,18 +1279,49 @@ mod tests {
         assert!(app.blocks.iter().any(
             |block| matches!(&block.kind, BlockKind::Summary) && block.text.contains("1 tool")
         ));
-        assert!(!app
-            .blocks
+        let collapsed = transcript_text(&app, 80);
+        assert!(!collapsed.contains("partial"), "{collapsed}");
+        assert!(!collapsed.contains("echo"), "{collapsed}");
+
+        app.show_process = true;
+        let expanded = transcript_text(&app, 80);
+        assert!(expanded.contains("partial"), "{expanded}");
+        assert!(expanded.contains("echo"), "{expanded}");
+    }
+
+    fn transcript_text(app: &App, width: usize) -> String {
+        app.transcript(width)
             .iter()
-            .any(|block| matches!(&block.kind, BlockKind::Tool { .. })));
-        assert!(!app
-            .blocks
-            .iter()
-            .any(|block| block.text.contains("partial")));
-        assert!(app
-            .blocks
-            .iter()
-            .any(|block| matches!(&block.kind, BlockKind::User)));
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn page_up_starts_at_the_bottom_and_page_down_returns_to_it() {
+        let mut app = app();
+        app.content_lines.set(100);
+        app.viewport_lines.set(20);
+
+        app.page_up();
+        assert_eq!(app.scroll, 70);
+        assert!(!app.follow);
+
+        app.page_up();
+        assert_eq!(app.scroll, 60);
+
+        app.page_down();
+        assert_eq!(app.scroll, 70);
+        assert!(!app.follow);
+
+        app.page_down();
+        assert_eq!(app.scroll, 80);
+        assert!(app.follow);
     }
 
     fn permission_job(prompt: &str) -> (InteractionJob, oneshot::Receiver<InteractionResponse>) {
@@ -1266,10 +1383,17 @@ mod tests {
     fn tab_requests_a_mode_toggle() {
         let mut app = app();
         assert_eq!(app.handle_key(key(KeyCode::Tab)), Some(Command::ToggleMode));
-        assert_eq!(
-            app.handle_key(key(KeyCode::BackTab)),
-            Some(Command::ToggleMode)
-        );
+        assert_eq!(app.handle_key(ctrl('o')), None);
+    }
+
+    #[test]
+    fn ctrl_o_toggles_process_details() {
+        let mut app = app();
+        assert!(!app.show_process);
+        assert_eq!(app.handle_key(ctrl('o')), None);
+        assert!(app.show_process);
+        app.handle_key(ctrl('o'));
+        assert!(!app.show_process);
     }
 
     #[test]
@@ -1284,7 +1408,8 @@ mod tests {
         golden("tui-empty.txt", &rendered);
         assert!(rendered.contains("Keel · coding · mock · session s"));
         assert!(rendered.contains("> ▏"));
-        assert!(rendered.contains("Enter send"));
+        assert!(rendered.contains("● ready"));
+        assert!(rendered.contains("Tab mode"));
     }
 
     #[test]

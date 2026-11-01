@@ -21,4 +21,4 @@ hello from the model
 ┌ message ─────────────────────────────────────────────────────────────────────┐
 │> ▏                                                                           │
 └──────────────────────────────────────────────────────────────────────────────┘
- ● working · 0 in · 0 out · 0 cached · Ctrl-C cancel · PgUp/PgDn scroll
+ ● working · 0 in · 0 out                             Ctrl-C cancel · PgUp/PgDn
