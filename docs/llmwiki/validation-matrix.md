@@ -11,9 +11,9 @@ claim of failure.
 | Context governor and watermarks | Window matrix 8k-1M | 15-chapter novel | None | No |
 | Topic segmentation | Unit tests | 15-chapter, 24-turn | None | No |
 | Segment records / digests | Window matrix | 15-chapter | None | No |
-| Rolling memo | Unit tests | 15-chapter, 24-turn, local 26B | `no-memo` | No |
+| Rolling memo | Unit tests, reasoning-none test | 15-chapter, 24-turn, 57-turn, local 26B | `no-memo` | No |
 | Recall | Unit tests, IDF suite | 24-turn A/B, 15-chapter, local 26B 8k/16k | `no-recall` | No |
-| Task state / closure / locked list | Unit tests | 15-chapter, local chapter | `no-todo` | No |
+| Task state / closure / locked list | Unit tests, revert on failure | 15-chapter, 57-turn, local chapter | `no-todo` | No |
 | Derived current task | Unit tests | 15-chapter A/B | None | No |
 | Bounded live tool results | Unit tests | 15-chapter, local chapter | `unbounded` | No |
 | Mid-turn elision | Unit tests | 15-chapter | None (no close-only arm) | No |

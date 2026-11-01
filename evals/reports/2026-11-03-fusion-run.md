@@ -294,6 +294,25 @@ Remaining quality issue: a 39% summary fallback rate is high. The fallback is
 deterministic and safe, but it means the model-written memo is absent on those
 turns. The summariser prompt or the empty-text handling deserves a probe.
 
+### Follow-up: the memo fallback cause
+
+The cause was reasoning at the output cap. A direct DeepSeek probe with the
+summariser's settings:
+
+| `reasoning_effort` | Completion tokens | Reasoning | Content | Finish |
+|---|---|---|---|---|
+| `low` | 200 (cap) | 548 chars | 40 chars | length |
+| `none` | 69 | 0 | 123 chars | stop |
+
+At `low` the model spends the whole output budget on reasoning and returns
+almost no summary text, so the kernel falls back. `ReasoningLevel::None` now
+maps to `reasoning_effort: "none"` and the summariser uses it.
+
+A 3-turn live run with acceptance produced two memo revisions (2,470 and 3,225
+characters), both `fallback=false`, with acceptance 3/3. A first 3-turn attempt
+without acceptance produced no summaries at all: ADR 0006 seals a segment after
+a turn passes acceptance, so the memo cadence depends on the host's checklist.
+
 ## Local 26B attempt
 
 The local Gemma 4 26B was run at 32k server context and a 20k working set with

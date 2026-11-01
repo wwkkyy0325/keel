@@ -80,14 +80,19 @@ host is shared, so the run uses the remote DeepSeek endpoint.
       on 22 of 56 revisions and held.
 - [x] Add per-call cache telemetry and a cost model. Verify: `call:` lines,
       `cache-economics.md`, 246 tests.
-- [ ] Probe the 39% memo fallback rate (20 empty summaries, 2 short). The
-      structured fallback kept the run alive, but the model-written memo was
-      absent on those turns.
-- [ ] Consider evidence-gating host task completion: a task marked `completed`
-      without the expected artifact, or a turn that fails acceptance, should
-      not leave the list closed as `completed`. Host-side revert or kernel
-      evidence rule; not implemented. The 26B micro-slice showed the list can
-      close while a chapter file is missing.
+- [x] Probe the 39% memo fallback rate (20 empty summaries, 2 short). The
+      cause was reasoning at the output cap: a DeepSeek probe with
+      `reasoning_effort: low` spent 548 tokens on reasoning, 40 on content and
+      hit the 200-token limit; `reasoning_effort: none` returned 90 content
+      tokens and no reasoning. `ReasoningLevel::None` now maps to `"none"` and
+      the summarizer uses it. Verify: wire test, summarizer test, and a 3-turn
+      real run with acceptance. The first 3-turn attempt had no summary calls
+      at all because a segment only seals after a turn passes acceptance; the
+      rerun produced two model-written revisions (2,470 and 3,225 chars), both
+      `fallback=false`.
+- [x] Evidence-gate host task completion: the CLI snapshots the task list
+      before each turn and restores it when the turn fails and acceptance does
+      not pass. Verify: `a_failed_turn_restores_the_task_list`.
 
 ## Verify criteria
 

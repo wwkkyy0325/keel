@@ -926,6 +926,22 @@
   design must stay in a small working set.
 - Verification: 247 tests; fmt and clippy clean.
 
+### Summarizer reasoning and task evidence
+
+- The 39% memo fallback rate was reasoning at the output cap. A DeepSeek probe
+  with `reasoning_effort: low` spent 548 tokens on reasoning and 40 on content,
+  hitting a 200-token limit; `reasoning_effort: none` spent 0 on reasoning and
+  returned 90 content tokens. `ReasoningLevel::None` now maps to `"none"` and
+  the summarizer uses it, so the output budget goes to the summary.
+- The CLI snapshots the host task list before each turn. When a turn fails and
+  its checklist does not pass, the snapshot is restored before a retry or a
+  stop, so a failed turn cannot leave tasks completed without the artifact.
+- Verification: 249 tests. A 3-turn live run with acceptance produced two
+  model-written memo revisions (2,470 and 3,225 chars) with
+  `fallback=false`; the first attempt had no summaries because a segment only
+  seals after the previous turn passed acceptance, which ADR 0006 already
+  specifies.
+
 ### Fusion run completed at 24k
 
 - The full 57-turn novel finished on DeepSeek with the 24k profile, per-turn
