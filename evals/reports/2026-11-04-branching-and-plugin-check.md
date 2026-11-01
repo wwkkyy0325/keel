@@ -66,6 +66,30 @@ PATH, so it does not add a runtime dependency to the workspace.
   persisted sequence; only the live label restarts.
 - Checkpoints are not pruned; storage grows with the transcript. That is host
   policy and is left open.
-- Server-initiated requests (sampling, roots) are still ignored.
-- The nested-schema JSON fallback still clips the raw schema at 600 characters;
-  the field/type/example description is not implemented.
+- Server-initiated requests were ignored when this run was made; the stdio
+  path now answers them (see the follow-up). HTTP still drops them.
+- The nested-schema JSON fallback still clipped the raw schema when this run
+  was made; the field/type/example description landed afterwards.
+
+## Follow-up: nested schema description and server requests
+
+- Nested schemas still use one `arguments` string, but the description now
+  carries the shape. For the memory server's `create_entities` it reads:
+
+  `entities: array of object (required); entities[].entityType: string
+  (required); entities[].name: string (required); entities[].observations:
+  array of string Example: {"entities":[{"entityType":"text","name":"text",
+  "observations":["text"]}]}`
+
+  bounded at 900 characters. The raw-schema clip that could cut fields off
+  the end is gone.
+- Server-initiated requests over stdio now get answers: `ping` returns `{}`,
+  `roots/list` returns `{"roots":[{"uri":"file:///...","name":"workspace"}]}`,
+  and other methods (including sampling) get `-32601`. The client advertises
+  `roots` with `listChanged: false`.
+- The Python fixture now sends `roots/list` before its initialize response and
+  exposes `roots_seen`; the test asserts the URI the server received equals the
+  workspace URI the client computed. The fixture therefore reports two tools,
+  where the earlier probe in this report saw one.
+- Streamable HTTP does not answer server requests yet; the SSE body parser
+  only returns the response matching the client's id.

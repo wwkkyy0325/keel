@@ -41,11 +41,18 @@ unchanged. MCP is the structured path; the shell tool is the unstructured one.
       source of truth, a changed file needs a host restart, and
       `--plugins-check` gates the save. Rejected in-process reload: the registry is immutable for
       a turn and a mid-turn tool swap has no correctness story.
-- [ ] Handle server-initiated requests (sampling, roots) instead of ignoring
-      them.
-- [ ] Improve the JSON fallback description for nested schemas: show fields,
-      types, required names and a minimal example instead of a clipped raw
-      schema. No kernel change.
+- [x] Handle stdio server requests: `ping` is acknowledged, `roots/list`
+      returns the workspace as a `file://` URI, and everything else is refused
+      with JSON-RPC `-32601` instead of being ignored. Sampling is deliberately
+      refused: it would spend tokens and send context outside the kernel's
+      permission and audit path. Verify: the Python fixture asks for roots
+      before the initialize response and `roots_seen` returns the same URI.
+- [ ] Server requests over streamable HTTP: the SSE body parser still drops
+      them; only stdio answers.
+- [x] Improve the JSON fallback description for nested schemas: fields, types,
+      required names and a minimal example, bounded at 900 characters, instead
+      of a clipped raw schema. Verify:
+      `a_nested_schema_is_described_with_fields_and_an_example`.
 - [x] Test a third server family on a non-Node runtime: a Python stdlib SQLite
       server (`evals/harness/fixtures/mcp_sqlite_server.py`) passed probe,
       initialize, tools/list and tools/call (create, insert, select).

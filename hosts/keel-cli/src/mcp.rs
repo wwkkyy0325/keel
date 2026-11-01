@@ -106,10 +106,12 @@ fn kill_tree(child: &mut Child) {
 struct McpServer {
     transport: Transport,
     next_id: u64,
+    /// Workspace advertised through the `roots` capability.
+    root: PathBuf,
 }
 
 impl McpServer {
-    async fn spawn(command: &str, args: &[String]) -> Result<Self, String> {
+    async fn spawn(command: &str, args: &[String], root: &Path) -> Result<Self, String> {
         let program = command;
         let mut command = Command::new(program);
         command
@@ -141,10 +143,11 @@ impl McpServer {
                 lines: BufReader::new(stdout).lines(),
             })),
             next_id: 1,
+            root: root.to_path_buf(),
         })
     }
 
-    fn http(url: String) -> Self {
+    fn http(url: String, root: &Path) -> Self {
         Self {
             transport: Transport::Http {
                 client: reqwest::Client::new(),
@@ -152,6 +155,7 @@ impl McpServer {
                 session: None,
             },
             next_id: 1,
+            root: root.to_path_buf(),
         }
     }
 
@@ -212,6 +216,7 @@ impl McpServer {
         self.next_id = self.next_id.saturating_add(1);
         let message = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
         let body = self.send(&message).await?;
+        let root = self.root.clone();
         match &mut self.transport {
             Transport::Stdio(inner) => loop {
                 let line = timeout(REQUEST_TIMEOUT, inner.lines.next_line())
@@ -222,8 +227,26 @@ impl McpServer {
                 let value: Value = serde_json::from_str(&line)
                     .map_err(|error| format!("invalid JSON from server: {error}"))?;
                 if value.get("id").and_then(Value::as_u64) != Some(id) {
-                    // Notifications and server-initiated requests are ignored
-                    // in this version; the tool path does not depend on them.
+                    // A server request has a method and an id; a notification
+                    // has no id. Answering requests keeps servers that ask for
+                    // roots or ping from waiting; sampling is refused.
+                    if let (Some(method), Some(request_id)) =
+                        (value.get("method").and_then(Value::as_str), value.get("id"))
+                    {
+                        let reply = server_request_reply(method, request_id, &root);
+                        let mut line = reply.to_string();
+                        line.push('\n');
+                        inner
+                            .stdin
+                            .write_all(line.as_bytes())
+                            .await
+                            .map_err(|error| format!("cannot answer server request: {error}"))?;
+                        inner
+                            .stdin
+                            .flush()
+                            .await
+                            .map_err(|error| format!("cannot flush server stdin: {error}"))?;
+                    }
                     continue;
                 }
                 return response_result(value);
@@ -245,7 +268,7 @@ impl McpServer {
             "initialize",
             json!({
                 "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": {},
+                "capabilities": {"roots": {"listChanged": false}},
                 "clientInfo": {"name": "keel", "version": "0.1.0"}
             }),
         )
@@ -265,6 +288,43 @@ impl McpServer {
     async fn call_tool(&mut self, name: &str, arguments: Value) -> Result<Value, String> {
         self.request("tools/call", json!({"name": name, "arguments": arguments}))
             .await
+    }
+}
+
+/// Answers a request the server sent to this client.
+///
+/// `roots/list` returns the workspace and `ping` is acknowledged; anything else
+/// is refused with a JSON-RPC error instead of being ignored. Sampling is
+/// deliberately refused: it would spend the user's tokens and send context to
+/// the server without going through the kernel's permission and audit path.
+fn server_request_reply(method: &str, id: &Value, root: &Path) -> Value {
+    match method {
+        "ping" => json!({"jsonrpc": "2.0", "id": id, "result": {}}),
+        "roots/list" => json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": {"roots": [{"uri": workspace_uri(root), "name": "workspace"}]}
+        }),
+        _ => json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": {
+                "code": -32601,
+                "message": format!("`{method}` is not supported by this client")
+            }
+        }),
+    }
+}
+
+fn workspace_uri(root: &Path) -> String {
+    let path = root
+        .to_string_lossy()
+        .replace('\\', "/")
+        .replace(' ', "%20");
+    if path.starts_with('/') {
+        format!("file://{path}")
+    } else {
+        format!("file:///{path}")
     }
 }
 
@@ -344,9 +404,10 @@ impl McpTool {
             None => {
                 // The schema has nested objects or object arrays. A flat
                 // parameter list would drop them or reject the model's
-                // arguments, so the whole call becomes one JSON string.
-                let compact = serde_json::to_string(&schema).unwrap_or_default();
-                let compact = compact.chars().take(600).collect::<String>();
+                // arguments, so the whole call becomes one JSON string. The
+                // description carries the structure instead of the raw schema,
+                // which was clipped before it reached the fields.
+                let shape = describe_schema(&schema);
                 (
                     vec![ParamSpec {
                         name: "arguments".to_owned(),
@@ -354,9 +415,7 @@ impl McpTool {
                         required: false,
                     }],
                     ParamMode::Json,
-                    format!(
-                        "{description} Pass one JSON object in `arguments` matching: {compact}"
-                    ),
+                    format!("{description} Pass one JSON object in `arguments`. {shape}"),
                 )
             }
         };
@@ -475,13 +534,13 @@ pub struct ServerStatus {
 /// A failing server does not stop the others; the caller reports each line and
 /// decides the exit code. The transports are dropped at the end of each probe,
 /// which kills the server process tree.
-pub async fn check(path: &Path) -> Result<Vec<ServerStatus>, KernelError> {
+pub async fn check(path: &Path, root: &Path) -> Result<Vec<ServerStatus>, KernelError> {
     let file = read_plugin_file(path)?;
     let mut statuses = Vec::new();
     for server in file.servers {
         let started = std::time::Instant::now();
         let result = async {
-            let mut running = connect(&server).await?;
+            let mut running = connect(&server, root).await?;
             running.initialize().await?;
             Ok::<usize, String>(running.list_tools().await?.len())
         }
@@ -506,11 +565,11 @@ fn read_plugin_file(path: &Path) -> Result<PluginFile, KernelError> {
     })
 }
 
-async fn connect(server: &ServerConfig) -> Result<McpServer, String> {
+async fn connect(server: &ServerConfig, root: &Path) -> Result<McpServer, String> {
     if let Some(url) = &server.url {
-        Ok(McpServer::http(url.clone()))
+        Ok(McpServer::http(url.clone(), root))
     } else if let Some(command) = &server.command {
-        McpServer::spawn(command, &server.args).await
+        McpServer::spawn(command, &server.args, root).await
     } else {
         Err("set either `command` or `url`".to_owned())
     }
@@ -525,7 +584,7 @@ pub async fn load(
     let file = read_plugin_file(path)?;
     let mut names = Vec::new();
     for server in file.servers {
-        let mut running = match connect(&server).await {
+        let mut running = match connect(&server, root).await {
             Ok(server) => server,
             Err(error) => {
                 eprintln!("plugin `{}` skipped: {error}", server.name);
@@ -611,6 +670,126 @@ fn params_from_schema(schema: &Value) -> Option<Vec<ParamSpec>> {
     Some(params)
 }
 
+/// Describes a nested schema for the JSON fallback parameter.
+///
+/// The model sees one `arguments` string, so the description must carry the
+/// structure: field names, types, required names and a minimal example. A
+/// clipped raw schema often lost the fields at the end.
+fn describe_schema(schema: &Value) -> String {
+    let mut parts = Vec::new();
+    describe_fields(schema, "", &mut parts);
+    let mut text = if parts.is_empty() {
+        "It is an object with no declared fields.".to_owned()
+    } else {
+        parts.join("; ")
+    };
+    if let Ok(example) = serde_json::to_string(&example_value(schema)) {
+        text.push_str(" Example: ");
+        text.push_str(&example);
+    }
+    clip(&text, 900)
+}
+
+fn describe_fields(schema: &Value, prefix: &str, parts: &mut Vec<String>) {
+    let label = type_label(schema);
+    if label == "array of object" || label == "array of array" {
+        parts.push(if prefix.is_empty() {
+            label.to_owned()
+        } else {
+            format!("{prefix}: {label}")
+        });
+        if let Some(items) = schema.get("items") {
+            describe_object(items, &format!("{prefix}[]."), parts);
+        }
+    } else if label == "object" {
+        describe_object(schema, prefix, parts);
+    }
+}
+
+fn describe_object(schema: &Value, prefix: &str, parts: &mut Vec<String>) {
+    let required: Vec<&str> = schema
+        .get("required")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
+        return;
+    };
+    for (name, property) in properties {
+        let label = type_label(property);
+        let required = if required.contains(&name.as_str()) {
+            " (required)"
+        } else {
+            ""
+        };
+        parts.push(format!("{prefix}{name}: {label}{required}"));
+        if label == "object" {
+            describe_object(property, &format!("{prefix}{name}."), parts);
+        } else if label == "array of object" {
+            if let Some(items) = property.get("items") {
+                describe_object(items, &format!("{prefix}{name}[]."), parts);
+            }
+        }
+    }
+}
+
+fn type_label(schema: &Value) -> &'static str {
+    match schema.get("type").and_then(Value::as_str) {
+        Some("string") => "string",
+        Some("integer") => "integer",
+        Some("number") => "number",
+        Some("boolean") => "boolean",
+        Some("object") => "object",
+        Some("array") => match schema
+            .get("items")
+            .and_then(|items| items.get("type"))
+            .and_then(Value::as_str)
+        {
+            Some("object") => "array of object",
+            Some("array") => "array of array",
+            Some("string") => "array of string",
+            Some("integer") | Some("number") => "array of number",
+            Some("boolean") => "array of boolean",
+            _ => "array",
+        },
+        _ => "value",
+    }
+}
+
+fn example_value(schema: &Value) -> Value {
+    match schema.get("type").and_then(Value::as_str) {
+        Some("object") => {
+            let mut object = serde_json::Map::new();
+            if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
+                for (name, property) in properties {
+                    object.insert(name.clone(), example_value(property));
+                }
+            }
+            Value::Object(object)
+        }
+        Some("array") => {
+            let item = schema
+                .get("items")
+                .map(example_value)
+                .unwrap_or_else(|| Value::String("text".to_owned()));
+            Value::Array(vec![item])
+        }
+        Some("string") => Value::String("text".to_owned()),
+        Some("integer") | Some("number") => Value::from(0),
+        Some("boolean") => Value::Bool(false),
+        _ => Value::String("text".to_owned()),
+    }
+}
+
+fn clip(text: &str, limit: usize) -> String {
+    if text.chars().count() <= limit {
+        return text.to_owned();
+    }
+    let mut clipped: String = text.chars().take(limit).collect();
+    clipped.push_str("...");
+    clipped
+}
+
 fn arguments_json(params: &[ParamSpec], args: &ToolArgs) -> Value {
     let mut object = serde_json::Map::new();
     for param in params {
@@ -692,6 +871,66 @@ mod tests {
             }
         });
         assert!(params_from_schema(&schema).is_none());
+    }
+
+    #[test]
+    fn a_nested_schema_is_described_with_fields_and_an_example() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "entities": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "entityType": {"type": "string"},
+                            "observations": {
+                                "type": "array",
+                                "items": {"type": "string"}
+                            }
+                        },
+                        "required": ["name", "entityType"]
+                    }
+                }
+            },
+            "required": ["entities"]
+        });
+        let text = describe_schema(&schema);
+        assert!(
+            text.contains("entities: array of object (required)"),
+            "{text}"
+        );
+        assert!(
+            text.contains("entities[].name: string (required)"),
+            "{text}"
+        );
+        assert!(
+            text.contains("entities[].observations: array of string"),
+            "{text}"
+        );
+        assert!(text.contains("Example: {\"entities\":[{\""), "{text}");
+        assert!(text.contains("\"observations\":[\"text\"]"), "{text}");
+        assert!(
+            text.chars().count() <= 901,
+            "the description must stay bounded"
+        );
+    }
+
+    #[test]
+    fn server_requests_are_answered_by_method() {
+        let root = Path::new("workspace root");
+        let ping = server_request_reply("ping", &json!(7), root);
+        assert_eq!(ping["result"], json!({}));
+        assert_eq!(ping["id"], json!(7));
+
+        let roots = server_request_reply("roots/list", &json!("r1"), root);
+        assert_eq!(roots["result"]["roots"][0]["name"], "workspace");
+        let uri = roots["result"]["roots"][0]["uri"].as_str().unwrap();
+        assert!(uri.ends_with("/workspace%20root"), "{uri}");
+
+        let refused = server_request_reply("sampling/createMessage", &json!(8), root);
+        assert_eq!(refused["error"]["code"], json!(-32601));
     }
 
     #[test]
@@ -827,7 +1066,7 @@ mod tests {
             format!("http://{address}/mcp")
         }
 
-        let mut server = McpServer::http(mock_server().await);
+        let mut server = McpServer::http(mock_server().await, Path::new("."));
         server.initialize().await.unwrap();
         let tools = server.list_tools().await.unwrap();
         assert_eq!(tools.len(), 1);
@@ -872,18 +1111,21 @@ mod tests {
         )
         .unwrap();
 
-        let statuses = check(&plugins).await.unwrap();
+        let statuses = check(&plugins, dir.path()).await.unwrap();
         assert_eq!(statuses.len(), 1);
         assert!(statuses[0].error.is_none(), "{:?}", statuses[0].error);
-        assert_eq!(statuses[0].tools, 1);
+        assert_eq!(statuses[0].tools, 2);
 
         let mut server = McpServer::spawn(
             "python",
             &[fixture.display().to_string(), db.display().to_string()],
+            dir.path(),
         )
         .await
         .unwrap();
         server.initialize().await.unwrap();
+        let roots = server.call_tool("roots_seen", json!({})).await.unwrap();
+        assert_eq!(render_content(&roots), workspace_uri(dir.path()));
         server
             .call_tool("sqlite_query", json!({"sql": "CREATE TABLE t (n INTEGER)"}))
             .await

@@ -1161,3 +1161,21 @@
 - Verify: wrapped (`cmd /c python`) and direct servers reported ready, a broken
   command reported failed with exit 1, and both server PIDs were gone after the
   probe. 278 tests; fmt, clippy and deny clean.
+
+### Plugin protocol depth
+
+- The JSON fallback description for nested MCP schemas no longer clips the raw
+  schema. It now lists each field with its type and required mark, recurses
+  into object arrays (`entities[].name`), and appends a minimal example,
+  bounded at 900 characters. The model still passes one `arguments` string;
+  only the description changed.
+- A stdio server may now send requests to the client. `ping` is acknowledged,
+  `roots/list` returns the workspace as a `file://` URI, and other methods
+  (including sampling) get a JSON-RPC `-32601` error instead of silence. The
+  roots capability is advertised during initialize with `listChanged: false`.
+- Streamable-HTTP responses still drop server-initiated requests; only stdio
+  answers them. Sampling remains refused by design: it spends tokens and sends
+  context outside the kernel's permission and audit path.
+- Verify: `a_nested_schema_is_described_with_fields_and_an_example`,
+  `server_requests_are_answered_by_method`, and the Python fixture end to end
+  (it asks for roots during initialize and `roots_seen` returns the same URI).

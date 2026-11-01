@@ -60,7 +60,7 @@ async fn run() -> Result<ExitCode, KernelError> {
             .plugins
             .as_deref()
             .ok_or_else(|| invalid_config("`--plugins-check` needs `--plugins <file>`"))?;
-        return check_plugins(path).await;
+        return check_plugins(path, &args.workspace).await;
     }
     let mut store = match &args.store {
         Some(path) => Some(store::Store::open(path)?),
@@ -1020,8 +1020,11 @@ fn parse_fork(value: &str) -> Result<(String, u32), KernelError> {
 }
 
 /// Probes every configured MCP server and reports one line per server.
-async fn check_plugins(path: &std::path::Path) -> Result<ExitCode, KernelError> {
-    let statuses = mcp::check(path).await?;
+async fn check_plugins(
+    path: &std::path::Path,
+    root: &std::path::Path,
+) -> Result<ExitCode, KernelError> {
+    let statuses = mcp::check(path, root).await?;
     let mut failed = 0;
     for status in &statuses {
         match &status.error {
