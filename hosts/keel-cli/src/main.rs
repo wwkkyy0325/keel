@@ -1,4 +1,5 @@
 mod acceptance;
+mod mcp;
 mod store;
 mod terminal;
 
@@ -116,6 +117,10 @@ async fn run() -> Result<ExitCode, KernelError> {
     ))))?;
     if let Some(todos) = &todos {
         registry.register(Arc::new(TodoTool::new(todos.clone())))?;
+    }
+    if let Some(path) = &args.plugins {
+        let names = mcp::load(path, permissions.root(), &mut registry).await?;
+        config.visible_tool_names.extend(names);
     }
     let registry = Arc::new(registry);
 
@@ -748,6 +753,8 @@ struct Args {
     session_id: String,
     /// Keep the turn-start message list in the store.
     context_snapshots: bool,
+    /// Plugin file listing MCP servers to load.
+    plugins: Option<PathBuf>,
 }
 
 fn parse_args() -> Result<Args, KernelError> {
@@ -768,6 +775,7 @@ fn parse_args() -> Result<Args, KernelError> {
     let mut store = None;
     let mut session_id = "default".to_owned();
     let mut context_snapshots = false;
+    let mut plugins = None;
     let mut workspace = std::env::current_dir().map_err(|error| KernelError::Io {
         message: error.to_string(),
     })?;
@@ -864,6 +872,12 @@ fn parse_args() -> Result<Args, KernelError> {
             "--context-snapshots" => {
                 context_snapshots = true;
             }
+            "--plugins" => {
+                plugins =
+                    Some(PathBuf::from(args.next().ok_or_else(|| {
+                        invalid_config("missing value for `--plugins`")
+                    })?));
+            }
             "--turn-timeout-ms" => {
                 let value = args
                     .next()
@@ -903,6 +917,7 @@ fn parse_args() -> Result<Args, KernelError> {
         store,
         session_id,
         context_snapshots,
+        plugins,
     })
 }
 
