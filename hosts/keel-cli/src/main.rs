@@ -2,6 +2,7 @@ mod acceptance;
 mod mcp;
 mod store;
 mod terminal;
+mod tui;
 mod view;
 
 use std::path::PathBuf;
@@ -10,8 +11,8 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use keel_core::{
-    AcceptanceItem, ArgValue, CancelToken, Event, KernelError, ModelError, ModelProvider,
-    ModelRequest, ModelStream, Policy, Session, TodoList, ToolArgs,
+    AcceptanceItem, ArgValue, CancelToken, Event, InteractionPort, KernelError, ModelChunk,
+    ModelError, ModelProvider, ModelRequest, ModelStream, Policy, Session, TodoList, ToolArgs,
 };
 use keel_model_openai::{OpenAiConfig, OpenAiProvider};
 use keel_runtime::{
@@ -27,6 +28,20 @@ use terminal::TerminalInteractionPort;
 enum HostModel {
     Mock(MockModel),
     OpenAi(OpenAiProvider),
+    /// Forwards text deltas to the TUI while the driver consumes the stream.
+    Tui {
+        inner: Box<HostModel>,
+        ui: tokio::sync::mpsc::Sender<tui::UiEvent>,
+    },
+}
+
+impl HostModel {
+    fn with_ui(self, ui: tokio::sync::mpsc::Sender<tui::UiEvent>) -> Self {
+        Self::Tui {
+            inner: Box::new(self),
+            ui,
+        }
+    }
 }
 
 #[async_trait]
@@ -39,6 +54,22 @@ impl ModelProvider for HostModel {
         match self {
             Self::Mock(model) => model.stream(request, cancel).await,
             Self::OpenAi(model) => model.stream(request, cancel).await,
+            Self::Tui { inner, ui } => {
+                let mut stream = inner.stream(request, cancel).await?;
+                let ui = ui.clone();
+                let (tx, rx) = tokio::sync::mpsc::channel(64);
+                tokio::spawn(async move {
+                    while let Some(chunk) = stream.recv().await {
+                        if let Ok(ModelChunk::TextDelta(text)) = &chunk {
+                            let _ = ui.send(tui::UiEvent::Text(text.clone())).await;
+                        }
+                        if tx.send(chunk).await.is_err() {
+                            break;
+                        }
+                    }
+                });
+                Ok(ModelStream::new(rx))
+            }
         }
     }
 }
@@ -252,12 +283,27 @@ async fn run() -> Result<ExitCode, KernelError> {
     validate_config(&config, &registry, &context)?;
 
     let events = Arc::new(EventLog::new());
+    let (ui_tx, ui_rx) = tokio::sync::mpsc::channel(256);
+    let (interaction_port, tui_interactions): (
+        Arc<dyn InteractionPort>,
+        Option<tokio::sync::mpsc::Receiver<tui::InteractionJob>>,
+    ) = if args.tui {
+        let (port, receiver) = tui::interaction_pair();
+        (Arc::new(port), Some(receiver))
+    } else {
+        (Arc::new(TerminalInteractionPort), None)
+    };
     let interactions = Arc::new(InteractionBroker::new(
-        Arc::new(TerminalInteractionPort),
+        interaction_port,
         config.interaction,
         events.clone(),
     ));
     let model = build_model(&config, &args.input, args.session)?;
+    let model = if args.tui {
+        model.with_ui(ui_tx)
+    } else {
+        model
+    };
     let policy: Arc<dyn Policy> = Arc::new(config.clone());
     let options = KernelOptions {
         recall: !args.no_recall,
@@ -304,6 +350,22 @@ async fn run() -> Result<ExitCode, KernelError> {
         Some(snapshot) => driver.with_session(Session::restore(snapshot)?),
         None => driver,
     };
+
+    if args.tui {
+        let interactions = tui_interactions
+            .ok_or_else(|| invalid_config("TUI interaction channel was not created"))?;
+        return tui::run(tui::TuiHost {
+            driver,
+            config,
+            events,
+            todos,
+            store,
+            session_id: args.session_id,
+            interactions,
+            ui: ui_rx,
+        })
+        .await;
+    }
 
     if args.session {
         return run_session(SessionHost {
@@ -923,6 +985,8 @@ struct Args {
     /// Keep at most this many branch checkpoints per session. The store keeps
     /// 20 by default; 0 keeps all.
     keep_checkpoints: Option<u32>,
+    /// Run the interactive terminal UI.
+    tui: bool,
     /// Machine-readable output for `--plugins-check`.
     json: bool,
     /// Print a composed frontend view (`sessions`, `session`, `turn` or
@@ -960,6 +1024,7 @@ fn parse_args() -> Result<Args, KernelError> {
     let mut fork_from = None;
     let mut delete_session = None;
     let mut keep_checkpoints = None;
+    let mut tui = false;
     let mut json = false;
     let mut view = None;
     let mut turn = None;
@@ -1029,6 +1094,9 @@ fn parse_args() -> Result<Args, KernelError> {
             }
             "--unbounded-tools" => {
                 unbounded_tools = true;
+            }
+            "--tui" => {
+                tui = true;
             }
             "--turn-input" => {
                 turn_input =
@@ -1190,6 +1258,7 @@ fn parse_args() -> Result<Args, KernelError> {
         fork_from,
         delete_session,
         keep_checkpoints,
+        tui,
         json,
         view,
         turn,

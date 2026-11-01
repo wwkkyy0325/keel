@@ -50,7 +50,7 @@ impl InteractionPort for TerminalInteractionPort {
     }
 }
 
-fn parse_response(request: &InteractionRequest, input: &str) -> InteractionResponse {
+pub(crate) fn parse_response(request: &InteractionRequest, input: &str) -> InteractionResponse {
     if input.is_empty() {
         return InteractionResponse::Deferred;
     }

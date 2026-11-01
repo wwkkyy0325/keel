@@ -1,0 +1,24 @@
+ Keel · coding · mock · session s · workspace_auto
+· type a request; /help lists commands
+
+> say hello
+
+hello from the model
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+┌ message ─────────────────────────────────────────────────────────────────────┐
+│> ▏                                                                           │
+└──────────────────────────────────────────────────────────────────────────────┘
+ ● working · Ctrl-C cancel · PgUp/PgDn scroll

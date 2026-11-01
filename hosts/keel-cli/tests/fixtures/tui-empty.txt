@@ -1,0 +1,24 @@
+ Keel · coding · mock · session s · workspace_auto
+· type a request; /help lists commands
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+┌ message ─────────────────────────────────────────────────────────────────────┐
+│> ▏                                                                           │
+└──────────────────────────────────────────────────────────────────────────────┘
+ ● ready · Enter send · Ctrl-C quit · /help

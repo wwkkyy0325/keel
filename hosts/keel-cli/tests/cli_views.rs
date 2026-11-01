@@ -60,6 +60,21 @@ fn seed_session(workspace: &Path, store: &Path, session: &str) {
 }
 
 #[test]
+fn the_tui_requires_an_interactive_terminal() {
+    let output = cli(
+        &["--tui", "--profile", "variants/companion/profile.toml"],
+        None,
+    );
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("interactive terminal"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn a_session_persists_every_turn_after_the_event_log_is_cleared() {
     let dir = tempfile::tempdir().unwrap();
     let workspace = dir.path().join("ws");
