@@ -75,9 +75,10 @@ async fn run() -> Result<ExitCode, KernelError> {
     if let Some(store) = store.as_mut() {
         store.set_checkpoint_limit(args.keep_checkpoints);
     }
-    if (args.limit != 0 || args.before.is_some()) && args.view.as_deref() != Some("session") {
+    let windowed = matches!(args.view.as_deref(), Some("session" | "events"));
+    if (args.limit != 0 || args.before.is_some()) && !windowed {
         return Err(invalid_config(
-            "`--limit` and `--before` apply to `--view session`",
+            "`--limit` and `--before` apply to `--view session` or `--view events`",
         ));
     }
     if let Some(name) = &args.view {
@@ -112,6 +113,20 @@ async fn run() -> Result<ExitCode, KernelError> {
                     )));
                 };
                 print_json(&detail)?;
+            }
+            "events" => {
+                let window = view::TurnWindow {
+                    limit: args.limit,
+                    before: args.before,
+                };
+                let Some(events) = view::events(store.connection(), &args.session_id, window)?
+                else {
+                    return Err(invalid_config(format!(
+                        "session `{}` not found",
+                        args.session_id
+                    )));
+                };
+                print_json(&events)?;
             }
             "memory" => {
                 let Some(memory) = view::memory(store.connection(), &args.session_id)? else {
@@ -308,6 +323,7 @@ async fn run() -> Result<ExitCode, KernelError> {
             todos.as_ref(),
             &args.input,
             &outcome,
+            &events,
         )?;
     }
     done_or_error(outcome)?;
@@ -417,6 +433,7 @@ async fn run_session(mut host: SessionHost<'_>) -> Result<ExitCode, KernelError>
                 host.todos,
                 input,
                 &outcome,
+                host.events,
             )?;
         }
         if host.stop_on_error && !outcome.is_done() && !recovered {
@@ -448,6 +465,7 @@ fn save_turn(
     todos: Option<&Arc<Mutex<TodoList>>>,
     input: &str,
     outcome: &TurnOutcome,
+    events: &EventLog,
 ) -> Result<(), KernelError> {
     let todo_snapshot = todos.map(|list| {
         list.lock()
@@ -476,6 +494,21 @@ fn save_turn(
     })
     .to_string();
     let state = outcome.state.to_string();
+    let error_text = outcome
+        .error
+        .as_ref()
+        .map(|error| format!("{} ({})", error, error.code().as_str()));
+    let event_payloads: Vec<(String, String)> = events
+        .for_turn(outcome.turn_id)
+        .iter()
+        .map(|record| {
+            let payload =
+                serde_json::to_string(&record.event).map_err(|error| KernelError::Internal {
+                    message: format!("cannot encode event: {error}"),
+                })?;
+            Ok((record.event.name().to_owned(), payload))
+        })
+        .collect::<Result<Vec<_>, KernelError>>()?;
     let seq = store.next_turn_seq(session_id)?;
     store.save(
         session_id,
@@ -489,7 +522,9 @@ fn save_turn(
             answer_json: &answer_json,
             usage_json: &usage,
             duration_ms: outcome.duration_ms,
+            error: error_text.as_deref(),
             context: outcome.context.as_ref(),
+            events: &event_payloads,
         }),
     )
 }

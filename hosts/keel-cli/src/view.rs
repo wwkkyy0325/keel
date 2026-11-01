@@ -97,6 +97,8 @@ pub struct TurnView {
     pub usage: UsageView,
     pub duration_ms: u64,
     pub created_at: i64,
+    /// Kernel error text and code, when the turn did not finish.
+    pub error: Option<String>,
 }
 
 /// The structured answer, decoded by the host.
@@ -132,6 +134,17 @@ pub struct UsageView {
 pub struct TurnDetailView {
     pub turn: TurnView,
     pub context: Option<ContextView>,
+    pub events: Vec<EventView>,
+}
+
+/// One persisted kernel event.
+#[derive(Debug, Serialize)]
+pub struct EventView {
+    pub turn: u32,
+    pub seq: u32,
+    pub name: String,
+    pub payload: serde_json::Value,
+    pub created_at: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -396,7 +409,7 @@ fn turns(conn: &Connection, id: &str, window: TurnWindow) -> Result<Vec<TurnView
     let mut statement = conn
         .prepare(
             "SELECT seq, state, input, answer, answer_json, usage_json,
-                    duration_ms, created_at
+                    duration_ms, created_at, error
              FROM turns
              WHERE session_id = ?1
                AND seq < COALESCE(?2, 9223372036854775807)
@@ -430,6 +443,7 @@ fn turn_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TurnView> {
         usage: decode_usage(&usage_json),
         duration_ms: u64::try_from(row.get::<_, i64>(6)?).unwrap_or(0),
         created_at: row.get(7)?,
+        error: row.get(8)?,
     })
 }
 
@@ -438,7 +452,7 @@ pub fn turn(conn: &Connection, id: &str, seq: u32) -> Result<Option<TurnDetailVi
     let turn = conn
         .query_row(
             "SELECT seq, state, input, answer, answer_json, usage_json,
-                    duration_ms, created_at
+                    duration_ms, created_at, error
              FROM turns WHERE session_id = ?1 AND seq = ?2",
             rusqlite::params![id, seq],
             turn_from_row,
@@ -448,6 +462,7 @@ pub fn turn(conn: &Connection, id: &str, seq: u32) -> Result<Option<TurnDetailVi
     let Some(turn) = turn else {
         return Ok(None);
     };
+    let events = event_rows(conn, id, Some(seq))?;
     let context = conn
         .query_row(
             "SELECT estimate, budget, stages_json, messages_json
@@ -466,7 +481,97 @@ pub fn turn(conn: &Connection, id: &str, seq: u32) -> Result<Option<TurnDetailVi
         )
         .optional()
         .map_err(view_error)?;
-    Ok(Some(TurnDetailView { turn, context }))
+    Ok(Some(TurnDetailView {
+        turn,
+        context,
+        events,
+    }))
+}
+
+/// Kernel events for one session, paged by turns like the session view.
+pub fn events(
+    conn: &Connection,
+    id: &str,
+    window: TurnWindow,
+) -> Result<Option<Vec<EventView>>, KernelError> {
+    let exists: Option<i64> = conn
+        .query_row("SELECT 1 FROM sessions WHERE id = ?1", [id], |row| {
+            row.get(0)
+        })
+        .optional()
+        .map_err(view_error)?;
+    if exists.is_none() {
+        return Ok(None);
+    }
+    if window.limit == 0 && window.before.is_none() {
+        return event_rows(conn, id, None).map(Some);
+    }
+    // The window is described in turns; find the oldest turn of the page and
+    // return every event in that range.
+    let limit = if window.limit == 0 {
+        -1
+    } else {
+        i64::from(window.limit)
+    };
+    let floor: Option<i64> = conn
+        .query_row(
+            "SELECT seq FROM turns
+             WHERE session_id = ?1
+               AND seq < COALESCE(?2, 9223372036854775807)
+             ORDER BY seq DESC
+             LIMIT ?3",
+            rusqlite::params![id, window.before, limit],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(view_error)?;
+    let Some(floor) = floor else {
+        return Ok(Some(Vec::new()));
+    };
+    let mut statement = conn
+        .prepare(
+            "SELECT turn_seq, seq, name, payload_json, created_at FROM events
+             WHERE session_id = ?1
+               AND turn_seq >= ?2
+               AND turn_seq < COALESCE(?3, 9223372036854775807)
+             ORDER BY turn_seq, seq",
+        )
+        .map_err(view_error)?;
+    let rows = statement
+        .query_map(rusqlite::params![id, floor, window.before], event_from_row)
+        .map_err(view_error)?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map(Some)
+        .map_err(view_error)
+}
+
+fn event_rows(
+    conn: &Connection,
+    id: &str,
+    turn: Option<u32>,
+) -> Result<Vec<EventView>, KernelError> {
+    let mut statement = conn
+        .prepare(
+            "SELECT turn_seq, seq, name, payload_json, created_at FROM events
+             WHERE session_id = ?1 AND (?2 IS NULL OR turn_seq = ?2)
+             ORDER BY turn_seq, seq",
+        )
+        .map_err(view_error)?;
+    let rows = statement
+        .query_map(rusqlite::params![id, turn], event_from_row)
+        .map_err(view_error)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(view_error)
+}
+
+fn event_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<EventView> {
+    let payload: String = row.get(3)?;
+    Ok(EventView {
+        turn: count(row.get(0)?),
+        seq: count(row.get(1)?),
+        name: row.get(2)?,
+        payload: serde_json::from_str(&payload).unwrap_or(serde_json::Value::Null),
+        created_at: row.get(4)?,
+    })
 }
 
 /// The memory screen: fact versions and task revisions, oldest first.
@@ -573,6 +678,7 @@ mod tests {
         seq: u32,
         answer_json: &'a str,
         context: Option<&'a ContextSnapshot>,
+        events: &'a [(String, String)],
     ) -> StoredTurn<'a> {
         StoredTurn {
             seq,
@@ -583,6 +689,8 @@ mod tests {
             usage_json: r#"{"input":10,"output":5,"cached":4}"#,
             duration_ms: 12,
             context,
+            error: None,
+            events,
         }
     }
 
@@ -627,6 +735,13 @@ mod tests {
                 content: "prompt".to_owned(),
             }],
         };
+        let first_events = vec![
+            (
+                "turn_started".to_owned(),
+                r#"{"input":"prompt"}"#.to_owned(),
+            ),
+            ("turn_finished".to_owned(), r#"{"state":"Done"}"#.to_owned()),
+        ];
         let mut first = session.snapshot();
         first.facts.push(fact.clone());
         first.segments[0].record = Some(record.clone());
@@ -639,6 +754,7 @@ mod tests {
                     1,
                     r#"{"revision":1,"body":"first","changes":["a.py"],"pending":[],"verification":null,"notes":null,"missing":false}"#,
                     Some(&context),
+                    &first_events,
                 )),
             )
             .unwrap();
@@ -665,6 +781,7 @@ mod tests {
                     2,
                     r#"{"revision":1,"body":"second","changes":[],"pending":[],"verification":{"passed":true,"required_failed":[],"required_unverified":[]},"notes":null,"missing":false}"#,
                     None,
+                    &[],
                 )),
             )
             .unwrap();
@@ -759,10 +876,17 @@ mod tests {
         assert_eq!(context.messages[0].role, "user");
         assert_eq!(context.messages[0].content, "prompt");
 
+        assert_eq!(detail.events.len(), 2);
+        assert_eq!(detail.events[0].name, "turn_started");
+        assert_eq!(detail.events[0].payload["input"], "prompt");
+        assert_eq!(detail.events[1].name, "turn_finished");
+        assert!(detail.turn.error.is_none());
+
         let second = super::turn(store.connection(), "parent", 2)
             .unwrap()
             .unwrap();
         assert!(second.context.is_none());
+        assert!(second.events.is_empty());
         assert!(super::turn(store.connection(), "parent", 9)
             .unwrap()
             .is_none());
@@ -824,6 +948,81 @@ mod tests {
         .unwrap()
         .unwrap();
         assert!(empty.turns.is_empty());
+    }
+
+    #[test]
+    fn the_events_view_pages_with_the_turn_window() {
+        let (_dir, store) = seed();
+        let conn = store.connection();
+        let all = super::events(conn, "parent", TurnWindow::default())
+            .unwrap()
+            .unwrap();
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0].name, "turn_started");
+
+        let older = super::events(
+            conn,
+            "parent",
+            TurnWindow {
+                limit: 0,
+                before: Some(2),
+            },
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(older.len(), 2, "the window stops before turn 2");
+
+        let newest = super::events(
+            conn,
+            "parent",
+            TurnWindow {
+                limit: 1,
+                before: None,
+            },
+        )
+        .unwrap()
+        .unwrap();
+        assert!(newest.is_empty(), "turn 2 has no events in the seed");
+
+        assert!(super::events(conn, "missing", TurnWindow::default())
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn a_failed_turn_exposes_its_error_text() {
+        let (_dir, mut store) = seed();
+        let snapshot = store.load("parent").unwrap().unwrap().snapshot;
+        let events = vec![("turn_started".to_owned(), r#"{"input":"bad"}"#.to_owned())];
+        store
+            .save(
+                "parent",
+                &snapshot,
+                None,
+                Some(StoredTurn {
+                    seq: 3,
+                    input: "bad",
+                    state: "Error",
+                    answer: "",
+                    answer_json: "{}",
+                    usage_json: "{}",
+                    duration_ms: 1,
+                    error: Some("model failure (model_provider)"),
+                    context: None,
+                    events: &events,
+                }),
+            )
+            .unwrap();
+
+        let detail = super::turn(store.connection(), "parent", 3)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            detail.turn.error.as_deref(),
+            Some("model failure (model_provider)")
+        );
+        assert_eq!(detail.events.len(), 1);
+        assert_eq!(detail.events[0].name, "turn_started");
     }
 
     #[test]

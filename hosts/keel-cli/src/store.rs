@@ -19,7 +19,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use keel_core::{KernelError, SessionSnapshot, TodoList};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
-const SCHEMA_VERSION: i64 = 8;
+const SCHEMA_VERSION: i64 = 9;
 
 /// One stored session.
 pub struct StoredSession {
@@ -38,8 +38,12 @@ pub struct StoredTurn<'a> {
     pub answer_json: &'a str,
     pub usage_json: &'a str,
     pub duration_ms: u64,
+    /// Kernel error text with its code, when the turn did not finish.
+    pub error: Option<&'a str>,
     /// Turn-start message list, when the host enabled capture.
     pub context: Option<&'a keel_core::ContextSnapshot>,
+    /// Serialized kernel events in emission order: `(name, payload_json)`.
+    pub events: &'a [(String, String)],
 }
 
 /// A SQLite-backed host store.
@@ -80,6 +84,7 @@ impl Store {
                  state TEXT NOT NULL,
                  answer TEXT NOT NULL,
                  answer_json TEXT NOT NULL DEFAULT '{}',
+                 error TEXT,
                  usage_json TEXT NOT NULL,
                  duration_ms INTEGER NOT NULL,
                  created_at INTEGER NOT NULL
@@ -175,6 +180,15 @@ impl Store {
                  created_at INTEGER NOT NULL,
                  PRIMARY KEY (session_id, turn_seq)
              );
+             CREATE TABLE IF NOT EXISTS events (
+                 session_id TEXT NOT NULL,
+                 turn_seq INTEGER NOT NULL,
+                 seq INTEGER NOT NULL,
+                 name TEXT NOT NULL,
+                 payload_json TEXT NOT NULL,
+                 created_at INTEGER NOT NULL,
+                 PRIMARY KEY (session_id, turn_seq, seq)
+             );
              CREATE TABLE IF NOT EXISTS context_snapshots (
                  turn_id TEXT PRIMARY KEY,
                  session_id TEXT NOT NULL,
@@ -224,6 +238,12 @@ impl Store {
             "records",
             "turns",
             "ALTER TABLE records ADD COLUMN turns INTEGER NOT NULL DEFAULT 0",
+        )?;
+        ensure_column(
+            &conn,
+            "turns",
+            "error",
+            "ALTER TABLE turns ADD COLUMN error TEXT",
         )?;
         ensure_column(
             &conn,
@@ -334,8 +354,8 @@ impl Store {
             tx.execute(
                 "INSERT OR REPLACE INTO turns
                  (id, session_id, seq, input, state, answer, answer_json,
-                  usage_json, duration_ms, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                  error, usage_json, duration_ms, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
                     format!("{session_id}:{}", turn.seq),
                     session_id,
@@ -344,6 +364,7 @@ impl Store {
                     turn.state,
                     turn.answer,
                     turn.answer_json,
+                    turn.error,
                     turn.usage_json,
                     turn.duration_ms,
                     now,
@@ -371,6 +392,22 @@ impl Store {
                     ],
                 )
                 .map_err(|error| store_error("write context snapshot", error))?;
+            }
+            // Kernel events in emission order, for a UI or post-mortem. A
+            // re-save of the same turn replaces the previous stream.
+            tx.execute(
+                "DELETE FROM events WHERE session_id = ?1 AND turn_seq = ?2",
+                params![session_id, turn.seq],
+            )
+            .map_err(|error| store_error("replace events", error))?;
+            for (index, (name, payload)) in turn.events.iter().enumerate() {
+                tx.execute(
+                    "INSERT OR REPLACE INTO events
+                     (session_id, turn_seq, seq, name, payload_json, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![session_id, turn.seq, (index + 1) as i64, name, payload, now],
+                )
+                .map_err(|error| store_error("write event", error))?;
             }
             // The state after this turn, so a later branch can resume here
             // without replaying a memo the model wrote.
@@ -472,6 +509,14 @@ impl Store {
             params![target, source, turn],
         )
         .map_err(|error| store_error("copy turns", error))?;
+        tx.execute(
+            "INSERT INTO events
+             (session_id, turn_seq, seq, name, payload_json, created_at)
+             SELECT ?1, turn_seq, seq, name, payload_json, created_at
+             FROM events WHERE session_id = ?2 AND turn_seq <= ?3",
+            params![target, source, turn],
+        )
+        .map_err(|error| store_error("copy events", error))?;
         project(&tx, target, &snapshot, todos.as_ref(), now)
             .map_err(|error| store_error("project branch", error))?;
         tx.commit()
@@ -497,6 +542,7 @@ impl Store {
             return Ok(false);
         }
         for table in [
+            "events",
             "context_snapshots",
             "session_checkpoints",
             "fact_history",
@@ -981,6 +1027,8 @@ mod tests {
             usage_json: "{}",
             duration_ms: 5,
             context: Some(&context),
+            error: None,
+            events: &[],
         };
         store
             .save("s", &session.snapshot(), None, Some(turn))
@@ -1090,6 +1138,8 @@ mod tests {
             usage_json: "{}",
             duration_ms: 5,
             context: None,
+            error: None,
+            events: &[],
         };
         store
             .save("s", &session.snapshot(), None, Some(first))
@@ -1122,6 +1172,8 @@ mod tests {
             usage_json: "{}",
             duration_ms: 5,
             context: None,
+            error: None,
+            events: &[],
         };
         let error = store.save("s", &snapshot, None, Some(second)).unwrap_err();
         assert!(
@@ -1198,6 +1250,8 @@ mod tests {
             usage_json: "{}",
             duration_ms: 5,
             context: None,
+            error: None,
+            events: &[],
         }
     }
 
@@ -1422,6 +1476,66 @@ mod tests {
     }
 
     #[test]
+    fn events_and_errors_are_stored_with_the_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&dir.path().join("keel.db")).unwrap();
+        let session = keel_core::Session::new();
+        let events = vec![
+            ("turn_started".to_owned(), r#"{"input":"hi"}"#.to_owned()),
+            (
+                "permission_decided".to_owned(),
+                r#"{"decision":"allow"}"#.to_owned(),
+            ),
+        ];
+        let turn = StoredTurn {
+            seq: 1,
+            input: "hi",
+            state: "Error",
+            answer: "",
+            answer_json: "{}",
+            usage_json: "{}",
+            duration_ms: 3,
+            error: Some("model failure (model_provider)"),
+            context: None,
+            events: &events,
+        };
+        store
+            .save("s", &session.snapshot(), None, Some(turn))
+            .unwrap();
+
+        let error: String = store
+            .conn
+            .query_row("SELECT error FROM turns WHERE seq = 1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(error, "model failure (model_provider)");
+        let names: Vec<String> = {
+            let mut statement = store
+                .conn
+                .prepare("SELECT name FROM events ORDER BY seq")
+                .unwrap();
+            statement
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect()
+        };
+        assert_eq!(names, vec!["turn_started", "permission_decided"]);
+
+        store.fork("s", 1, "branch").unwrap();
+        let copied: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM events WHERE session_id = 'branch'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(copied, 2, "a branch keeps the events of its turns");
+    }
+
+    #[test]
     fn an_unknown_session_loads_as_none() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(&dir.path().join("keel.db")).unwrap();
@@ -1442,6 +1556,8 @@ mod tests {
             usage_json: "{}",
             duration_ms: 5,
             context: None,
+            error: None,
+            events: &[],
         };
         store
             .save("s", &session.snapshot(), None, Some(turn))

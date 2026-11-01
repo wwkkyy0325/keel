@@ -163,6 +163,24 @@ fn views_are_emitted_by_the_cli_and_page_turns() {
     let memory: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert!(memory["facts"].is_array());
     assert!(memory["tasks"].is_array());
+
+    let output = cli(
+        &[
+            "--store",
+            store_text,
+            "--view",
+            "events",
+            "--session-id",
+            "s",
+        ],
+        None,
+    );
+    assert!(output.status.success());
+    let events: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let events = events.as_array().unwrap();
+    assert!(!events.is_empty(), "a stored turn persists its events");
+    assert!(events.iter().all(|event| event["name"].is_string()));
+    assert!(events.iter().any(|event| event["name"] == "turn_started"));
 }
 
 #[test]
