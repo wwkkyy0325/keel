@@ -1584,3 +1584,17 @@
   `page_up_starts_at_the_bottom_and_page_down_returns_to_it`,
   `tab_requests_a_mode_toggle`, updated goldens, and 342 workspace tests (270
   kernel-only). Task doc: `docs/llmwiki/tasks/tui.md`.
+
+### Claude-style layout and Shift+Tab
+
+- `Shift+Tab` is the mode key again, matching Claude Code; `Tab` is unbound.
+- Removed the top header: the workspace, model and permission mode now live in
+  the bottom status line, with key hints right-aligned on the same row. The
+  transcript starts at the top of the screen, the input box uses rounded
+  borders and no title, and the permission panel is rounded too.
+- This is an observable-behavior match only. The clean-room rule forbids
+  reading or copying another repository, so no opencode or Claude Code source
+  was used; the layout follows the documented interaction and the user's
+  screenshots.
+- Verify: `shift_tab_requests_a_mode_toggle`, updated goldens, and 342
+  workspace tests (270 kernel-only). Task doc: `docs/llmwiki/tasks/tui.md`.
