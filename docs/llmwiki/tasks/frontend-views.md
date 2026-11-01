@@ -32,6 +32,10 @@ view is tested without starting a UI.
 - [x] Golden file: seed a store, emit the session view, normalize timestamps
       and compare to `hosts/keel-cli/tests/fixtures/session-view.golden.json`.
       Verify: `the_session_view_matches_the_golden_file`.
+- [x] CLI contract tests: the real binary against a temporary store covers
+      `sessions`, `session` (including two paging calls), `turn`, `memory`,
+      fork, delete and the error exits, plus `--plugins-check --json`. Verify:
+      `hosts/keel-cli/tests/cli_views.rs`, four tests.
 - [ ] Event/audit timeline once events are stored.
 
 ## Rules

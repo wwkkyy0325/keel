@@ -41,7 +41,10 @@ keel-cli --store keel.db --view memory --session-id mem
 Invariants: the same store produces the same view (no clock, randomness or
 map iteration in the assembly); the view is read-only. Tests in
 `hosts/keel-cli/src/view.rs` assert every panel and that two calls serialize
-identically, so the frontend contract is verified without starting a UI.
+identically, and `hosts/keel-cli/tests/cli_views.rs` runs the real binary
+against a temporary store to cover the commands, paging, fork/delete, error
+exits and the plugin status JSON. The frontend contract is verified without
+starting a UI.
 
 ## Three layers of "the final answer"
 

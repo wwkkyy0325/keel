@@ -1281,3 +1281,14 @@
 - Verify: `a_turn_window_pages_backward_in_ascending_order` (all, newest one,
   older page, empty page) and a CLI smoke of pages 9-11 then 7-8 on the memory
   store.
+
+### View contract through the real binary
+
+- `hosts/keel-cli/tests/cli_views.rs` runs the compiled binary against a
+  temporary store: it seeds two turns with the mock profile, then asserts
+  `sessions`, `session`, two paged `session` calls, `turn`, `memory`, fork,
+  branch metadata, delete, and the non-zero exits for a missing session and a
+  cursor on the wrong view. It also parses `--plugins-check --json`.
+- This is the frontend contract at the same boundary a UI uses, so a frontend
+  test can reuse the commands without starting the app.
+- Verify: 294 tests; fmt, clippy and deny clean.
