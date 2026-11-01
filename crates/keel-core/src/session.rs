@@ -1339,7 +1339,11 @@ fn extract_facts(segment: &Segment) -> Vec<FactCandidate> {
         );
     }
 
-    if segment.verified {
+    // A verified conversation turn is not a fact about the world. Only a
+    // verified segment that produced artifacts records a completed task; a
+    // Q&A turn would otherwise store its own question as a "verified" fact and
+    // crowd the memory block.
+    if segment.verified && !segment.artifacts.is_empty() {
         upsert_candidate(
             &mut candidates,
             FactCandidate {
@@ -2010,6 +2014,44 @@ mod fact_tests {
         assert!(session.global_facts().is_empty());
         assert_eq!(session.facts().len(), 1);
         assert!(session.facts()[0].statement.contains("must keep"));
+    }
+
+    #[test]
+    fn a_verified_answer_without_artifacts_is_not_a_fact() {
+        let mut session = Session::new();
+        session.record_turn(TurnRecord {
+            input: "what is the project name",
+            text: "the project is blue whale",
+            tools: &[],
+            artifacts: &[],
+            pending: &[],
+            verified: true,
+        });
+
+        session.begin_turn("next question");
+
+        assert!(session.facts().is_empty());
+    }
+
+    #[test]
+    fn a_verified_task_with_artifacts_is_a_fact() {
+        let mut session = Session::new();
+        let artifacts = vec!["notes.md".to_owned()];
+        session.record_turn(TurnRecord {
+            input: "write the notes",
+            text: "notes written",
+            tools: &[],
+            artifacts: &artifacts,
+            pending: &[],
+            verified: true,
+        });
+
+        session.begin_turn("next question");
+
+        assert!(session
+            .facts()
+            .iter()
+            .any(|fact| fact.key.starts_with("verified:")));
     }
 
     #[test]
