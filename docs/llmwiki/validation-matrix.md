@@ -50,11 +50,11 @@ claim of failure.
 
 | Ability | Kernel test | Real run | Gap |
 |---|---|---|---|
-| Information extraction | Fact scope tests, record extraction | 24-turn, 15-chapter | No standard scenario set |
-| Multi-session reasoning | None | None | M5 persistence |
-| Temporal reasoning | None | None | No event-time model |
-| Knowledge updates | Contradiction, supersede, forget tests | Memo rewrite | No cross-session conflict policy |
-| Abstention | Unrelated recall test | 24-turn probes | No answer-level check; acceptance would be host-side |
+| Information extraction | Fact scope tests, record extraction | 24-turn, 15-chapter, two-process memory eval | `不要` instructions still parse as constraints |
+| Multi-session reasoning | Snapshot restore test | Two-process eval: 3/3 stored facts answered | One scenario set, one model |
+| Temporal reasoning | None | Not tested | No event-time model |
+| Knowledge updates | Contradiction, supersede, forget tests | Memo rewrite; eval answered 海鸥 after the update | No subject-level supersede; both rows remain |
+| Abstention | Unrelated recall test | Two-process eval refused a car plate | Answer-level check is model-dependent |
 
 ## Known gaps
 

@@ -998,6 +998,13 @@
   record plus memo revision 1 (1,447 chars); the next turn sealed again and
   appended revision 2 (1,802 chars); `session_current.summary_revision = 2`.
 - `fact_history` and `todo_history` remain for a later slice.
+- Multi-session memory eval: two processes, one store, companion 8k: 9/9 Done,
+  6/6 answers (three stored facts, an update answered `海鸥`, and an explicit
+  refusal for a car plate). The first run stored 16 facts, eight of them
+  `verified: <question>`; verified segments now record a fact only when they
+  produced artifacts. The rerun stored 8 facts with the same answers.
+  Remaining: `不要` imperative noise, subject-level supersede, temporal
+  untested. Report: `evals/reports/2026-11-04-memory-multi-session.md`.
 - `docs/llmwiki/frontend-contract.md` fixes the read path: canonical queries,
   the current-state view, and the rule that a frontend never parses the resume
   snapshot or writes to the database. It names the three answer layers (turn
