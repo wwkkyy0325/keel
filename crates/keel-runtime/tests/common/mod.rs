@@ -64,10 +64,16 @@ pub fn standard_registry(root: &Path) -> Arc<ToolRegistry> {
     registry
         .register(Arc::new(keel_runtime::ShellTool::coding_defaults()))
         .unwrap();
+    let trash: Arc<dyn keel_runtime::TrashStore> =
+        Arc::new(LocalTrashStore::new(root.to_path_buf()));
     registry
-        .register(Arc::new(WriteFileTool::new(Arc::new(
-            LocalTrashStore::new(root.to_path_buf()),
-        ))))
+        .register(Arc::new(WriteFileTool::new(trash.clone())))
+        .unwrap();
+    registry
+        .register(Arc::new(keel_runtime::ListTrashTool::new(trash.clone())))
+        .unwrap();
+    registry
+        .register(Arc::new(keel_runtime::RestoreFileTool::new(trash)))
         .unwrap();
     Arc::new(registry)
 }

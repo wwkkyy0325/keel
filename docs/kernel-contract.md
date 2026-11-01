@@ -38,6 +38,14 @@ Stable within a major version:
   and tail (64 KiB per stream), `read_file` refuses a file over 8 MiB, and a
   timed-out or cancelled command kills its process tree. A host may wrap the
   tools but should not raise these silently.
+- Command launch: on Windows a bare program name that is not found falls back
+  to a `.cmd`/`.bat` shim on PATH, so allowlisted package managers start
+  without a shell.
+- Trash recovery: `TrashStore::list`/`find` (defaults report that a backend
+  cannot list) and the `list_trash`/`restore_file` tools. `restore_file` takes
+  the target path from the tool argument, so the permission gate approves the
+  real file; an entry is accepted only for its recorded path, and the current
+  version is backed up first.
 - The profile schema loaded by `keel-policy`; unknown fields are errors.
 - The snapshot JSON written by `Session::snapshot`; `format_version` is
   `SNAPSHOT_VERSION`, and `Session::restore` rejects a newer format.

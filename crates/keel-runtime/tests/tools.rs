@@ -6,7 +6,8 @@ use keel_core::{
     AccessKind, ArgValue, CancelToken, ErrorCode, Tool, ToolArgs, ToolCallId, ToolCtx, TurnId,
 };
 use keel_runtime::{
-    CodeSearchTool, ListDirTool, LocalTrashStore, ReadFileTool, ShellTool, WriteFileTool,
+    CodeSearchTool, ListDirTool, ListTrashTool, LocalTrashStore, ReadFileTool, RestoreFileTool,
+    ShellTool, TrashStore, WriteFileTool,
 };
 
 fn ctx(root: &Path) -> ToolCtx {
@@ -41,10 +42,17 @@ async fn overwriting_backs_up_the_previous_version() {
     );
 
     let trash = dir.path().join(".keel").join("trash");
-    let mut entries = std::fs::read_dir(&trash).unwrap();
-    let entry = entries.next().unwrap().unwrap();
-    assert!(entries.next().is_none());
-    assert_eq!(std::fs::read_to_string(entry.path()).unwrap(), "old");
+    let mut files: Vec<_> = std::fs::read_dir(&trash)
+        .unwrap()
+        .map(|entry| entry.unwrap())
+        .filter(|entry| entry.path().is_file())
+        .collect();
+    assert_eq!(files.len(), 1, "one data file");
+    assert_eq!(
+        std::fs::read_to_string(files.remove(0).path()).unwrap(),
+        "old"
+    );
+    assert!(trash.join("meta").is_dir(), "the original path is recorded");
 }
 
 #[tokio::test]
@@ -171,6 +179,119 @@ async fn shell_rejects_programs_outside_the_allowlist() {
         result.error().map(|error| error.code),
         Some(ErrorCode::InvalidArguments)
     );
+}
+
+#[tokio::test]
+async fn restore_file_restores_the_newest_backup_and_keeps_the_current_version() {
+    let dir = tempfile::tempdir().unwrap();
+    let trash: Arc<dyn TrashStore> = Arc::new(LocalTrashStore::new(dir.path().to_path_buf()));
+    let writer = WriteFileTool::new(trash.clone());
+    assert!(writer
+        .call(args("notes.txt", "old"), &ctx(dir.path()))
+        .await
+        .is_success());
+    assert!(writer
+        .call(args("notes.txt", "new"), &ctx(dir.path()))
+        .await
+        .is_success());
+
+    let mut restore_args = ToolArgs::new();
+    restore_args.insert("path", ArgValue::String("notes.txt".to_owned()));
+    let result = RestoreFileTool::new(trash.clone())
+        .call(restore_args, &ctx(dir.path()))
+        .await;
+
+    assert!(result.is_success(), "{:?}", result.error());
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("notes.txt")).unwrap(),
+        "old"
+    );
+    let entries = trash.list(10).await.unwrap();
+    assert!(entries
+        .iter()
+        .any(|entry| std::fs::read_to_string(&entry.stored).unwrap() == "new"));
+}
+
+#[tokio::test]
+async fn restore_file_reports_a_missing_backup() {
+    let dir = tempfile::tempdir().unwrap();
+    let trash: Arc<dyn TrashStore> = Arc::new(LocalTrashStore::new(dir.path().to_path_buf()));
+    let mut restore_args = ToolArgs::new();
+    restore_args.insert("path", ArgValue::String("missing.txt".to_owned()));
+
+    let result = RestoreFileTool::new(trash)
+        .call(restore_args, &ctx(dir.path()))
+        .await;
+
+    assert_eq!(
+        result.error().map(|error| error.code),
+        Some(ErrorCode::NotFound)
+    );
+}
+
+#[tokio::test]
+async fn restore_file_rejects_an_entry_for_another_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let trash: Arc<dyn TrashStore> = Arc::new(LocalTrashStore::new(dir.path().to_path_buf()));
+    let writer = WriteFileTool::new(trash.clone());
+    assert!(writer
+        .call(args("a.txt", "a old"), &ctx(dir.path()))
+        .await
+        .is_success());
+    assert!(writer
+        .call(args("a.txt", "a new"), &ctx(dir.path()))
+        .await
+        .is_success());
+    assert!(writer
+        .call(args("b.txt", "b"), &ctx(dir.path()))
+        .await
+        .is_success());
+    let entry = trash
+        .list(10)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|entry| entry.original.ends_with("a.txt"))
+        .unwrap();
+
+    let mut restore_args = ToolArgs::new();
+    restore_args.insert("path", ArgValue::String("b.txt".to_owned()));
+    restore_args.insert("entry", ArgValue::String(entry.id));
+    let result = RestoreFileTool::new(trash)
+        .call(restore_args, &ctx(dir.path()))
+        .await;
+
+    assert_eq!(
+        result.error().map(|error| error.code),
+        Some(ErrorCode::InvalidArguments)
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("b.txt")).unwrap(),
+        "b"
+    );
+}
+
+#[tokio::test]
+async fn list_trash_names_the_backups_and_their_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    let trash: Arc<dyn TrashStore> = Arc::new(LocalTrashStore::new(dir.path().to_path_buf()));
+    let writer = WriteFileTool::new(trash.clone());
+    assert!(writer
+        .call(args("notes.txt", "old"), &ctx(dir.path()))
+        .await
+        .is_success());
+    assert!(writer
+        .call(args("notes.txt", "new"), &ctx(dir.path()))
+        .await
+        .is_success());
+
+    let result = ListTrashTool::new(trash)
+        .call(ToolArgs::new(), &ctx(dir.path()))
+        .await;
+
+    assert!(result.is_success());
+    let content = result.content().unwrap();
+    assert!(content.contains("notes.txt"), "{content}");
 }
 
 #[tokio::test]

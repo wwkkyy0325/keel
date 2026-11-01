@@ -38,7 +38,7 @@ budget_tokens = 16000            # working-set target per call, not the window
 compaction = ["trim", "rolling_summary", "llm_compact"]
 
 [tools]
-visible = ["shell", "read_file", "write_file", "list_dir", "code_search", "todo"]
+visible = ["shell", "read_file", "write_file", "list_trash", "restore_file", "list_dir", "code_search", "todo"]
 budget = 12
 allow_parallel_reads = true
 plan_mode = false

@@ -48,6 +48,33 @@ async fn a_large_output_is_truncated_and_bounded() {
     );
 }
 
+#[cfg(windows)]
+#[tokio::test]
+async fn a_windows_command_shim_is_resolved() {
+    let installed = std::env::var_os("PATH")
+        .map(|path| std::env::split_paths(&path).any(|dir| dir.join("npm.cmd").is_file()))
+        .unwrap_or(false);
+    if !installed {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let args = vec!["--version".to_owned()];
+
+    let output = command::run(
+        CommandSpec {
+            program: "npm",
+            args: &args,
+            cwd: dir.path(),
+            timeout: Duration::from_secs(60),
+        },
+        &CancelToken::new(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(output.exit_code, Some(0), "{}", output.output);
+}
+
 #[tokio::test]
 async fn a_timeout_returns_without_waiting_for_the_command() {
     if !python_available() {

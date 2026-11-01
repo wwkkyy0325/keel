@@ -725,6 +725,222 @@ impl Tool for WriteFileTool {
     }
 }
 
+/// Lists recoverable versions in the workspace trash, newest first.
+pub struct ListTrashTool {
+    trash: Arc<dyn TrashStore>,
+}
+
+impl ListTrashTool {
+    pub fn new(trash: Arc<dyn TrashStore>) -> Self {
+        Self { trash }
+    }
+}
+
+#[async_trait]
+impl Tool for ListTrashTool {
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "list_trash".to_owned(),
+            description: "List recoverable file versions in the workspace trash, newest first. \
+                          Pass the path to restore_file, or the entry id for one version."
+                .to_owned(),
+            risk: RiskLevel::ReadOnly,
+            params: vec![ParamSpec {
+                name: "limit".to_owned(),
+                kind: ParamKind::Integer,
+                required: false,
+            }],
+        }
+    }
+
+    fn permission_requests(&self, _args: &ToolArgs) -> Result<Vec<PermissionRequest>, ToolError> {
+        Ok(Vec::new())
+    }
+
+    async fn call(&self, args: ToolArgs, ctx: &ToolCtx) -> ToolResult {
+        if ctx.cancel.is_cancelled() {
+            return ToolResult::failure(ctx.call_id, "list_trash", ToolError::cancelled());
+        }
+        let limit = match args.get("limit") {
+            Some(ArgValue::Integer(value)) => (*value).clamp(1, 100) as usize,
+            Some(_) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "list_trash",
+                    ToolError::invalid_arguments("argument `limit` must be integer"),
+                )
+            }
+            None => 20,
+        };
+        match self.trash.list(limit).await {
+            Ok(entries) if entries.is_empty() => {
+                ToolResult::success(ctx.call_id, "list_trash", "no backups")
+            }
+            Ok(entries) => {
+                let mut text = String::new();
+                for entry in entries {
+                    text.push_str(&format!("{} {}\n", entry.id, entry.original.display()));
+                }
+                ToolResult::success(ctx.call_id, "list_trash", text)
+            }
+            Err(error) => ToolResult::failure(ctx.call_id, "list_trash", error),
+        }
+    }
+}
+
+/// Restores one file version from the trash.
+///
+/// The current file is backed up before the copy, so a restore is itself
+/// reversible. The target path is the one the permission gate approved; a
+/// trash entry is only accepted when it was recorded for that same path.
+pub struct RestoreFileTool {
+    trash: Arc<dyn TrashStore>,
+}
+
+impl RestoreFileTool {
+    pub fn new(trash: Arc<dyn TrashStore>) -> Self {
+        Self { trash }
+    }
+}
+
+#[async_trait]
+impl Tool for RestoreFileTool {
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "restore_file".to_owned(),
+            description: "Restore a file from the workspace trash. Uses the newest backup for \
+                          `path`, or the backup with the given `entry` id from list_trash. The \
+                          current version is backed up first."
+                .to_owned(),
+            risk: RiskLevel::Mutating,
+            params: vec![
+                ParamSpec {
+                    name: "path".to_owned(),
+                    kind: ParamKind::String,
+                    required: true,
+                },
+                ParamSpec {
+                    name: "entry".to_owned(),
+                    kind: ParamKind::String,
+                    required: false,
+                },
+            ],
+        }
+    }
+
+    fn permission_requests(&self, args: &ToolArgs) -> Result<Vec<PermissionRequest>, ToolError> {
+        let path = args.require_str("path")?;
+        Ok(vec![PermissionRequest {
+            tool: "restore_file".to_owned(),
+            access: AccessKind::Write,
+            path: Some(PathBuf::from(path)),
+            detail: None,
+        }])
+    }
+
+    async fn call(&self, args: ToolArgs, ctx: &ToolCtx) -> ToolResult {
+        if ctx.cancel.is_cancelled() {
+            return ToolResult::failure(ctx.call_id, "restore_file", ToolError::cancelled());
+        }
+        let path = match args.require_str("path") {
+            Ok(path) => path,
+            Err(error) => return ToolResult::failure(ctx.call_id, "restore_file", error),
+        };
+        let target = resolve_path(&ctx.workspace_root, Path::new(path));
+        let entry = match args.get("entry") {
+            Some(ArgValue::String(id)) => match self.trash.find(id).await {
+                Ok(entry) => entry,
+                Err(error) => return ToolResult::failure(ctx.call_id, "restore_file", error),
+            },
+            Some(_) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "restore_file",
+                    ToolError::invalid_arguments("argument `entry` must be string"),
+                )
+            }
+            // Restore needs the newest backup for this path, not merely one of
+            // the newest entries, so do not cap the scan.
+            None => match self.trash.list(usize::MAX).await {
+                Ok(entries) => match entries
+                    .into_iter()
+                    .find(|entry| same_path(&entry.original, &target))
+                {
+                    Some(entry) => entry,
+                    None => {
+                        return ToolResult::failure(
+                            ctx.call_id,
+                            "restore_file",
+                            ToolError::not_found(format!("no backup for `{path}`")),
+                        )
+                    }
+                },
+                Err(error) => return ToolResult::failure(ctx.call_id, "restore_file", error),
+            },
+        };
+        if !same_path(&entry.original, &target) {
+            return ToolResult::failure(
+                ctx.call_id,
+                "restore_file",
+                ToolError::invalid_arguments(format!(
+                    "trash entry `{}` belongs to `{}`, not `{path}`",
+                    entry.id,
+                    entry.original.display()
+                )),
+            );
+        }
+
+        let previous = match tokio::fs::metadata(&target).await {
+            Ok(metadata) if metadata.is_file() => match self.trash.backup(&target).await {
+                Ok(entry) => Some(entry),
+                Err(error) => return ToolResult::failure(ctx.call_id, "restore_file", error),
+            },
+            Ok(_) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "restore_file",
+                    ToolError::invalid_arguments(format!(
+                        "`{}` is not a regular file",
+                        target.display()
+                    )),
+                );
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                return ToolResult::failure(ctx.call_id, "restore_file", io_error(&error));
+            }
+        };
+
+        match tokio::fs::copy(&entry.stored, &target).await {
+            Ok(_) => {
+                let message = match previous {
+                    Some(previous) => format!(
+                        "restored {} from backup {} (previous version in trash as {})",
+                        target.display(),
+                        entry.id,
+                        previous.id
+                    ),
+                    None => format!("restored {} from backup {}", target.display(), entry.id),
+                };
+                ToolResult::success(ctx.call_id, "restore_file", message)
+            }
+            Err(error) => ToolResult::failure(ctx.call_id, "restore_file", io_error(&error)),
+        }
+    }
+}
+
+fn same_path(left: &Path, right: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
+    }
+    #[cfg(not(windows))]
+    {
+        left == right
+    }
+}
+
 fn io_error(error: &std::io::Error) -> ToolError {
     match error.kind() {
         std::io::ErrorKind::NotFound => ToolError::not_found(error.to_string()),

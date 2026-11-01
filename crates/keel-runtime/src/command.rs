@@ -4,14 +4,15 @@
 //! interpolation and no command string.
 
 use std::collections::VecDeque;
-use std::path::Path;
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use keel_core::{CancelToken, ToolError};
 use tokio::io::{AsyncRead, AsyncReadExt};
-use tokio::process::Command;
+use tokio::process::{Child, Command};
 use tokio::task::JoinHandle;
 
 /// Bytes kept from the start of one stream.
@@ -73,27 +74,7 @@ pub async fn run(spec: CommandSpec<'_>, cancel: &CancelToken) -> Result<CommandO
         return Err(ToolError::cancelled());
     }
 
-    let mut command = Command::new(spec.program);
-    command
-        .args(spec.args)
-        .current_dir(spec.cwd)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        // A timed-out wrapper must not leave its descendants running.
-        command.as_std_mut().process_group(0);
-    }
-    for (name, _) in std::env::vars() {
-        if is_sensitive_env(&name) {
-            command.env_remove(&name);
-        }
-    }
-
-    let mut child = command.spawn().map_err(|error| io_error(&error))?;
+    let mut child = spawn(&spec)?;
     let mut tree = TreeGuard::new(child.id());
     let stdout_capture = Arc::new(Mutex::new(Capture::default()));
     let stderr_capture = Arc::new(Mutex::new(Capture::default()));
@@ -140,6 +121,67 @@ pub async fn run(spec: CommandSpec<'_>, cancel: &CancelToken) -> Result<CommandO
         output: text,
         truncated: stdout_truncated || stderr_truncated,
     })
+}
+
+fn build(program: &OsStr, spec: &CommandSpec<'_>) -> Command {
+    let mut command = Command::new(program);
+    command
+        .args(spec.args)
+        .current_dir(spec.cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // A timed-out wrapper must not leave its descendants running.
+        command.as_std_mut().process_group(0);
+    }
+    for (name, _) in std::env::vars() {
+        if is_sensitive_env(&name) {
+            command.env_remove(&name);
+        }
+    }
+    command
+}
+
+fn spawn(spec: &CommandSpec<'_>) -> Result<Child, ToolError> {
+    match build(OsStr::new(spec.program), spec).spawn() {
+        Ok(child) => Ok(child),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            // npm, npx, pnpm and yarn are `.cmd` shims on Windows. CreateProcess
+            // does not resolve them from a bare name, so the allowlisted name
+            // would never start. Rust handles the batch-file quoting.
+            #[cfg(windows)]
+            {
+                if let Some(shim) = windows_shim(spec.program) {
+                    return build(shim.as_os_str(), spec)
+                        .spawn()
+                        .map_err(|error| io_error(&error));
+                }
+            }
+            Err(io_error(&error))
+        }
+        Err(error) => Err(io_error(&error)),
+    }
+}
+
+#[cfg(windows)]
+fn windows_shim(program: &str) -> Option<PathBuf> {
+    if program.contains('/') || program.contains('\\') || Path::new(program).extension().is_some() {
+        return None;
+    }
+    let path = std::env::var_os("PATH")?;
+    for directory in std::env::split_paths(&path) {
+        for extension in ["cmd", "bat"] {
+            let candidate = directory.join(format!("{program}.{extension}"));
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
 }
 
 /// Bounded capture of one pipe: the head and the tail are kept, the middle is

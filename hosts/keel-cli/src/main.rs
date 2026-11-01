@@ -17,9 +17,10 @@ use keel_model_openai::{OpenAiConfig, OpenAiProvider};
 use keel_runtime::{
     load_profile, validate_config, AcceptanceVerifier, CodeSearchTool, ContextBuilder, EchoTool,
     EventLog, HistoryStage, InteractionBroker, KernelOptions, LatestStage, ListDirTool,
-    LocalTrashStore, MemoryStage, MockModel, MockStep, PermissionEngine, ProviderSummarizer,
-    ReadFileTool, RuntimeConfig, ShellTool, Summarizer, SystemStage, TaskStateStage, TodoTool,
-    ToolRegistry, TurnDriver, TurnDriverConfig, TurnOutcome, WriteFileTool,
+    ListTrashTool, LocalTrashStore, MemoryStage, MockModel, MockStep, PermissionEngine,
+    ProviderSummarizer, ReadFileTool, RestoreFileTool, RuntimeConfig, ShellTool, Summarizer,
+    SystemStage, TaskStateStage, TodoTool, ToolRegistry, TrashStore, TurnDriver, TurnDriverConfig,
+    TurnOutcome, WriteFileTool,
 };
 use terminal::TerminalInteractionPort;
 
@@ -218,6 +219,9 @@ async fn run() -> Result<ExitCode, KernelError> {
         limits.tool_timeout = std::time::Duration::from_millis(ms);
     }
 
+    let trash: Arc<dyn TrashStore> =
+        Arc::new(LocalTrashStore::new(permissions.root().to_path_buf()));
+
     let mut registry = ToolRegistry::new();
     registry.register(Arc::new(EchoTool::new()))?;
     registry.register(Arc::new(ReadFileTool::new()))?;
@@ -226,9 +230,9 @@ async fn run() -> Result<ExitCode, KernelError> {
     registry.register(Arc::new(
         ShellTool::coding_defaults().with_timeout(limits.tool_timeout),
     ))?;
-    registry.register(Arc::new(WriteFileTool::new(Arc::new(
-        LocalTrashStore::new(permissions.root().to_path_buf()),
-    ))))?;
+    registry.register(Arc::new(WriteFileTool::new(trash.clone())))?;
+    registry.register(Arc::new(ListTrashTool::new(trash.clone())))?;
+    registry.register(Arc::new(RestoreFileTool::new(trash)))?;
     if let Some(todos) = &todos {
         registry.register(Arc::new(TodoTool::new(todos.clone())))?;
     }
