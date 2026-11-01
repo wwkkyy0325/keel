@@ -64,6 +64,14 @@ fn reasoning_effort_is_omitted_unless_configured() {
 }
 
 #[test]
+fn no_reasoning_is_sent_as_none() {
+    // DeepSeek spends `max_tokens` on reasoning unless the request says none;
+    // an internal summary then returns no text at the output cap.
+    let body = build_request(&request(), "fallback", Some(ReasoningLevel::None));
+    assert_eq!(body["reasoning_effort"], "none");
+}
+
+#[test]
 fn assistant_reasoning_content_is_echoed() {
     let mut args = ToolArgs::new();
     args.insert("text", ArgValue::String("hello".to_owned()));

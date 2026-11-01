@@ -99,7 +99,7 @@ impl<M: ModelProvider> Summarizer for ProviderSummarizer<M> {
                 provider: "summary".to_owned(),
                 model: String::new(),
             },
-            reasoning: ReasoningLevel::Low,
+            reasoning: ReasoningLevel::None,
         };
         let mut stream = self.model.stream(request, cancel).await?;
         let mut text = String::new();
@@ -217,6 +217,49 @@ fn clip_message(content: &str) -> String {
 mod tests {
     use super::*;
     use crate::{MockModel, MockStep};
+
+    struct CapturingModel {
+        reasoning: Arc<std::sync::Mutex<Option<ReasoningLevel>>>,
+    }
+
+    #[async_trait]
+    impl ModelProvider for CapturingModel {
+        async fn stream(
+            &self,
+            request: ModelRequest,
+            _cancel: &CancelToken,
+        ) -> Result<keel_core::ModelStream, ModelError> {
+            *self
+                .reasoning
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(request.reasoning);
+            let (tx, rx) = tokio::sync::mpsc::channel(4);
+            let text = "summary ".repeat(200);
+            let _ = tx.send(Ok(ModelChunk::TextDelta(text))).await;
+            let _ = tx
+                .send(Ok(ModelChunk::Finished {
+                    usage: TokenUsage::default(),
+                }))
+                .await;
+            Ok(keel_core::ModelStream::new(rx))
+        }
+    }
+
+    #[tokio::test]
+    async fn the_summarizer_disables_reasoning() {
+        // Reasoning shares the output budget. At DeepSeek, `low` can consume
+        // every token and leave an empty summary.
+        let seen = Arc::new(std::sync::Mutex::new(None));
+        let summarizer = ProviderSummarizer::new(CapturingModel {
+            reasoning: seen.clone(),
+        });
+        summarizer
+            .summarize("user: hello", 512, &CancelToken::new())
+            .await
+            .unwrap();
+        let level = *seen.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert_eq!(level, Some(ReasoningLevel::None));
+    }
 
     #[tokio::test]
     async fn a_provider_summary_returns_its_text() {

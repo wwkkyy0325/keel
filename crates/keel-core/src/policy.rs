@@ -37,9 +37,12 @@ pub struct ContextRecipe {
 /// Kernel-owned reasoning effort for one turn.
 ///
 /// The ladder is monotonic within a turn and starts at `Low`. The model cannot
-/// choose the level; the driver escalates it on real failure signals.
+/// choose the level; the driver escalates it on real failure signals. `None` is
+/// for internal calls, such as session summaries, that must not spend the
+/// output budget on reasoning.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ReasoningLevel {
+    None,
     #[default]
     Low,
     High,
@@ -49,6 +52,7 @@ pub enum ReasoningLevel {
 impl ReasoningLevel {
     pub fn next(self) -> Self {
         match self {
+            Self::None => Self::Low,
             Self::Low => Self::High,
             Self::High | Self::Max => Self::Max,
         }
@@ -56,6 +60,7 @@ impl ReasoningLevel {
 
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::None => "none",
             Self::Low => "low",
             Self::High => "high",
             Self::Max => "max",
