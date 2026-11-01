@@ -307,6 +307,18 @@ fn update_usage(value: &Value, usage: &mut TokenUsage) {
     if let Some(output) = reported.get("completion_tokens").and_then(Value::as_u64) {
         usage.output_tokens = u32::try_from(output).unwrap_or(u32::MAX);
     }
+    let cached = reported
+        .get("prompt_cache_hit_tokens")
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            reported
+                .get("prompt_tokens_details")
+                .and_then(|details| details.get("cached_tokens"))
+                .and_then(Value::as_u64)
+        });
+    if let Some(cached) = cached {
+        usage.cached_input_tokens = u32::try_from(cached).unwrap_or(u32::MAX);
+    }
 }
 
 async fn emit_finished(

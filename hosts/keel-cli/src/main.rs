@@ -483,15 +483,21 @@ fn print_outcome(config: &RuntimeConfig, events: &EventLog, outcome: &TurnOutcom
         println!("changes: {}", paths.join(", "));
     }
     println!("events: {}", events.len());
+    let input = outcome.usage.input_tokens;
+    let cached = outcome.usage.cached_input_tokens.min(input);
+    let hit_rate = if input == 0 {
+        0.0
+    } else {
+        f64::from(cached) * 100.0 / f64::from(input)
+    };
     println!(
-        "usage: calls={} input={} output={} total={}",
+        "usage: calls={} input={} output={} cached={} hit={:.1}% total={}",
         outcome.model_calls,
-        outcome.usage.input_tokens,
+        input,
         outcome.usage.output_tokens,
-        outcome
-            .usage
-            .input_tokens
-            .saturating_add(outcome.usage.output_tokens)
+        cached,
+        hit_rate,
+        input.saturating_add(outcome.usage.output_tokens)
     );
     println!("duration_ms: {}", outcome.duration_ms);
     println!("reasoning: {}", outcome.reasoning_level.as_str());

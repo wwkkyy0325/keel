@@ -965,6 +965,7 @@ impl ModelProvider for OverheadModel {
                 usage: TokenUsage {
                     input_tokens: estimated.saturating_add(500),
                     output_tokens: 5,
+                    cached_input_tokens: 0,
                 },
             }))
             .await;

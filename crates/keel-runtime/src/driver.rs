@@ -565,6 +565,10 @@ impl<M: ModelProvider> TurnDriver<M> {
                                     .usage
                                     .output_tokens
                                     .saturating_add(summary.usage.output_tokens);
+                                stats.usage.cached_input_tokens = stats
+                                    .usage
+                                    .cached_input_tokens
+                                    .saturating_add(summary.usage.cached_input_tokens);
                                 stats.model_calls = stats.model_calls.saturating_add(1);
                                 self.events.append(Event::SummaryUpdated {
                                     turn_id,
@@ -902,6 +906,10 @@ impl<M: ModelProvider> TurnDriver<M> {
                 .usage
                 .output_tokens
                 .saturating_add(usage.output_tokens);
+            stats.usage.cached_input_tokens = stats
+                .usage
+                .cached_input_tokens
+                .saturating_add(usage.cached_input_tokens);
             self.events.append(Event::ModelFinished {
                 turn_id,
                 tool_calls: calls.len(),

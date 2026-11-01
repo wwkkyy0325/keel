@@ -179,5 +179,6 @@ fn usage_for(request: &ModelRequest, output: &str) -> TokenUsage {
     TokenUsage {
         input_tokens,
         output_tokens: estimate_tokens(output),
+        cached_input_tokens: 0,
     }
 }

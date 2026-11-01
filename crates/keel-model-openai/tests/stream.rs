@@ -193,6 +193,41 @@ async fn text_deltas_and_usage_are_forwarded() {
 }
 
 #[tokio::test]
+async fn cached_input_tokens_are_read_from_both_wire_shapes() {
+    let deepseek = spawn_server(
+        "200 OK",
+        "text/event-stream",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n\
+         data: {\"choices\":[],\"usage\":{\"prompt_tokens\":300,\"completion_tokens\":2,\
+         \"prompt_cache_hit_tokens\":200,\"prompt_cache_miss_tokens\":100}}\n\n\
+         data: [DONE]\n\n",
+    )
+    .await;
+    let openai = spawn_server(
+        "200 OK",
+        "text/event-stream",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n\
+         data: {\"choices\":[],\"usage\":{\"prompt_tokens\":300,\"completion_tokens\":2,\
+         \"prompt_tokens_details\":{\"cached_tokens\":120}}}\n\n\
+         data: [DONE]\n\n",
+    )
+    .await;
+
+    for (url, expected) in [(deepseek, 200), (openai, 120)] {
+        let stream = provider(url)
+            .stream(request(), &CancelToken::new())
+            .await
+            .unwrap();
+        let chunks = collect(stream).await;
+        let usage = chunks.iter().find_map(|chunk| match chunk {
+            Ok(ModelChunk::Finished { usage }) => Some(*usage),
+            _ => None,
+        });
+        assert_eq!(usage.map(|usage| usage.cached_input_tokens), Some(expected));
+    }
+}
+
+#[tokio::test]
 async fn streamed_tool_call_is_completed() {
     let url = spawn_server(
         "200 OK",

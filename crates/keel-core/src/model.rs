@@ -17,6 +17,9 @@ use crate::tool::{ToolArgs, ToolSchema};
 pub struct TokenUsage {
     pub input_tokens: u32,
     pub output_tokens: u32,
+    /// Input tokens the provider served from its prompt cache. DeepSeek and
+    /// OpenAI report this separately and bill it far below a cache miss.
+    pub cached_input_tokens: u32,
 }
 
 /// One model request. Messages are shared with `Arc` so the driver does not
