@@ -68,6 +68,11 @@ derived project; publishing the kernel is not required for personal use.
 - Bounded tool execution: command output keeps a head and tail (64 KiB per
   stream) instead of buffering everything, `read_file` refuses files over
   8 MiB, and a timed-out or cancelled command kills its process tree.
+- Windows `.cmd`/`.bat` shims (`npm`, `npx`, `pnpm`, `yarn`) resolve through
+  PATH, so allowlisted names start without a shell.
+- Explicit undo: `list_trash` lists recoverable versions and `restore_file`
+  restores the newest one, or a specific entry; the current version is backed
+  up first.
 - Per-call usage and cache telemetry, plus a cost model in
   `docs/llmwiki/cache-economics.md`.
 
@@ -169,6 +174,20 @@ cargo run -p keel-cli -- --profile variants/coding/profile.deepseek.toml \
 
 A timed-out or cancelled command is killed with the processes it started, so a
 stray server does not keep a port after the turn.
+
+## Undo
+
+`write_file` copies the previous version into `.keel/trash` before an
+overwrite. The coding profiles also expose the recovery tools, so rollback does
+not mean rebuilding the file or running destructive git commands:
+
+- `list_trash` lists the newest backups with their entry id and original path.
+- `restore_file` with `path` restores the newest backup for that file; with
+  `entry` it restores a specific version. The current version is backed up
+  first, so a restore is itself reversible.
+
+Shell commands can still modify files without a backup; use `write_file` for
+edits that must be undoable.
 
 ## Store, branches and views
 

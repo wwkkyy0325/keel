@@ -30,6 +30,13 @@ First complete kernel and reference host.
   (64 KiB per stream) instead of being buffered in full; a timeout or
   cancellation kills the process tree; `read_file` refuses files over 8 MiB
   before reading them.
+- Windows command execution resolves `.cmd`/`.bat` shims from PATH after a
+  bare name is not found, so `npm`, `npx`, `pnpm` and `yarn` start without a
+  shell.
+- Trash recovery: each backup records its original path, `TrashStore` gains
+  `list`/`find` (with defaults for existing backends), and the `list_trash`
+  and `restore_file` tools restore a version through the permission gate. A
+  restore backs up the current version first.
 
 ### Reference host
 
@@ -43,6 +50,8 @@ First complete kernel and reference host.
 - Cache and usage telemetry; cost model in `docs/llmwiki/cache-economics.md`.
 - `--tool-timeout-ms` overrides the per-tool timeout for long builds; the shell
   tool uses the same value the dispatcher enforces.
+- Coding profiles expose `list_trash` and `restore_file`; the evaluation and
+  novel profiles keep their previous tool list.
 
 ### Performance
 

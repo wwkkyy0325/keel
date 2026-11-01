@@ -1446,3 +1446,31 @@
   `read_file_refuses_a_file_over_the_limit`, `shell_stops_at_its_own_timeout`,
   and 309 workspace tests (262 kernel-only). Task doc:
   `docs/llmwiki/tasks/resource-safety.md`.
+
+### Command shims and explicit undo
+
+- Windows: when a bare program name is not found, `command::run` retries the
+  same arguments through a `.cmd`/`.bat` shim on PATH. `npm`, `npx`, `pnpm`
+  and `yarn` are batch files, so the allowlisted names previously failed with
+  "program not found"; `git`, `cargo` and other `.exe` tools were unaffected.
+- The trash records the original path in `.keel/trash/meta/<id>.toml`.
+  `TrashStore` gains `list` and `find` with defaults, so a backend written
+  before this change keeps compiling and reports that it cannot list.
+- New tools: `list_trash` (newest first, id and original path) and
+  `restore_file` (`path` for the newest backup, `entry` for one id). The
+  target comes from the tool argument, so the permission gate approves the
+  file that is actually written; an entry is accepted only for its recorded
+  path. The current version is backed up before the copy, so undo is
+  reversible.
+- Coding profiles expose both tools; `profile.eval.toml` and the novel profiles
+  keep their tool lists for comparability with earlier runs.
+- No shell is added. Pipes stay unavailable; `python`/`node` scripts remain the
+  audited path, and a `bash` tool would be a host-level, opt-in decision.
+- Verify: `a_windows_command_shim_is_resolved`,
+  `backups_are_listed_newest_first_and_found_by_id`,
+  `a_trash_id_cannot_escape_the_trash_directory`,
+  `restore_file_restores_the_newest_backup_and_keeps_the_current_version`,
+  `restore_file_rejects_an_entry_for_another_path`,
+  `restore_file_reports_a_missing_backup`,
+  `list_trash_names_the_backups_and_their_paths`, profile validation, and a
+  CLI smoke run. Task doc: `docs/llmwiki/tasks/command-and-undo.md`.
