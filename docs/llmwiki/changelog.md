@@ -1709,3 +1709,12 @@
 - Smoke: a 5000-character echo produced a 5000-byte spill in the state outputs
   directory, the store lived in the state directory, and the workspace stayed
   empty. Task doc: `docs/llmwiki/tasks/state-outputs.md`.
+
+### Spill retention
+
+- The outputs directory now keeps the newest 200 `turn-*-call-*.txt` files;
+  older ones are pruned after each write, best effort. Unrelated files are
+  left alone.
+- A marker that points at a pruned spill returns `NotFound`; the model can
+  re-run the tool instead of reading a vanished file.
+- Verify: `old_spills_are_pruned_and_other_files_are_kept` and the full suite.

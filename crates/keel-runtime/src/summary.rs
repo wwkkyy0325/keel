@@ -15,6 +15,8 @@ pub const TOOL_HEAD_CHARS: usize = 2000;
 pub const TOOL_TAIL_CHARS: usize = 1000;
 /// Maximum characters used to render tool arguments.
 pub const ARG_CLIP_CHARS: usize = 200;
+/// Spill files kept per outputs directory; older ones are pruned.
+pub const MAX_SPILL_FILES: usize = 200;
 
 /// Renders tool arguments as one bounded line.
 pub fn compact_args(args: &ToolArgs) -> String {
@@ -44,10 +46,44 @@ pub async fn summarize_output(outputs: &Path, turn: u64, call: usize, output: &s
 
     let path = outputs.join(format!("turn-{turn}-call-{call}.txt"));
     let marker = match write_spill(&path, &redacted).await {
-        Ok(()) => format!("[truncated {chars} chars; full output: {}]", path.display()),
+        Ok(()) => {
+            prune_spills(outputs, MAX_SPILL_FILES).await;
+            format!("[truncated {chars} chars; full output: {}]", path.display())
+        }
         Err(_) => format!("[truncated {chars} chars; full output unavailable]"),
     };
     format!("{head}\n{marker}\n{tail}")
+}
+
+/// Keeps the newest `keep` spill files and removes the rest. Best effort: a
+/// failed stat or removal never fails the turn. Other files in the directory
+/// are left alone.
+async fn prune_spills(dir: &Path, keep: usize) {
+    let Ok(mut reader) = tokio::fs::read_dir(dir).await else {
+        return;
+    };
+    let mut files = Vec::new();
+    while let Ok(Some(entry)) = reader.next_entry().await {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !(name.starts_with("turn-") && name.ends_with(".txt")) {
+            continue;
+        }
+        let Ok(metadata) = entry.metadata().await else {
+            continue;
+        };
+        let Ok(modified) = metadata.modified() else {
+            continue;
+        };
+        files.push((modified, name, entry.path()));
+    }
+    if files.len() <= keep {
+        return;
+    }
+    files.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+    let remove = files.len() - keep;
+    for (_, _, path) in files.into_iter().take(remove) {
+        let _ = tokio::fs::remove_file(path).await;
+    }
 }
 
 fn render_value(value: &ArgValue) -> String {
@@ -125,6 +161,32 @@ mod tests {
 
         let spilled = tokio::fs::read_to_string(&spill).await.unwrap();
         assert_eq!(spilled, full);
+    }
+
+    #[tokio::test]
+    async fn old_spills_are_pruned_and_other_files_are_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        for index in 1..=4 {
+            tokio::fs::write(dir.path().join(format!("turn-{index}-call-0.txt")), "x")
+                .await
+                .unwrap();
+        }
+        tokio::fs::write(dir.path().join("notes.txt"), "keep")
+            .await
+            .unwrap();
+
+        prune_spills(dir.path(), 2).await;
+
+        let mut spills = Vec::new();
+        let mut reader = tokio::fs::read_dir(dir.path()).await.unwrap();
+        while let Some(entry) = reader.next_entry().await.unwrap() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with("turn-") {
+                spills.push(name);
+            }
+        }
+        assert_eq!(spills.len(), 2);
+        assert!(dir.path().join("notes.txt").is_file());
     }
 
     #[tokio::test]

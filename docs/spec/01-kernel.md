@@ -172,7 +172,9 @@ cancellation and interjection distinct. See ADR 0010.
 - The configured outputs directory (default `<workspace>/.keel/outputs`) is
   readable so truncated tool output can be re-read; the rest of `.keel` stays
   denied, and the exception never permits a write. A host may move outputs
-  outside the workspace, and the spill marker names the absolute path.
+  outside the workspace, and the spill marker names the absolute path. The
+  directory keeps the newest 200 spill files; older ones are pruned
+  best-effort and unrelated files are not touched.
 - This is a permission boundary, not an OS sandbox. Container/seatbelt/job
   confinement of commands and plugins is a host option, not a kernel claim.
 - Audit is always on; it is not sampled and not optional.

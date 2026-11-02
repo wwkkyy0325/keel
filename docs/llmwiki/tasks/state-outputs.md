@@ -23,8 +23,10 @@ the model can read it back from either location.
       `--state-dir`. The spill landed in `<state>/outputs/turn-1-call-0.txt`
       (5000 bytes), the store was in `<state>/keel.db`, and the workspace had
       no `.keel` directory.
-- [ ] An OS-level default state directory and spill retention (pruning old
-      files) remain future work.
+- [x] The outputs directory keeps the newest 200 `turn-*-call-*.txt` files;
+      pruning is best effort and leaves other files alone. Verify:
+      `old_spills_are_pruned_and_other_files_are_kept`.
+- [ ] An OS-level default state directory remains future work.
 
 ## Boundaries
 
@@ -33,5 +35,5 @@ the model can read it back from either location.
 - Without a state directory, the spill stays in `<workspace>/.keel/outputs`.
 - The marker is an absolute path. A model that is not allowed to read it gets
   the normal permission decision; the exception is what makes it reachable.
-- Spill files are not pruned yet; a long session still grows the outputs
-  directory.
+- Pruning keeps the newest 200 files, so a marker to an older spill can now
+  return `NotFound`; the model can re-run the tool to recreate the output.

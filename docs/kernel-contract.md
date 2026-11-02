@@ -34,7 +34,9 @@ Stable within a major version:
   read-write; execution is always confirm-only; the most specific root wins;
   drive roots and system directories are refused. `PermissionEngine::with_outputs`
   names the readable spill directory and `TurnDriver::with_outputs_dir` writes
-  spills there; both default to `<workspace>/.keel/outputs`.
+  spills there; both default to `<workspace>/.keel/outputs`. The directory
+  keeps the newest 200 `turn-*-call-*.txt` files and prunes older ones; other
+  files are untouched.
 - The event enum is the live UI/audit feed: turn and state changes, context
   builds, tool starts/finishes, `PermissionDecided` for every gate decision,
   interactions, memory and summary events. `Event` serializes with snake_case

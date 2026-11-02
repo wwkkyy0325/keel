@@ -124,7 +124,9 @@ First complete kernel and reference host.
 - Tool spill is configurable: `TurnDriver::with_outputs_dir` writes it,
   `PermissionEngine::with_outputs` allows reading it, and the truncation marker
   carries the absolute path. The default remains
-  `<workspace>/.keel/outputs`.
+  `<workspace>/.keel/outputs`. The outputs directory keeps the newest 200
+  `turn-*-call-*.txt` files; older ones are pruned best-effort and unrelated
+  files are untouched.
 - `--job PATH` binds a bundle/profile, workspace, roots, state directory,
   session id and the first input into one reusable task. Every path resolves
   relative to the job file; explicit CLI flags override the job.

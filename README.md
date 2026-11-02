@@ -328,7 +328,9 @@ cargo run -p keel-cli -- --tui --bundle variants/coding/bundle.toml
 sessions or undo history and leaves no `.keel` directory behind. `--store`
 still overrides the database path. Without a state directory, the spill stays
 in `<workspace>/.keel/outputs`; the marker carries the absolute path and the
-permission engine allows reads there either way.
+permission engine allows reads there either way. The outputs directory keeps
+the newest 200 spill files and prunes older ones; unrelated files are left
+alone.
 
 The reference bundles are `variants/coding/bundle.toml` and
 `variants/companion/bundle.toml`; both use `deepseek-flash` and need
