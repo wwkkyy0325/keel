@@ -7,8 +7,9 @@ use std::collections::VecDeque;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use keel_core::{CancelToken, ToolError};
 use tokio::io::{AsyncRead, AsyncReadExt};
@@ -22,6 +23,11 @@ const TAIL_BYTES: usize = 16 * 1024;
 /// How long to wait for pipe readers after the child exits. A descendant may
 /// hold the pipe open; the capture is shared, so aborting loses nothing.
 const READER_GRACE: Duration = Duration::from_secs(1);
+/// A command that produces output forever is still stopped eventually; the
+/// inactivity window handles the ordinary hang.
+const HARD_TIMEOUT: Duration = Duration::from_secs(2 * 60 * 60);
+/// How often the inactivity window is checked.
+const IDLE_TICK: Duration = Duration::from_millis(500);
 
 /// Developer programs shared by the shell tool and command verifiers. Shells
 /// are excluded so arguments cannot be re-interpreted.
@@ -40,6 +46,8 @@ pub struct CommandSpec<'a> {
     pub program: &'a str,
     pub args: &'a [String],
     pub cwd: &'a Path,
+    /// Inactivity window: the command is stopped after this long without
+    /// output, not this long after it started.
     pub timeout: Duration,
 }
 
@@ -69,6 +77,9 @@ pub fn is_allowed(program: &str, allowlist: &[String]) -> bool {
 /// Both pipes are drained while the process runs. Memory stays bounded by
 /// [`HEAD_BYTES`] plus [`TAIL_BYTES`] per stream; a command that prints
 /// without end is discarded past those limits instead of being buffered.
+///
+/// `spec.timeout` is an inactivity window: any byte on either stream resets
+/// it, so a long build or download is not cut off, while a silent hang is.
 pub async fn run(spec: CommandSpec<'_>, cancel: &CancelToken) -> Result<CommandOutput, ToolError> {
     if cancel.is_cancelled() {
         return Err(ToolError::cancelled());
@@ -76,24 +87,51 @@ pub async fn run(spec: CommandSpec<'_>, cancel: &CancelToken) -> Result<CommandO
 
     let mut child = spawn(&spec)?;
     let mut tree = TreeGuard::new(child.id());
+    let started = Instant::now();
+    // `spec.timeout` is an inactivity window, not a wall-clock limit: a build
+    // or a download that keeps producing output is never cut off, while a
+    // silent hang still dies. A hard cap bounds a command that prints forever.
+    let last_output = Arc::new(AtomicU64::new(0));
     let stdout_capture = Arc::new(Mutex::new(Capture::default()));
     let stderr_capture = Arc::new(Mutex::new(Capture::default()));
-    let stdout_reader = child
-        .stdout
-        .take()
-        .map(|stdout| tokio::spawn(capture_stream(stdout, stdout_capture.clone())));
-    let stderr_reader = child
-        .stderr
-        .take()
-        .map(|stderr| tokio::spawn(capture_stream(stderr, stderr_capture.clone())));
+    let stdout_reader = child.stdout.take().map(|stdout| {
+        tokio::spawn(capture_stream(
+            stdout,
+            stdout_capture.clone(),
+            last_output.clone(),
+            started,
+        ))
+    });
+    let stderr_reader = child.stderr.take().map(|stderr| {
+        tokio::spawn(capture_stream(
+            stderr,
+            stderr_capture.clone(),
+            last_output.clone(),
+            started,
+        ))
+    });
 
-    let status = tokio::select! {
-        _ = cancel.cancelled() => return Err(ToolError::cancelled()),
-        result = tokio::time::timeout(spec.timeout, child.wait()) => {
-            match result {
-                Ok(Ok(status)) => status,
-                Ok(Err(error)) => return Err(io_error(&error)),
-                Err(_) => return Err(ToolError::timeout(spec.timeout)),
+    let mut tick = tokio::time::interval(IDLE_TICK);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let status = loop {
+        tokio::select! {
+            _ = cancel.cancelled() => return Err(ToolError::cancelled()),
+            result = child.wait() => {
+                match result {
+                    Ok(status) => break status,
+                    Err(error) => return Err(io_error(&error)),
+                }
+            }
+            _ = tick.tick() => {
+                let idle = Duration::from_millis(
+                    started.elapsed().as_millis() as u64 - last_output.load(Ordering::Relaxed),
+                );
+                if idle >= spec.timeout {
+                    return Err(ToolError::timeout(spec.timeout));
+                }
+                if started.elapsed() >= HARD_TIMEOUT {
+                    return Err(ToolError::timeout(HARD_TIMEOUT));
+                }
             }
         }
     };
@@ -220,8 +258,12 @@ impl Capture {
     }
 }
 
-async fn capture_stream<R>(mut reader: R, capture: Arc<Mutex<Capture>>)
-where
+async fn capture_stream<R>(
+    mut reader: R,
+    capture: Arc<Mutex<Capture>>,
+    activity: Arc<AtomicU64>,
+    base: Instant,
+) where
     R: AsyncRead + Unpin + Send + 'static,
 {
     let mut buffer = [0u8; 8192];
@@ -229,6 +271,7 @@ where
         match reader.read(&mut buffer).await {
             Ok(0) | Err(_) => break,
             Ok(read) => {
+                activity.store(base.elapsed().as_millis() as u64, Ordering::Relaxed);
                 let mut capture = capture
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());

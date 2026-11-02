@@ -11,6 +11,7 @@ pub const TRANSITIONS: &[(TurnState, TurnEvent, TurnState)] = &[
     (TurnState::Solve, TurnEvent::ToolCalls, TurnState::Act),
     (TurnState::Solve, TurnEvent::DoneSignal, TurnState::Verify),
     (TurnState::Solve, TurnEvent::ThinkingOnly, TurnState::Solve),
+    (TurnState::Solve, TurnEvent::Continued, TurnState::Solve),
     (
         TurnState::Solve,
         TurnEvent::SubAgentsPending,
@@ -129,6 +130,7 @@ pub fn transition(from: TurnState, event: TurnEvent) -> Result<TurnState, Kernel
         (TurnState::Solve, TurnEvent::ToolCalls) => TurnState::Act,
         (TurnState::Solve, TurnEvent::DoneSignal) => TurnState::Verify,
         (TurnState::Solve, TurnEvent::ThinkingOnly) => TurnState::Solve,
+        (TurnState::Solve, TurnEvent::Continued) => TurnState::Solve,
         (TurnState::Solve, TurnEvent::SubAgentsPending) => TurnState::WaitSubAgents,
         (TurnState::Solve, TurnEvent::StreamFailure) => TurnState::Error,
         (TurnState::Solve, TurnEvent::Overflow) => TurnState::Error,

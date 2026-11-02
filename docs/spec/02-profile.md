@@ -104,7 +104,8 @@ Persona prompts follow one structure:
 
 - `workspace_auto` is the logical sandbox. Inside the workspace, normal reads
   and writes run automatically; outside actions require confirmation.
-- `full_auto` removes the workspace boundary. The hard deny list still applies.
+- `full_auto` removes the workspace boundary. The structural deny list still
+  applies, and a credential name inside a root still asks for confirmation.
 - `read_only` is expressed as tool visibility. `manual` review is a host-level
   confirmation wrapper. Plan mode is `tools.plan_mode` and hides write/execute
   tools without lowering permissions.

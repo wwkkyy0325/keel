@@ -65,6 +65,8 @@ pub enum TurnEvent {
     ToolCalls,
     DoneSignal,
     ThinkingOnly,
+    /// The model stopped while the task list still had unfinished items.
+    Continued,
     SubAgentsPending,
     UnverifiedHard,
     VerifyCapReached,
@@ -90,6 +92,7 @@ impl fmt::Display for TurnEvent {
             Self::ToolCalls => "ToolCalls",
             Self::DoneSignal => "DoneSignal",
             Self::ThinkingOnly => "ThinkingOnly",
+            Self::Continued => "Continued",
             Self::SubAgentsPending => "SubAgentsPending",
             Self::UnverifiedHard => "UnverifiedHard",
             Self::VerifyCapReached => "VerifyCapReached",

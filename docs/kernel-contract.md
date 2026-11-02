@@ -38,6 +38,14 @@ Stable within a major version:
   spills there; both default to `<workspace>/.keel/outputs`. The directory
   keeps the newest 200 `turn-*-call-*.txt` files and prunes older ones; other
   files are untouched.
+- Two deny classes. The structural list (`.keel` and operating-system areas)
+  is an unconditional denial that no grant or escalation lifts. A credential
+  name is refused outside every root and needs a confirmation inside a root;
+  a session path grant opens it, a full-auto escalation does not. `.env`
+  templates (`.example`, `.sample`, `.template`, `.dist`, `.defaults`) are
+  ordinary files. `shell` labels a program outside its standard list in the
+  permission request but does not veto it; the confirmation is the decision
+  point.
 - The event enum is the live UI/audit feed: turn and state changes, context
   builds, tool starts/finishes, `PermissionDecided` for every gate decision,
   interactions, memory and summary events. `Event` serializes with snake_case
@@ -46,6 +54,19 @@ Stable within a major version:
   numbers stay monotonic within the process. `ToolFinished` carries a bounded,
   redacted `output_preview` for a live UI; the field is skipped during
   serialization, so tool output never reaches the persisted stream.
+- Turn limits are runaway protection, not a task budget: 200 model calls, the
+  profile's `tools.budget` and a 24-hour backstop. The timeouts are
+  *inactivity* windows: a command with five minutes of silence is stopped, a
+  command that keeps producing output is not, and a model stream is stopped
+  after five minutes without a chunk. A host may lower them. A per-turn
+  input-token budget (`max_turn_input_tokens`, one hundred times the working
+  set with a one-million floor) bounds cost; reaching it forces the answer
+  call and records `TurnBudgetExhausted`. The number never enters a prompt, so
+  the model cannot drift toward optimising a counter. While the task list has
+  unfinished items, the driver continues the turn instead of ending it
+  (`TurnContinued`), at most six times, and never after the wrap-up
+  instruction or the reserved final call. Read-only calls in one round run in
+  parallel, capped at eight at a time; mutating calls stay serialized.
 - The tool protocol: names, parameter kinds, risk levels and result envelopes.
   A tool declared `read_only` may only declare read access; the dispatcher
   rejects a write or execute request before the permission gate runs, so the
@@ -60,8 +81,9 @@ Stable within a major version:
   exception never allows a write. This is a permission boundary, not an OS
   sandbox: an approved command or MCP server is not confined.
 - Built-in tool resource bounds: command output is captured as a bounded head
-  and tail (64 KiB per stream), `read_file` refuses a file over 8 MiB, and a
-  timed-out or cancelled command kills its process tree. A host may wrap the
+  and tail (64 KiB per stream), `read_file` reads at most 8 MiB and appends a
+  truncation marker instead of refusing a larger file, and a timed-out or
+  cancelled command kills its process tree. A host may wrap the
   tools but should not raise these silently.
 - Command launch: on Windows a bare program name that is not found falls back
   to a `.cmd`/`.bat` shim on PATH, so allowlisted package managers start

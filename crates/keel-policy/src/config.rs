@@ -36,12 +36,24 @@ pub struct RuntimeConfig {
 impl RuntimeConfig {
     /// Kernel limits derived from host configuration. These are not policy
     /// questions; the host owns timeouts and call budgets.
+    ///
+    /// The defaults are runaway protection, not a per-task budget: one turn is
+    /// expected to finish a multi-step task without the user typing
+    /// "continue". `tools.budget` in the profile narrows the tool calls.
     pub fn limits(&self) -> TurnLimits {
         TurnLimits {
-            max_model_calls: 12,
+            max_model_calls: 500,
             max_tool_calls: self.tool_budget,
-            tool_timeout: Duration::from_secs(30),
-            turn_timeout: Duration::from_secs(180),
+            // Inactivity windows, not wall-clock limits: a command or stream
+            // that keeps producing output is not cut off.
+            tool_timeout: Duration::from_secs(300),
+            turn_timeout: Duration::from_secs(24 * 60 * 60),
+            // Cost scales with the working set, not the model's capacity:
+            // about a hundred full-context rounds, never below a million
+            // tokens. The model never sees this number.
+            max_turn_input_tokens: u64::from(self.context.budget_tokens)
+                .saturating_mul(100)
+                .max(1_000_000),
         }
     }
 }
@@ -93,4 +105,8 @@ pub struct TurnLimits {
     pub max_tool_calls: u32,
     pub tool_timeout: Duration,
     pub turn_timeout: Duration,
+    /// Total input tokens this turn may spend. When it is reached the driver
+    /// forces the final answer call; the limit is host-side and never appears
+    /// in a prompt or an event payload the model can see.
+    pub max_turn_input_tokens: u64,
 }

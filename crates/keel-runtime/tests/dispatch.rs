@@ -604,8 +604,10 @@ async fn permission_decisions_are_recorded_as_events() {
         .expect("a confirmation request is recorded");
     assert_eq!(decision, "confirm");
 
+    // The agent's own state is a structural denial: it stays a deny, while a
+    // credential name inside the workspace is a confirmation.
     let secret = registry(vec![Arc::new(GuardedTool {
-        path: dir.path().join(".ssh").join("id_rsa"),
+        path: dir.path().join(".keel").join("trash").join("id_rsa"),
         called: Arc::new(AtomicUsize::new(0)),
     })]);
     let (denied_dispatcher, events) = dispatcher(
@@ -643,6 +645,45 @@ async fn permission_confirmation_uses_the_interaction_port() {
     })]);
     let (dispatcher, events) = dispatcher(
         outside_registry,
+        dir.path(),
+        Duration::from_secs(1),
+        PermissionLevel::WorkspaceAuto,
+    );
+    let port = Arc::new(common::ScriptedInteractionPort::new(vec![
+        InteractionResponse::Approved {
+            scope: GrantScope::Once,
+        },
+    ]));
+    let broker = Arc::new(InteractionBroker::new(
+        port,
+        InteractionPolicy::default(),
+        events,
+    ));
+    let dispatcher = dispatcher.with_interactions(broker);
+
+    let results = dispatcher
+        .dispatch(
+            TurnId::new(1),
+            vec![call(1, "guarded", ToolArgs::new())],
+            &visible(&["guarded"]),
+            &CancelToken::new(),
+        )
+        .await;
+
+    assert!(results[0].is_success());
+    assert_eq!(called.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn a_secret_inside_the_workspace_needs_approval_before_the_tool_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let called = Arc::new(AtomicUsize::new(0));
+    let secret_registry = registry(vec![Arc::new(GuardedTool {
+        path: dir.path().join(".env"),
+        called: called.clone(),
+    })]);
+    let (dispatcher, events) = dispatcher(
+        secret_registry,
         dir.path(),
         Duration::from_secs(1),
         PermissionLevel::WorkspaceAuto,
@@ -752,4 +793,42 @@ async fn deferred_permission_confirmation_denies_the_call() {
         Some(ErrorCode::PermissionDenied)
     );
     assert_eq!(called.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_large_read_round_is_bounded_and_complete() {
+    let dir = tempfile::tempdir().unwrap();
+    let probe = Arc::new(Probe::default());
+    let registry = registry(vec![Arc::new(ProbeTool {
+        name: "read_a",
+        risk: RiskLevel::ReadOnly,
+        delay: Duration::from_millis(20),
+        probe: probe.clone(),
+    })]);
+    let (dispatcher, _events) = dispatcher(
+        registry,
+        dir.path(),
+        Duration::from_secs(5),
+        PermissionLevel::FullAuto,
+    );
+
+    let calls: Vec<_> = (0..20)
+        .map(|id| call(id, "read_a", ToolArgs::new()))
+        .collect();
+    let results = dispatcher
+        .dispatch(
+            TurnId::new(1),
+            calls,
+            &visible(&["read_a"]),
+            &CancelToken::new(),
+        )
+        .await;
+
+    assert_eq!(results.len(), 20);
+    assert!(results.iter().all(ToolResult::is_success));
+    assert!(
+        probe.max() <= 8,
+        "at most eight reads run at once, saw {}",
+        probe.max()
+    );
 }

@@ -311,3 +311,24 @@ fn a_profile_with_a_valid_window_loads() {
     );
     assert!(parse(&raw).is_ok());
 }
+
+#[test]
+fn the_default_limits_fit_a_long_task() {
+    let config = load_profile(&repo_root().join("variants/coding/profile.toml")).unwrap();
+    let limits = config.limits();
+
+    assert!(
+        limits.max_model_calls >= 500,
+        "one turn should not stop after a few rounds: {}",
+        limits.max_model_calls
+    );
+    assert!(limits.turn_timeout >= std::time::Duration::from_secs(1800));
+    assert!(limits.tool_timeout >= std::time::Duration::from_secs(120));
+    assert_eq!(limits.max_tool_calls, config.tool_budget);
+    assert!(config.tool_budget >= 1000, "{}", config.tool_budget);
+    assert!(
+        limits.max_turn_input_tokens >= 1_000_000,
+        "a turn needs a cost budget larger than one context: {}",
+        limits.max_turn_input_tokens
+    );
+}

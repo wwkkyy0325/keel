@@ -217,10 +217,49 @@ impl PermissionGate for PermissionEngine {
         if request.access == AccessKind::Read && resolved.starts_with(&self.outputs) {
             return PermissionDecision::Allow;
         }
-        if is_denied(&resolved) {
+        if is_structural_denial(&resolved) {
             return PermissionDecision::Deny {
                 code: ErrorCode::PermissionDenied,
                 message: format!("path `{}` is on the hard deny list", resolved.display()),
+            };
+        }
+
+        let inside = resolved.starts_with(&self.root)
+            || self
+                .extra_roots
+                .iter()
+                .any(|scope| resolved.starts_with(&scope.path));
+
+        let grants = self.active_grants();
+        let full_auto_granted = grants.iter().any(is_full_auto_grant);
+        let path_granted = grants.iter().any(|grant| {
+            grant.access == Some(request.access)
+                && grant
+                    .prefix
+                    .as_ref()
+                    .is_some_and(|prefix| resolved.starts_with(prefix))
+        });
+        drop(grants);
+
+        // A credential name is never read or written silently. Inside a root
+        // the user can confirm it once or grant the path for the session;
+        // outside every root it is refused, because there is no context in
+        // which the agent should be reaching into someone else's key store.
+        if is_secret_name(&resolved) {
+            if !inside {
+                return PermissionDecision::Deny {
+                    code: ErrorCode::PermissionDenied,
+                    message: format!(
+                        "`{}` looks like a credential and is outside every root",
+                        resolved.display()
+                    ),
+                };
+            }
+            if path_granted {
+                return PermissionDecision::Allow;
+            }
+            return PermissionDecision::Confirm {
+                reason: "the path matches a secret pattern; confirm to access it".to_owned(),
             };
         }
 
@@ -233,16 +272,6 @@ impl PermissionGate for PermissionEngine {
                 .max_by_key(|scope| scope.path.components().count())
                 .map(|scope| scope.access)
         };
-        let grants = self.active_grants();
-        let full_auto_granted = grants.iter().any(is_full_auto_grant);
-        let path_granted = grants.iter().any(|grant| {
-            grant.access == Some(request.access)
-                && grant
-                    .prefix
-                    .as_ref()
-                    .is_some_and(|prefix| resolved.starts_with(prefix))
-        });
-        drop(grants);
 
         if full_auto_granted {
             return PermissionDecision::Allow;
@@ -314,39 +343,13 @@ fn is_system_directory(path: &Path) -> bool {
         .any(|prefix| text == *prefix || text.starts_with(&format!("{prefix}/")))
 }
 
-fn is_denied(resolved: &Path) -> bool {
-    if let Some(name) = resolved.file_name().and_then(|name| name.to_str()) {
-        let lower = name.to_ascii_lowercase();
-        if lower == ".env"
-            || lower.starts_with(".env.")
-            || lower == ".netrc"
-            || lower == "id_rsa"
-            || lower == "id_ed25519"
-            || lower == "credentials.json"
-            || lower.ends_with(".pem")
-            || lower.ends_with(".key")
-            || lower.ends_with(".p12")
-            || lower.ends_with(".pfx")
-        {
-            return true;
-        }
-    }
-
+/// Paths that no tool may touch, with or without a confirmation: the agent's
+/// own state and operating-system areas. These are not user data, and an
+/// approval cannot make them safe.
+fn is_structural_denial(resolved: &Path) -> bool {
     for component in resolved.components() {
         if let Component::Normal(part) = component {
-            let lower = part.to_string_lossy().to_ascii_lowercase();
-            if matches!(
-                lower.as_str(),
-                ".ssh"
-                    | ".gnupg"
-                    | ".aws"
-                    | ".azure"
-                    | ".kube"
-                    | ".docker"
-                    | ".git"
-                    | ".keel"
-                    | "secrets"
-            ) {
+            if part.to_string_lossy().eq_ignore_ascii_case(".keel") {
                 return true;
             }
         }
@@ -371,6 +374,47 @@ fn is_denied(resolved: &Path) -> bool {
         return true;
     }
     text.starts_with("c:\\windows\\system32") || text.starts_with("c:\\windows\\syswow64")
+}
+
+/// Paths that look like credentials. Inside a declared root the user may
+/// confirm access; outside every root they are refused.
+fn is_secret_name(resolved: &Path) -> bool {
+    if let Some(name) = resolved.file_name().and_then(|name| name.to_str()) {
+        let lower = name.to_ascii_lowercase();
+        // A template documents variables and holds no values.
+        if !is_env_template(&lower)
+            && (lower == ".env"
+                || lower.starts_with(".env.")
+                || lower == ".netrc"
+                || lower == "id_rsa"
+                || lower == "id_ed25519"
+                || lower == "credentials.json"
+                || lower.ends_with(".pem")
+                || lower.ends_with(".key")
+                || lower.ends_with(".p12")
+                || lower.ends_with(".pfx"))
+        {
+            return true;
+        }
+    }
+
+    resolved.components().any(|component| {
+        let Component::Normal(part) = component else {
+            return false;
+        };
+        let lower = part.to_string_lossy().to_ascii_lowercase();
+        matches!(
+            lower.as_str(),
+            ".ssh" | ".gnupg" | ".aws" | ".azure" | ".kube" | ".docker" | ".git" | "secrets"
+        )
+    })
+}
+
+fn is_env_template(name: &str) -> bool {
+    matches!(
+        name,
+        ".env.example" | ".env.sample" | ".env.template" | ".env.dist" | ".env.defaults"
+    )
 }
 
 #[cfg(test)]
@@ -438,18 +482,84 @@ mod tests {
     }
 
     #[test]
-    fn full_auto_still_denies_sensitive_paths() {
+    fn a_template_file_is_not_a_secret() {
+        let (engine, dir) = engine(PermissionLevel::WorkspaceAuto);
+        for name in [".env.example", ".env.sample", ".env.template"] {
+            let path = resolve_path(engine.root(), &dir.path().join(name));
+            assert_eq!(
+                engine.check(&request(AccessKind::Write, &path)),
+                PermissionDecision::Allow,
+                "{name} must be an ordinary file"
+            );
+        }
+        let local = resolve_path(engine.root(), &dir.path().join(".env.local"));
+        assert!(matches!(
+            engine.check(&request(AccessKind::Read, &local)),
+            PermissionDecision::Confirm { .. }
+        ));
+    }
+
+    #[test]
+    fn reading_a_secret_inside_the_workspace_asks() {
+        let (engine, dir) = engine(PermissionLevel::WorkspaceAuto);
+        for relative in [".env", ".ssh/id_rsa", "certs/server.pem"] {
+            let path = resolve_path(engine.root(), &dir.path().join(relative));
+            match engine.check(&request(AccessKind::Read, &path)) {
+                PermissionDecision::Confirm { reason } => {
+                    assert!(reason.contains("secret"), "{reason}");
+                }
+                other => panic!("{relative} must ask, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn full_auto_still_confirms_sensitive_paths() {
         let (engine, dir) = engine(PermissionLevel::FullAuto);
-        for relative in [".env", ".ssh/id_rsa", ".git/config", ".keel/trash/item"] {
+        for relative in [".env", ".ssh/id_rsa", ".git/config"] {
             let path = resolve_path(engine.root(), &dir.path().join(relative));
             assert!(
                 matches!(
                     engine.check(&request(AccessKind::Read, &path)),
-                    PermissionDecision::Deny { .. }
+                    PermissionDecision::Confirm { .. }
                 ),
-                "{relative} must be denied"
+                "{relative} must ask even in full auto"
             );
         }
+        let trash = resolve_path(engine.root(), &dir.path().join(".keel/trash/item"));
+        assert!(matches!(
+            engine.check(&request(AccessKind::Read, &trash)),
+            PermissionDecision::Deny { .. }
+        ));
+    }
+
+    #[test]
+    fn a_secret_outside_every_root_is_refused() {
+        let (engine, _dir) = engine(PermissionLevel::FullAuto);
+        let outside = engine.root().join("..").join("id_rsa");
+        assert!(matches!(
+            engine.check(&request(AccessKind::Read, &outside)),
+            PermissionDecision::Deny { .. }
+        ));
+    }
+
+    #[test]
+    fn a_path_grant_opens_a_secret_but_full_auto_does_not() {
+        let (granted, dir) = engine(PermissionLevel::WorkspaceAuto);
+        granted.grant_path_prefix(granted.root(), AccessKind::Read, Duration::from_secs(60));
+        let env = resolve_path(granted.root(), &dir.path().join(".env"));
+        assert_eq!(
+            granted.check(&request(AccessKind::Read, &env)),
+            PermissionDecision::Allow
+        );
+
+        let (escalated, dir) = engine(PermissionLevel::WorkspaceAuto);
+        escalated.escalate_full_auto(Duration::from_secs(60));
+        let env = resolve_path(escalated.root(), &dir.path().join(".env"));
+        assert!(matches!(
+            escalated.check(&request(AccessKind::Read, &env)),
+            PermissionDecision::Confirm { .. }
+        ));
     }
 
     #[test]
@@ -583,12 +693,12 @@ mod tests {
     }
 
     #[test]
-    fn hard_deny_list_survives_full_auto_grants() {
+    fn structural_denials_survive_full_auto_grants() {
         let (engine, dir) = engine(PermissionLevel::WorkspaceAuto);
         engine.escalate_full_auto(Duration::from_secs(60));
-        let env = resolve_path(engine.root(), &dir.path().join(".env"));
+        let trash = resolve_path(engine.root(), &dir.path().join(".keel/trash/item"));
         assert!(matches!(
-            engine.check(&request(AccessKind::Read, &env)),
+            engine.check(&request(AccessKind::Read, &trash)),
             PermissionDecision::Deny { .. }
         ));
     }

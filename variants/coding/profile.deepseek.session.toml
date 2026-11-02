@@ -17,8 +17,8 @@ stages = ["system", "memory", "history", "latest"]
 budget_tokens = 12288
 
 [tools]
-visible = ["read_file", "write_file", "list_trash", "restore_file", "list_dir", "code_search", "make_dir", "move_file", "delete_file"]
-budget = 12
+visible = ["read_file", "write_file", "list_trash", "restore_file", "list_dir", "code_search", "make_dir", "move_file", "delete_file", "todo"]
+budget = 1000
 plan_mode = false
 
 [verification]

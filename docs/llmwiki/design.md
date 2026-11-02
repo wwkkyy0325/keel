@@ -40,7 +40,9 @@ depend on the crates and bring their own host and UI. See
 ## Permission and interaction model
 
 - Two levels: `WorkspaceAuto` (logical sandbox) and `FullAuto` (no workspace
-  boundary, hard deny list still applies).
+  boundary, structural deny list still applies). A credential name is refused
+  outside every root and asks for confirmation inside one; `.env.example` is an
+  ordinary file.
 - Tools declare permission requests; the dispatcher enforces before `call`.
 - Plan mode and read-only are tool visibility, not permission levels.
 - Deletion is soft: a `TrashStore` backs up overwritten files, and there is no

@@ -127,7 +127,7 @@ async fn read_file_reads_a_normal_file() {
 }
 
 #[tokio::test]
-async fn read_file_refuses_a_file_over_the_limit() {
+async fn read_file_truncates_a_file_over_the_limit() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("huge.log");
     let file = std::fs::File::create(&path).unwrap();
@@ -140,9 +140,11 @@ async fn read_file_refuses_a_file_over_the_limit() {
 
     let result = tool.call(args, &ctx(dir.path())).await;
 
-    let error = result.error().expect("a large file must be refused");
-    assert_eq!(error.code, ErrorCode::InvalidArguments);
-    assert!(error.message.contains("limit"), "{}", error.message);
+    assert!(result.is_success());
+    let content = result.content().unwrap();
+    assert!(content.contains("[truncated:"), "{}", &content[..80]);
+    assert!(content.contains("9437184"), "the marker names the size");
+    assert!(content.len() <= 8 * 1024 * 1024 + 128);
 }
 
 #[tokio::test]
@@ -166,19 +168,36 @@ async fn shell_runs_allowlisted_programs_without_a_shell() {
 }
 
 #[tokio::test]
-async fn shell_rejects_programs_outside_the_allowlist() {
+async fn an_unknown_program_reaches_the_gate_instead_of_being_rejected() {
     let dir = tempfile::tempdir().unwrap();
     let tool = ShellTool::new(vec!["rustc".to_owned()]);
     let mut args = ToolArgs::new();
     args.insert("program", ArgValue::String("not-allowed".to_owned()));
 
-    let result = tool.call(args, &ctx(dir.path())).await;
+    let request = &tool.permission_requests(&args).unwrap()[0];
+    let detail = request.detail.as_deref().unwrap_or_default();
+    assert!(
+        detail.contains("not in the standard program list"),
+        "{detail}"
+    );
 
-    assert!(!result.is_success());
-    assert_eq!(
+    let result = tool.call(args, &ctx(dir.path())).await;
+    assert_ne!(
         result.error().map(|error| error.code),
         Some(ErrorCode::InvalidArguments)
     );
+}
+
+#[tokio::test]
+async fn a_standard_program_has_no_marker() {
+    let tool = ShellTool::new(vec!["rustc".to_owned()]);
+    let mut args = ToolArgs::new();
+    args.insert("program", ArgValue::String("rustc".to_owned()));
+    args.insert("args", ArgValue::StringList(vec!["--version".to_owned()]));
+
+    let request = &tool.permission_requests(&args).unwrap()[0];
+    let detail = request.detail.as_deref().unwrap_or_default();
+    assert!(!detail.contains("not in the standard"), "{detail}");
 }
 
 #[tokio::test]

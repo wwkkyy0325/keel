@@ -8,6 +8,7 @@ use keel_core::{
     TodoError, TodoList, TodoState, TodoStatus, Tool, ToolArgs, ToolCtx, ToolError, ToolResult,
     ToolSchema,
 };
+use tokio::io::AsyncReadExt;
 
 use crate::command::{self, CommandSpec};
 use crate::trash::TrashStore;
@@ -109,25 +110,50 @@ impl Tool for ReadFileTool {
             Err(error) => return ToolResult::failure(ctx.call_id, "read_file", error),
         };
         let resolved = resolve_path(&ctx.workspace_root, Path::new(path));
-        // Check the size before reading: a large log or archive would fail the
-        // whole process instead of returning a tool error.
-        if let Ok(metadata) = tokio::fs::metadata(&resolved).await {
-            if metadata.len() > MAX_READ_FILE_BYTES {
+        // Bounded read: a log or archive larger than the limit yields its head
+        // and a marker instead of an error, so the model can still work with
+        // it without reading gigabytes into memory.
+        let len = tokio::fs::metadata(&resolved)
+            .await
+            .map(|metadata| metadata.len())
+            .unwrap_or(0);
+        let truncated = len > MAX_READ_FILE_BYTES;
+        let mut file = match tokio::fs::File::open(&resolved).await {
+            Ok(file) => file,
+            Err(error) => {
+                return ToolResult::failure(ctx.call_id, "read_file", io_error(&error));
+            }
+        };
+        let mut buffer = Vec::with_capacity(len.min(MAX_READ_FILE_BYTES) as usize);
+        if let Err(error) = (&mut file)
+            .take(MAX_READ_FILE_BYTES)
+            .read_to_end(&mut buffer)
+            .await
+        {
+            return ToolResult::failure(ctx.call_id, "read_file", io_error(&error));
+        }
+        let mut content = match String::from_utf8(buffer) {
+            Ok(text) => text,
+            Err(error) if truncated => {
+                // The cut may land inside a character; keep the valid prefix.
+                let valid = error.utf8_error().valid_up_to();
+                String::from_utf8_lossy(&error.as_bytes()[..valid]).into_owned()
+            }
+            Err(_) => {
                 return ToolResult::failure(
                     ctx.call_id,
                     "read_file",
-                    ToolError::invalid_arguments(format!(
-                        "`{path}` is {} bytes; the limit is {MAX_READ_FILE_BYTES} bytes; \
-                         use `code_search` to find a region",
-                        metadata.len()
-                    )),
+                    ToolError::io(format!("`{path}` is not valid UTF-8")),
                 );
             }
+        };
+        if truncated {
+            content.push_str(&format!(
+                "\n\n[truncated: the file is {len} bytes; showing the first \
+                 {MAX_READ_FILE_BYTES} bytes]"
+            ));
         }
-        match tokio::fs::read_to_string(&resolved).await {
-            Ok(content) => ToolResult::success(ctx.call_id, "read_file", content),
-            Err(error) => ToolResult::failure(ctx.call_id, "read_file", io_error(&error)),
-        }
+        ToolResult::success(ctx.call_id, "read_file", content)
     }
 }
 
@@ -818,7 +844,9 @@ impl Tool for ShellTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "shell".to_owned(),
-            description: "Run an allowlisted program with a fixed argument list; no shell."
+            description: "Run a program with a fixed argument list; no shell. Common developer \
+                          programs are standard; any other program still runs after the user \
+                          confirms it."
                 .to_owned(),
             risk: RiskLevel::Dangerous,
             params: vec![
@@ -852,12 +880,17 @@ impl Tool for ShellTool {
             None => ".",
         };
         let program = args.require_str("program")?;
-        let detail = match args.get("args") {
+        let mut detail = match args.get("args") {
             Some(keel_core::ArgValue::StringList(values)) if !values.is_empty() => {
                 format!("{program} {}", values.join(" "))
             }
             _ => program.to_owned(),
         };
+        // The list labels a program, it does not veto it: an unknown binary
+        // still runs, but the confirmation says why it stands out.
+        if !command::is_allowed(program, &self.allowlist) {
+            detail.push_str(" (not in the standard program list)");
+        }
         Ok(vec![PermissionRequest {
             tool: "shell".to_owned(),
             access: AccessKind::Execute,
@@ -874,16 +907,6 @@ impl Tool for ShellTool {
             Ok(program) => program,
             Err(error) => return ToolResult::failure(ctx.call_id, "shell", error),
         };
-        if !command::is_allowed(program, &self.allowlist) {
-            return ToolResult::failure(
-                ctx.call_id,
-                "shell",
-                ToolError::invalid_arguments(format!(
-                    "program `{program}` is not allowlisted; allowed: {}",
-                    self.allowlist.join(", ")
-                )),
-            );
-        }
         let command_args = match args.get("args") {
             Some(keel_core::ArgValue::StringList(values)) => values.clone(),
             Some(_) => {

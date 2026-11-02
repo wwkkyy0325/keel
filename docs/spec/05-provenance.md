@@ -31,6 +31,9 @@ the evidence trail for the clean-room claim.
 | 2026-11-01 | DeepSeek Harness memory plugin pages (npm/GitHub) | Public package pages | Landscape survey | Comparison only; no plugin code copied |
 | 2026-11-04 | Claude Code settings documentation (public) | Public documentation | Design reference for a home-directory state root with an environment override | No source read or copied; Keel uses `KEEL_HOME` and `~/.keel`, implemented independently |
 | 2026-11-05 | Anthropic Messages API documentation (public) | Public documentation | Streaming event and tool-use mapping for the Anthropic adapter | No code copied; the wire mapping is implemented independently |
+| 2026-11-04 | Linux kernel Landlock documentation | Public documentation (kernel.org) | Design reference for path-based confinement of spawned commands | No code copied; ruleset construction and syscall use implemented independently (ADR 0015) |
+| 2026-11-04 | Apple `sandbox(7)` / `sandbox-exec(1)` manual pages | Public documentation | Design reference for a profile-based command confinement on macOS | No code copied; the SBPL profile is generated independently (ADR 0015) |
+| 2026-11-04 | Microsoft Windows Job Objects and AppContainer documentation | Public documentation | Design reference for process containment and the deferred AppContainer evaluation | No code copied; job limits implemented independently (ADR 0015) |
 
 ## Excluded materials
 

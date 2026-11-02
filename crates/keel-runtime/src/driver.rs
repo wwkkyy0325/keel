@@ -10,8 +10,8 @@ use keel_core::{
     EventSink, InteractionId, InteractionRequest, InteractionResponse, KernelError, Message,
     MessageRole, ModelChunk, ModelError, ModelProvider, ModelRequest, ModelRole, OnTimeout, Policy,
     ReasoningLevel, SecretKind, SegmentRecord, Session, SessionSnapshot, TodoList, TodoState,
-    ToolArgs, ToolCallId, ToolOutcome, TurnEvent, TurnRecord, TurnState, VerificationMode,
-    VerificationReport,
+    TodoStatus, ToolArgs, ToolCallId, ToolOutcome, TurnEvent, TurnRecord, TurnState,
+    VerificationMode, VerificationReport,
 };
 
 use crate::context::ContextBuilder;
@@ -30,8 +30,12 @@ use crate::summarizer::{
 use crate::summary::{compact_args, summarize_output};
 use crate::verification::AcceptanceVerifier;
 
-const MODEL_CALL_TIMEOUT: Duration = Duration::from_secs(120);
+/// How long a model call may stay silent (connect, or between chunks).
+const MODEL_CALL_TIMEOUT: Duration = Duration::from_secs(300);
 const SUMMARY_TIMEOUT: Duration = Duration::from_secs(30);
+/// Bounds how many times one turn restarts itself because the model stopped
+/// while its task list still had unfinished items.
+const MAX_CONTINUATIONS: u32 = 6;
 use crate::TurnLimits;
 
 /// Host-side mechanism switches used by ablations.
@@ -95,6 +99,7 @@ struct TurnStats {
     empty_rounds: u32,
     previous_failed_call: Option<(String, ToolArgs)>,
     verification_reprompts: u32,
+    continuations: u32,
     verification: Option<VerificationReport>,
     awaiting_wrap_up: bool,
     wrap_up_report: Option<String>,
@@ -831,6 +836,7 @@ impl<M: ModelProvider> TurnDriver<M> {
         let mut previous_used: Option<u32> = None;
         let mut wrapped_up = false;
         let mut final_call_announced = false;
+        let mut budget_exhausted = false;
 
         'turn: loop {
             if cancel.is_cancelled() {
@@ -854,8 +860,21 @@ impl<M: ModelProvider> TurnDriver<M> {
                 total.saturating_add(message.estimated_tokens())
             });
 
+            // The turn's cost budget is spent: the next call is the answer.
+            // The model is not told a number; it sees the same final-call
+            // instruction a call-count limit would produce.
+            if !budget_exhausted
+                && u64::from(stats.usage.input_tokens) >= self.limits.max_turn_input_tokens
+            {
+                budget_exhausted = true;
+                self.events.append(Event::TurnBudgetExhausted {
+                    turn_id,
+                    input_tokens: stats.usage.input_tokens,
+                });
+            }
+
             // The last call is reserved for the answer, never for new work.
-            let final_call = model_calls + 1 == self.limits.max_model_calls;
+            let final_call = budget_exhausted || model_calls + 1 == self.limits.max_model_calls;
             if final_call && !final_call_announced {
                 final_call_announced = true;
                 self.events.append(Event::FinalCallForced { turn_id });
@@ -979,13 +998,17 @@ impl<M: ModelProvider> TurnDriver<M> {
             let mut calls = Vec::new();
             let mut pending_interactions: Vec<InteractionRequest> = Vec::new();
 
+            // A stream that keeps delivering chunks is alive, however long the
+            // answer takes; only a silent stream hits the window.
+            let mut chunk_deadline = call_deadline;
             let usage = loop {
                 let chunk = tokio::select! {
                     _ = cancel.cancelled() => {
                         return Err(KernelError::Cancelled { stage: "model stream" });
                     }
-                    result = tokio::time::timeout_at(call_deadline, stream.recv()) => result,
+                    result = tokio::time::timeout_at(chunk_deadline, stream.recv()) => result,
                 };
+                chunk_deadline = deadline.min(tokio::time::Instant::now() + MODEL_CALL_TIMEOUT);
 
                 match chunk {
                     Err(_) => {
@@ -1314,6 +1337,23 @@ impl<M: ModelProvider> TurnDriver<M> {
                 continue 'turn;
             }
 
+            // A model may report a partial result while its own task list
+            // still has unfinished items. Continue the same turn instead of
+            // making the user type "continue"; the cap bounds a model that
+            // never closes the list, and a wrap-up or the reserved final call
+            // is never overridden.
+            if !wrapped_up && !final_call_announced && stats.continuations < MAX_CONTINUATIONS {
+                if let Some((remaining, prompt)) = self.unfinished_todos() {
+                    stats.continuations = stats.continuations.saturating_add(1);
+                    messages.push(Arc::new(Message::assistant(round_text.clone())));
+                    messages.push(Arc::new(Message::user(prompt)));
+                    self.events
+                        .append(Event::TurnContinued { turn_id, remaining });
+                    self.step(fsm, turn_id, TurnEvent::Continued)?;
+                    continue 'turn;
+                }
+            }
+
             stats.answer.set_body(&round_text);
             self.step(fsm, turn_id, TurnEvent::DoneSignal)?;
             if let Some(plan) = &self.acceptance {
@@ -1472,6 +1512,41 @@ impl<M: ModelProvider> TurnDriver<M> {
                     .state
             })
             .unwrap_or(TodoState::Active)
+    }
+
+    /// The prompt that restarts a turn whose model stopped early, or `None`
+    /// when the task list is closed or has nothing left to do.
+    fn unfinished_todos(&self) -> Option<(u32, String)> {
+        let handle = self.todos.as_ref()?;
+        let list = handle
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if list.state != TodoState::Active {
+            return None;
+        }
+        let pending: Vec<_> = list
+            .items
+            .iter()
+            .filter(|item| matches!(item.status, TodoStatus::Pending | TodoStatus::InProgress))
+            .collect();
+        if pending.is_empty() {
+            return None;
+        }
+        let mut prompt = String::from("The task list still has unfinished items:\n");
+        for item in pending.iter().take(20) {
+            prompt.push_str(&format!(
+                "- #{} [{}] {}\n",
+                item.id,
+                item.status.as_str(),
+                item.text
+            ));
+        }
+        prompt.push_str(
+            "Continue with the next item now, in this same turn. Do not stop to summarize \
+             what you plan to do. Stop only if you need a decision from the user, and state \
+             exactly what you need.",
+        );
+        Some((pending.len() as u32, prompt))
     }
 
     fn todo_summary(&self) -> (u32, Option<u32>, TodoState, u32, u32) {

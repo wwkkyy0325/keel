@@ -1793,3 +1793,95 @@
 - Verify: queue unit test, two driver tests (delivery after a stream/tool
   round; late reporting), two TUI reducer tests, and the full suite.
 - Task doc: `docs/llmwiki/tasks/interjections.md`.
+
+### OS sandbox proposal
+
+- ADR 0015 (Proposed): confinement is a backstop for what the permission gate
+  cannot see — the implicit effects of an already approved process. It covers
+  two things only: writes outside the derived roots and reads of a fixed
+  credential set. Ordinary reads, the network and every explicitly granted
+  path stay open.
+- The user surface is one boolean (`[sandbox] enabled`) plus `/allow <path>`;
+  a blocked command names the path and the command that fixes it. A denial in
+  ordinary work is treated as a bug in the derived tables, not a user setting.
+- Port in `keel-core`, backends in a new `keel-sandbox` crate; the kernel keeps
+  no platform syscall code. Roots come from the permission surface, the state
+  root, temp, a built-in toolchain cache table and the home entries minus the
+  secret set.
+- Planned backends: Landlock on Linux, `sandbox-exec` on macOS, a job object on
+  Windows. AppContainer is deferred because it mutates the user's directory
+  ACLs; Windows reports the filesystem layers absent and the startup line says
+  so.
+- Network confinement is out of scope in v1: an always-on deny breaks package
+  managers, and the README states the gap instead of implying isolation.
+- Plan and verification matrix: `docs/llmwiki/tasks/os-sandbox.md`; open
+  questions 17 and 18; provenance rows for the platform documentation.
+
+### Permission frictions
+
+- Split the deny list. A structural denial (`.keel`, operating-system areas,
+  storage devices) stays unconditional; a credential name is refused outside
+  every root and asks for confirmation inside one. A session path grant opens
+  it, a full-auto escalation does not. `.env.example` and its template
+  siblings are ordinary files.
+- `shell` no longer rejects a non-standard program before the gate; the
+  permission request marks it and the execution confirmation decides.
+- `read_file` reads at most 8 MiB and appends a size marker instead of
+  refusing the file.
+- The collapsed turn line reports `N blocked`.
+- Verify: 412 passed, 0 failed, 7 ignored; fmt and clippy clean.
+- Task doc: `docs/llmwiki/tasks/permission-frictions.md`.
+
+### Long turns and pasted credentials
+
+- Turn limits are runaway protection again: 500 model calls, a 24-hour
+  deadline, a five-minute tool timeout; the coding profiles move from 12 to
+  120 tool calls and expose the `todo` tool.
+- The driver continues a turn whose model stopped while the `todo` list still
+  had unfinished items, up to six times, with a `TurnContinued` event and a
+  `TurnEvent::Continued` transition; wrap-up and the reserved final call are
+  never overridden.
+- A credential the user pastes to have it configured is no longer described as
+  a leak: the notice says it was not blocked and is redacted, the TUI shows the
+  same notice, and the coding prompt says to write it to the named file
+  without repeating it.
+- Verify: 414 passed, 0 failed, 7 ignored; fmt and clippy clean.
+- Task doc: `docs/llmwiki/tasks/autonomy.md`.
+
+### Activity-based timeouts
+
+- A command's timeout is now an inactivity window: output resets it, so a
+  download or build that keeps printing is not cut; a silent command still
+  dies, and a two-hour hard cap bounds a command that never stops printing.
+- A model stream resets its window on every chunk; only silence fails.
+- The turn deadline is a 24-hour backstop; the call budget ends a turn first.
+- Read-only calls stay parallel but are capped at eight concurrent; mutations
+  remain serialized.
+- ADR 0016 (Proposed) designs background commands: start, return a handle, and
+  deliver the result at a safe point.
+- Verify: 416 passed, 0 failed, 7 ignored; fmt and clippy clean.
+- Task doc: `docs/llmwiki/tasks/activity-budget.md`.
+
+### Turn cost budget
+
+- `TurnLimits::max_turn_input_tokens` bounds a turn's spend: one hundred times
+  the working set, at least one million tokens. It is derived, not configured.
+- Reaching it records `TurnBudgetExhausted` and forces the answer call; the
+  model sees the ordinary final-call instruction, never a number, so it does
+  not drift toward optimising a counter.
+- Call limits are now 500 model calls and a 1,000-call coding tool budget,
+  left as runaway protection only.
+- Verify: 417 passed, 0 failed, 7 ignored; fmt and clippy clean.
+
+### Runnable behavior harness
+
+- `crates/keel-runtime/examples/behaviors.rs` runs eleven checks against the
+  mock provider with no network: todo continuation, token budget forcing the
+  answer call (and no token number in the request), an active command
+  outliving the inactivity window, a silent command stopped by it, the
+  permission matrix (`.env.example`, `.env`, outside-root secret, `.keel`),
+  8 MiB truncation, the non-standard program marker, and twenty reads bounded
+  at eight concurrent.
+- End-to-end mock turn through the reference host: `state: Done`, 21 events,
+  the SQLite store written, `--view sessions` reports the turn.
+- Verify: the harness prints `11 passed, 0 failed`.

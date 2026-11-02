@@ -1078,7 +1078,7 @@ fn print_outcome(
     }
     if let Some(kind) = outcome.secret_warning {
         println!(
-            "notice: this turn's input matched a secret pattern ({}); it was not blocked. If it is real, rotate it and keep credentials in .env.",
+            "notice: the input matched a credential pattern ({}); it was not blocked and is redacted from the log. If it is a live credential, keep it only in the file you named or in .env.",
             kind.as_str()
         );
     }
@@ -1285,9 +1285,9 @@ struct Args {
     stop_on_error: bool,
     /// Re-run the same input after a failed turn, at most this many times.
     retry_errors: u32,
-    /// Host-owned turn deadline override; the policy default is 180 s.
+    /// Host-owned turn deadline override; the policy default is a 24-hour backstop.
     turn_timeout_ms: Option<u64>,
-    /// Host-owned per-tool timeout override; the policy default is 30 s.
+    /// Host-owned per-tool inactivity window; the policy default is 300 s.
     tool_timeout_ms: Option<u64>,
     /// SQLite file for session persistence.
     store: Option<PathBuf>,
@@ -1356,8 +1356,8 @@ Run:
   --tui                  interactive terminal UI
   --demo                 mock-only terminal demo
   --session              read one input per line until EOF
-  --turn-timeout-ms N    turn deadline override
-  --tool-timeout-ms N    per-tool deadline override
+  --turn-timeout-ms N    turn deadline override (backstop)
+  --tool-timeout-ms N    per-tool inactivity window
 
 Views:
   --view sessions|session|turn|memory|events

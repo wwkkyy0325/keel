@@ -27,14 +27,32 @@ Auxiliary states: `Stalled`, `Escalating`, `WaitSubAgents`, `WaitInteraction`,
 `TerminalCommit`.
 
 Events include: `Ready`, `ToolCalls`, `DoneSignal`, `ThinkingOnly`,
-`SubAgentsPending`, `UnverifiedHard`, `VerifyCapReached`, `StreamFailure`,
-`Overflow`, `VerifiedStalled`, `BudgetConverge`, `BudgetCommit`,
-`TurnsExhausted`, `WallClockLow`, `InteractionPending`, `InteractionResolved`,
-`InteractionDeferred`, `InteractionEndTurn`, `Cancel`, and `Fail`. `Fail` is a
-kernel-internal event accepted from any non-terminal state; it guarantees that
-an unexpected error still reaches a terminal state.
+`Continued`, `SubAgentsPending`, `UnverifiedHard`, `VerifyCapReached`,
+`StreamFailure`, `Overflow`, `VerifiedStalled`, `BudgetConverge`,
+`BudgetCommit`, `TurnsExhausted`, `WallClockLow`, `InteractionPending`,
+`InteractionResolved`, `InteractionDeferred`, `InteractionEndTurn`, `Cancel`,
+and `Fail`. `Fail` is a kernel-internal event accepted from any non-terminal
+state; it guarantees that an unexpected error still reaches a terminal state.
 
 Every transition has a test. New states require an ADR.
+
+One turn finishes the task. The limits (500 model calls, the profile's tool
+budget) are runaway protection, not a per-task allowance, and a host may lower
+them for a batch job. Liveness is measured by activity, not by the clock: a
+command is stopped after five minutes *without output*, not five minutes after
+it starts, so a download or a build that keeps printing runs to completion; a
+model stream is stopped after five minutes without a chunk. A 24-hour turn
+deadline remains as a backstop. A per-turn input-token budget (one hundred
+times the working set, never below one million) bounds cost: reaching it
+forces the answer call. The number is host-side only — the model sees the same
+generic wrap-up and final-call instructions, never a token count, so it does
+not start optimising for a counter. When the model reports a partial result while
+the `todo` list still has unfinished items, the driver keeps the turn alive: it
+records `TurnContinued`, adds the partial text and a reminder to the message
+list and runs another round. The continuation is bounded (six per turn) and
+never happens after the wrap-up instruction or the reserved final call. A
+model that needs a decision from the user asks and closes or leaves the list;
+the kernel does not guess.
 
 ## Ports
 
@@ -148,12 +166,21 @@ interjection stay distinct. See ADR 0010.
   or read-write; execution still requires confirmation, and the most specific
   root wins. A drive root or a system directory is refused as a root.
 - `full_auto` removes the workspace boundary and every extra root, but never
-  the hard deny list.
-- The deny list covers system/privileged paths, credential stores, secret
-  files, other users' homes, privilege escalation, destructive storage
-  commands, security bypass, Keel audit/`.git` internals and
-  send/payment/secret upload. It is hardcoded plus host additions; profiles
-  and plugins cannot remove entries.
+  the structural deny list.
+- The structural deny list is the agent's own state (`.keel`) and operating
+  system areas (privileged paths, `/dev`, storage devices, `System32`). It is
+  hardcoded plus host additions; profiles, plugins and approvals cannot remove
+  an entry.
+- Credential names (`.env` and `.env.*` except the templates, `.ssh`,
+  `.gnupg`, `.aws`, `.azure`, `.kube`, `.docker`, `.git`, private-key
+  suffixes, `credentials.json`, a `secrets` directory) are refused outside
+  every root. Inside a declared root they return a confirmation that names the
+  pattern; a session path grant opens them, a full-auto escalation does not.
+  `.env.example`, `.env.sample`, `.env.template`, `.env.dist` and
+  `.env.defaults` are ordinary files.
+- `shell` runs a program without a shell. The standard developer list labels a
+  program it does not contain ("not in the standard program list") but does
+  not veto it: the execution confirmation is the decision point.
 - `read_only` is tool visibility, not a level. `manual` review is a
   host-level confirmation wrapper, not a kernel level.
 - Plan mode is a tool visibility filter: it hides write/execute tools and does
@@ -161,7 +188,7 @@ interjection stay distinct. See ADR 0010.
 - Confirmations and escalation are typed interactions. The user may allow one
   call, allow a path prefix, or escalate the session to `full_auto`. Path
   grants and escalation carry a TTL and can be revoked; only the user or host
-  approves, and grants never bypass the deny list.
+  approves, and grants never bypass the structural list.
 - Deletion is soft: the target is moved into a `TrashStore` when it is on the
   same volume, otherwise copied, then removed. Overwrite backs up the previous
   version first. A failed trash operation aborts; there is no hard delete
@@ -187,6 +214,10 @@ interjection stay distinct. See ADR 0010.
   or keyring names, never inline values.
 - The agent never asks the user to paste a key into chat; it points to
   `.env.example` or the keyring.
+- A user may still hand over a credential to configure (an app id, a token, a
+  key). That request is served, not refused: the agent writes it to the file
+  the user named, does not repeat the value in the answer, and `.env` writes
+  still pass the permission gate.
 - Input detected as a secret is not blocked. The turn records a
   `SecretWarning` event and returns the detected kind with the turn result, so
   the host can show the notice for that turn. Detection is best-effort and

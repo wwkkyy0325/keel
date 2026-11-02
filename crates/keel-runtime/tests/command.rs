@@ -175,3 +175,37 @@ fn is_alive(pid: u32) -> bool {
             .unwrap_or(false)
     }
 }
+
+#[tokio::test]
+async fn a_command_that_keeps_printing_outlives_the_inactivity_window() {
+    if !python_available() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let args = vec![
+        "-c".to_owned(),
+        "import time\nfor _ in range(10):\n    print('tick', flush=True)\n    time.sleep(0.1)"
+            .to_owned(),
+    ];
+
+    let started = Instant::now();
+    let output = command::run(
+        CommandSpec {
+            program: "python",
+            args: &args,
+            cwd: dir.path(),
+            // Shorter than the command's total run time.
+            timeout: Duration::from_millis(400),
+        },
+        &CancelToken::new(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(output.exit_code, Some(0));
+    assert!(
+        started.elapsed() > Duration::from_millis(500),
+        "an active command must not be cut at the inactivity window: {:?}",
+        started.elapsed()
+    );
+}

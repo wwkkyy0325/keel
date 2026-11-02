@@ -198,6 +198,8 @@ struct App {
     /// dropped when the turn finishes.
     turn_content_start: Option<usize>,
     turn_tools: u32,
+    /// Tool calls the gate refused during the running turn.
+    turn_blocked: u32,
     should_quit: bool,
 }
 
@@ -234,6 +236,7 @@ impl App {
             streaming: None,
             turn_content_start: None,
             turn_tools: 0,
+            turn_blocked: 0,
             should_quit: false,
         }
     }
@@ -267,6 +270,7 @@ impl App {
         });
         self.turn_content_start = Some(self.blocks.len());
         self.turn_tools = 0;
+        self.turn_blocked = 0;
         self.blocks.push(Block {
             kind: BlockKind::Assistant,
             text: String::new(),
@@ -298,6 +302,12 @@ impl App {
         );
         for text in &done.outcome.late_interjections {
             self.notice(format!("interjection not delivered: {text}"));
+        }
+        if let Some(kind) = done.outcome.secret_warning {
+            self.notice(format!(
+                "credential pattern ({}) in the input; not blocked, redacted from the log",
+                kind.as_str()
+            ));
         }
     }
 
@@ -342,6 +352,11 @@ impl App {
             1 => fields.push("1 file".to_owned()),
             count => fields.push(format!("{count} files")),
         }
+        match self.turn_blocked {
+            0 => {}
+            1 => fields.push("1 blocked".to_owned()),
+            count => fields.push(format!("{count} blocked")),
+        }
         fields.push(format!(
             "{} in / {} out",
             usage.input_tokens, usage.output_tokens
@@ -355,6 +370,7 @@ impl App {
             text: fields.join(" · "),
         });
         self.turn_tools = 0;
+        self.turn_blocked = 0;
         self.usage.add(usage);
         self.running = false;
         self.cancel = None;
@@ -438,6 +454,9 @@ impl App {
                         };
                         block.text = output_preview.clone().unwrap_or_default();
                     }
+                }
+                Event::PermissionDecided { decision, .. } if decision == "deny" => {
+                    self.turn_blocked = self.turn_blocked.saturating_add(1);
                 }
                 _ => {}
             }
@@ -1458,6 +1477,35 @@ mod tests {
         assert!(expanded.contains("partial"), "{expanded}");
         assert!(expanded.contains("echo"), "{expanded}");
         assert!(expanded.contains("command output"), "{expanded}");
+    }
+
+    #[test]
+    fn a_blocked_tool_is_counted_in_the_summary() {
+        let mut app = app();
+        let events = EventLog::new();
+        app.start_turn("edit the config".to_owned());
+        events.append(Event::PermissionDecided {
+            turn_id: TurnId::new(1),
+            call_id: keel_core::ToolCallId::new(1),
+            tool: "read_file".to_owned(),
+            access: keel_core::AccessKind::Read,
+            path: Some(".env".to_owned()),
+            decision: "deny".to_owned(),
+            reason: Some("the path matches a secret pattern".to_owned()),
+        });
+        app.drain_events(&events);
+
+        app.collapse("done", None, &usage(), 10, 0);
+
+        let summary = app
+            .blocks
+            .iter()
+            .find_map(|block| match &block.kind {
+                BlockKind::Summary => Some(block.text.as_str()),
+                _ => None,
+            })
+            .expect("a summary line");
+        assert!(summary.contains("1 blocked"), "{summary}");
     }
 
     fn transcript_text(app: &App, width: usize) -> String {

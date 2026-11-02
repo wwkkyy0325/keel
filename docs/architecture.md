@@ -64,8 +64,10 @@ Recall is lexical (IDF-weighted), deliberately not vector-based in the kernel.
 ## Tools and permissions
 
 The registry holds typed tools; each declares risk and permission requests. Two
-permission levels (`workspace_auto`, `full_auto`) share a hard deny list for
-credential and system paths. Deletes move to a trash store. Interactions
+permission levels (`workspace_auto`, `full_auto`) share a structural deny list
+for the agent's own state and operating-system paths; a credential name is
+refused outside every root and asks for confirmation inside one. Deletes move
+to a trash store. Interactions
 (question, plan, confirmation, escalation) are broker primitives, so a host can
 present them. The dispatcher enforces the gate before any tool runs and appends
 an audit event.

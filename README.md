@@ -43,11 +43,17 @@ kernel-only build proves the boundary:
 ```bash
 cargo build -p keel-core -p keel-policy -p keel-runtime -p keel-model-openai -p keel-model-anthropic
 cargo run -p keel-runtime --example minimal_turn
+cargo run -p keel-runtime --example behaviors
 ```
 
 `minimal_turn` is a complete host in one file: a profile, two context stages,
 one tool, a mock model and a driver. It is the smallest starting point for a
 derived project; publishing the kernel is not required for personal use.
+
+`behaviors` is the runnable verification harness: with the mock provider and no
+network it checks turn continuation, the token budget, activity-based command
+timeouts, the permission matrix, large-file truncation, the non-standard
+program marker and the parallel-read cap, then prints `N passed, M failed`.
 
 ## Implemented
 
@@ -66,8 +72,19 @@ derived project; publishing the kernel is not required for personal use.
 - MCP plugins over stdio and streamable HTTP, `--plugins-check [--json]`,
   roots/ping replies and process-tree cleanup.
 - Bounded tool execution: command output keeps a head and tail (64 KiB per
-  stream) instead of buffering everything, `read_file` refuses files over
-  8 MiB, and a timed-out or cancelled command kills its process tree.
+  stream) instead of buffering everything, `read_file` reads at most 8 MiB and
+  appends a truncation marker instead of refusing a larger file, and a
+  timed-out or cancelled command kills its process tree.
+- One turn finishes a multi-step task. The limits (500 model calls, a 24-hour
+  backstop, a 1,000-call tool budget in the coding profiles) are runaway
+  protection, not a per-task allowance, and an unfinished `todo` list keeps the
+  turn going instead of asking the user to type "continue". A per-turn
+  input-token budget bounds cost; it is derived from the working set and the
+  model never sees the number.
+- Timeouts measure activity: a command that keeps printing is not cut at a
+  fixed deadline, a silent one is stopped after five minutes, and a model
+  stream resets its window on every chunk. Read-only calls run in parallel,
+  eight at a time.
 - Windows `.cmd`/`.bat` shims (`npm`, `npx`, `pnpm`, `yarn`) resolve through
   PATH, so allowlisted names start without a shell.
 - Explicit undo: `list_trash` lists recoverable versions and `restore_file`
@@ -182,13 +199,17 @@ cargo run -p keel-cli -- \
 ```
 
 Keel uses two permission levels: `workspace_auto` is the permission boundary
-and `full_auto` removes the workspace boundary while keeping the hard deny
-list. It gates tool calls, not processes: an approved `shell` command or an
-MCP server is not confined to the workspace. Paths are canonicalized before
-the gate, so a symlink inside the workspace cannot redirect a read or write
-outside it. Deletion is recoverable through the trash; interactions
-(questions, plan approval, permission confirmation and escalation) are kernel
-primitives, not domain tools. See ADR 0002 and ADR 0003.
+and `full_auto` removes the workspace boundary while keeping the structural
+deny list. It gates tool calls, not processes: an approved `shell` command or
+an MCP server is not confined to the workspace. A credential name inside a
+root still asks for confirmation, and outside every root it is refused; a
+`.env.example` is an ordinary file. `shell` runs any program without a shell,
+marking the ones outside its standard developer list in the confirmation. Paths
+are canonicalized before the gate, so a symlink inside the workspace cannot
+redirect a read or write outside it. Deletion is recoverable through the
+trash; interactions (questions, plan approval, permission confirmation and
+escalation) are kernel primitives, not domain tools. See ADR 0002 and ADR
+0003.
 
 A task that spans more than one directory adds labeled roots instead of a
 wider workspace:

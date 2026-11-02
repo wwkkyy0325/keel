@@ -16,6 +16,25 @@ First complete kernel and reference host.
   deltas, `tool_use` input accumulation, tool-result history, the control tool
   and usage. It sits beside `keel-model-openai`; no kernel crate depends on an
   adapter.
+- One turn finishes a multi-step task. The defaults are runaway protection
+  (500 model calls, a 24-hour backstop), not a per-task budget. When the model
+  reports a partial result while the `todo` list still has unfinished items,
+  the driver continues the turn with a reminder and records `TurnContinued`;
+  six continuations bound a model that never closes the list, and a wrap-up or
+  the reserved final call is never overridden. `TurnEvent::Continued` keeps the
+  FSM explicit.
+- A per-turn input-token budget (`max_turn_input_tokens`, one hundred times
+  the working set, one-million floor) bounds cost. Reaching it records
+  `TurnBudgetExhausted` and forces the answer call. The model never sees the
+  number or a counter in the prompt.
+- Timeouts measure activity, not the clock. A command is stopped after five
+  minutes without output, so a build or download that keeps printing finishes;
+  a two-hour hard cap bounds a command that prints forever. A model stream is
+  stopped after five minutes without a chunk. Read-only calls in one round run
+  in parallel, capped at eight at a time; mutating calls stay serialized.
+- A credential the user hands over to be configured is served: the turn still
+  records `SecretWarning` and redacts the log, and the prompt tells the agent
+  to write the value to the file the user named without repeating it.
 - Interjections: a bounded, deduplicated per-turn queue (`TurnDriver::interject`).
   Items are delivered before the next model call as `[user interjection] …`,
   never during a stream or tool round. `InterjectionQueued`,
@@ -32,14 +51,23 @@ First complete kernel and reference host.
 - `PermissionDecided` events record every gate decision (`allow`, `deny`,
   `confirm`) with tool, access, path and reason, so a UI or audit log does not
   have to infer it.
+- The deny list is split in two. A structural denial (`.keel`, operating-system
+  areas, storage devices) cannot be approved away. A credential name is
+  refused outside every root and asks for confirmation inside a root; a
+  session path grant opens it, a full-auto escalation does not. `.env.example`
+  and its template siblings are ordinary files, so the documented first-run
+  flow works.
+- `shell` no longer rejects a program outside its standard list before the
+  gate; the permission request marks it as non-standard and the execution
+  confirmation decides. The list labels, it does not veto.
 - `Event` implements `Serialize` with snake_case keys, so a host can persist
   the kernel event stream as structured data.
 - Versioned session snapshots (`SNAPSHOT_VERSION = 1`); a newer format is
   refused rather than misread.
 - Bounded command execution: both pipes are streamed into a head and tail
-  (64 KiB per stream) instead of being buffered in full; a timeout or
-  cancellation kills the process tree; `read_file` refuses files over 8 MiB
-  before reading them.
+  (64 KiB per stream) instead of being buffered in full; an inactivity window
+  or cancellation kills the process tree; `read_file` reads at most 8 MiB and
+  appends a size marker instead of refusing a larger file.
 - Windows command execution resolves `.cmd`/`.bat` shims from PATH after a
   bare name is not found, so `npm`, `npx`, `pnpm` and `yarn` start without a
   shell.
@@ -118,7 +146,8 @@ First complete kernel and reference host.
 - Finished turns keep their process as hidden blocks: `Ctrl-O` shows or hides
   tool calls and intermediate text for the whole history. The transcript is
   no longer truncated; `PgUp`/`PgDn` scroll it and a scrollbar appears when it
-  overflows.
+  overflows. The collapsed summary reports the number of calls the gate
+  blocked, so a denied write is not invisible after the turn.
 - Tool lines keep the head and tail of their output while a turn runs and the
   whole bounded preview under `Ctrl-O`; the preview is redacted and never
   persisted.
@@ -177,6 +206,11 @@ First complete kernel and reference host.
 
 - `crates/keel-runtime/examples/minimal_turn.rs` runs one turn without the
   reference CLI: profile, two stages, one tool, a mock model and a driver.
+- `crates/keel-runtime/examples/behaviors.rs` verifies eleven runtime
+  behaviors against the mock provider with no network and prints a pass/fail
+  summary: continuation, token budget, command activity windows, the
+  permission matrix, file truncation, the program marker and the parallel-read
+  cap.
 
 ### Evidence
 

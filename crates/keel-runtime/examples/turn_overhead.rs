@@ -85,6 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 max_tool_calls: 0,
                 tool_timeout: Duration::from_secs(1),
                 turn_timeout: Duration::from_secs(5),
+                max_turn_input_tokens: u64::MAX,
             },
             todos: None,
             options: keel_runtime::KernelOptions::default(),

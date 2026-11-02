@@ -83,6 +83,10 @@ pub fn standard_registry(root: &Path) -> Arc<ToolRegistry> {
     registry
         .register(Arc::new(keel_runtime::RestoreFileTool::new(trash)))
         .unwrap();
+    let todos = Arc::new(Mutex::new(keel_core::TodoList::new()));
+    registry
+        .register(Arc::new(keel_runtime::TodoTool::new(todos)))
+        .unwrap();
     Arc::new(registry)
 }
 
@@ -101,6 +105,7 @@ pub fn test_limits() -> TurnLimits {
         max_tool_calls: 8,
         tool_timeout: Duration::from_millis(200),
         turn_timeout: Duration::from_secs(2),
+        max_turn_input_tokens: u64::MAX,
     }
 }
 
@@ -121,6 +126,25 @@ pub fn build_driver<M: ModelProvider>(
     )
 }
 
+pub fn build_driver_with_todos<M: ModelProvider>(
+    model: M,
+    config: RuntimeConfig,
+    events: Arc<EventLog>,
+    root: &Path,
+    limits: TurnLimits,
+    todos: Arc<Mutex<keel_core::TodoList>>,
+) -> TurnDriver<M> {
+    build_driver_full(
+        model,
+        config,
+        events,
+        root,
+        limits,
+        Arc::new(DeferAllInteractionPort),
+        Some(todos),
+    )
+}
+
 pub fn build_driver_with_port<M: ModelProvider>(
     model: M,
     config: RuntimeConfig,
@@ -128,6 +152,18 @@ pub fn build_driver_with_port<M: ModelProvider>(
     root: &Path,
     limits: TurnLimits,
     port: Arc<dyn InteractionPort>,
+) -> TurnDriver<M> {
+    build_driver_full(model, config, events, root, limits, port, None)
+}
+
+fn build_driver_full<M: ModelProvider>(
+    model: M,
+    config: RuntimeConfig,
+    events: Arc<EventLog>,
+    root: &Path,
+    limits: TurnLimits,
+    port: Arc<dyn InteractionPort>,
+    todos: Option<Arc<Mutex<keel_core::TodoList>>>,
 ) -> TurnDriver<M> {
     let tools = standard_registry(root);
     let context = standard_context();
@@ -158,7 +194,7 @@ pub fn build_driver_with_port<M: ModelProvider>(
             max_output_tokens,
             context_window,
             limits,
-            todos: None,
+            todos,
             options: keel_runtime::KernelOptions::default(),
         },
     )

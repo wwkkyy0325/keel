@@ -205,6 +205,17 @@ pub enum Event {
         state: TurnState,
         text: String,
     },
+    /// The model stopped while its task list still had unfinished items, so
+    /// the driver continued the same turn instead of ending it.
+    TurnContinued {
+        turn_id: TurnId,
+        remaining: u32,
+    },
+    /// The turn spent its input-token budget; the next call is the answer.
+    TurnBudgetExhausted {
+        turn_id: TurnId,
+        input_tokens: u32,
+    },
     TurnCancelled {
         turn_id: TurnId,
         state: TurnState,
@@ -280,6 +291,8 @@ impl Event {
             | Self::ToolFinished { turn_id, .. }
             | Self::PermissionDecided { turn_id, .. }
             | Self::TurnFinished { turn_id, .. }
+            | Self::TurnContinued { turn_id, .. }
+            | Self::TurnBudgetExhausted { turn_id, .. }
             | Self::TurnCancelled { turn_id, .. }
             | Self::InteractionRequested { turn_id, .. }
             | Self::InteractionResolved { turn_id, .. }
@@ -321,6 +334,8 @@ impl Event {
             Self::ToolFinished { .. } => "tool_finished",
             Self::PermissionDecided { .. } => "permission_decided",
             Self::TurnFinished { .. } => "turn_finished",
+            Self::TurnContinued { .. } => "turn_continued",
+            Self::TurnBudgetExhausted { .. } => "turn_budget_exhausted",
             Self::TurnCancelled { .. } => "turn_cancelled",
             Self::InteractionRequested { .. } => "interaction_requested",
             Self::InteractionResolved { .. } => "interaction_resolved",

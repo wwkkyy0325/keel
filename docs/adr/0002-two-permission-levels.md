@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted.
+Accepted. Amended 2026-11-04: the deny list is split into a structural list
+(the agent's state and operating-system areas, never lifted) and credential
+names, which ask for confirmation inside a root and are refused outside every
+root. See `docs/spec/01-kernel.md`.
 
 ## Context
 

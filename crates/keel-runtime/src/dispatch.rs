@@ -16,6 +16,10 @@ use crate::interaction::InteractionBroker;
 use crate::permission::PermissionEngine;
 use crate::registry::ToolRegistry;
 
+/// Read-only calls run in parallel, but a round that asks for fifty files must
+/// not start fifty processes at once.
+const MAX_CONCURRENT_READS: usize = 8;
+
 struct PreparedCall {
     index: usize,
     tool: Arc<dyn Tool>,
@@ -142,13 +146,18 @@ impl ToolDispatcher {
         }
 
         let read_indices: VecDeque<usize> = reads.iter().map(|prepared| prepared.index).collect();
+        let permits = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_READS));
         let mut join = JoinSet::new();
         for prepared in reads {
             let ctx = self.tool_ctx(turn_id, prepared.call_id, cancel.clone());
             let events = self.events.clone();
             let timeout = self.timeout;
             let cancel = cancel.clone();
+            let permits = permits.clone();
             join.spawn(async move {
+                // A permit is released when the call finishes, so the next
+                // queued read starts without waiting for the whole batch.
+                let _permit = permits.acquire_owned().await.ok();
                 let start = Instant::now();
                 events.append(Event::ToolStarted {
                     turn_id,

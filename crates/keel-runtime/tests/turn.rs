@@ -8,8 +8,8 @@ use keel_core::{
     AcceptanceItem, ArgValue, CancelToken, CommitCtx, CommitDecision, ContextRecipe, ErrorCode,
     Event, KernelError, MemoryPolicy, Message, MessageRole, ModelChunk, ModelError, ModelProvider,
     ModelRequest, ModelRole, ModelRoute, ModelStream, PermissionLevel, Policy, ReasoningLevel,
-    SecretKind, TokenUsage, Tool, ToolArgs, ToolCallId, ToolCtx, ToolOutcome, ToolSchema, TurnId,
-    TurnState, VerificationMode, VerifySpec,
+    SecretKind, TodoList, TodoStatus, TokenUsage, Tool, ToolArgs, ToolCallId, ToolCtx, ToolOutcome,
+    ToolSchema, TurnId, TurnState, VerificationMode, VerifySpec,
 };
 use keel_runtime::{
     DeferAllInteractionPort, EventLog, InteractionBroker, InterjectionPush, MockModel, MockStep,
@@ -801,6 +801,7 @@ fn two_call_limits() -> TurnLimits {
         max_tool_calls: 8,
         tool_timeout: Duration::from_millis(200),
         turn_timeout: Duration::from_secs(2),
+        max_turn_input_tokens: u64::MAX,
     }
 }
 
@@ -1292,6 +1293,7 @@ async fn a_late_interjection_is_reported_instead_of_dropped_silently() {
         max_tool_calls: 8,
         tool_timeout: Duration::from_millis(200),
         turn_timeout: Duration::from_secs(2),
+        max_turn_input_tokens: u64::MAX,
     };
     let driver = Arc::new(common::build_driver(
         model,
@@ -1317,4 +1319,134 @@ async fn a_late_interjection_is_reported_instead_of_dropped_silently() {
             Event::InterjectionDropped { text, reason, .. }
                 if text == "too late" && reason.contains("before a safe point")
         )));
+}
+
+/// Clears the shared task list on its second call, so the driver can finish
+/// the turn instead of continuing forever.
+struct CompletingModel {
+    inner: MockModel,
+    todos: Arc<Mutex<TodoList>>,
+    calls: Arc<Mutex<u32>>,
+}
+
+#[async_trait]
+impl ModelProvider for CompletingModel {
+    async fn stream(
+        &self,
+        request: ModelRequest,
+        cancel: &CancelToken,
+    ) -> Result<ModelStream, ModelError> {
+        let call = {
+            let mut calls = self
+                .calls
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *calls += 1;
+            *calls
+        };
+        if call > 1 {
+            let mut list = self
+                .todos
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            for item in &mut list.items {
+                item.status = TodoStatus::Completed;
+            }
+        }
+        self.inner.stream(request, cancel).await
+    }
+}
+
+#[tokio::test]
+async fn a_turn_continues_while_the_task_list_has_unfinished_items() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&["echo"], 4, PermissionLevel::WorkspaceAuto);
+    let todos = Arc::new(Mutex::new(TodoList::new()));
+    {
+        let mut list = todos
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        list.add_model("inspect the workspace").unwrap();
+        list.add_model("run the tests").unwrap();
+    }
+    let model = CompletingModel {
+        inner: MockModel::new(vec![
+            MockStep::Text("I will start with the first item.".to_owned()),
+            MockStep::Text("all items are done".to_owned()),
+        ]),
+        todos: todos.clone(),
+        calls: Arc::new(Mutex::new(0)),
+    };
+    let driver = common::build_driver_with_todos(
+        model,
+        config,
+        events.clone(),
+        dir.path(),
+        common::test_limits(),
+        todos,
+    );
+
+    let outcome = driver.run("do both items", CancelToken::new()).await;
+
+    assert!(outcome.is_done(), "{outcome:?}");
+    assert_eq!(outcome.answer.body, "all items are done");
+    let continued: Vec<_> = events
+        .for_turn(outcome.turn_id)
+        .into_iter()
+        .filter(|record| matches!(record.event, Event::TurnContinued { .. }))
+        .collect();
+    assert_eq!(continued.len(), 1, "the driver continues exactly once");
+    assert!(matches!(
+        continued[0].event,
+        Event::TurnContinued { remaining: 2, .. }
+    ));
+}
+
+#[tokio::test]
+async fn the_turn_budget_forces_the_final_call_without_telling_the_model() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&["echo"], 4, PermissionLevel::WorkspaceAuto);
+
+    let mut args = ToolArgs::new();
+    args.insert("text", ArgValue::String("hi".to_owned()));
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let model = ToolRecordingModel {
+        inner: MockModel::new(vec![
+            MockStep::ToolCall {
+                name: "echo".to_owned(),
+                args,
+            },
+            MockStep::Text("final answer".to_owned()),
+        ]),
+        seen: seen.clone(),
+    };
+    let limits = TurnLimits {
+        max_model_calls: 10,
+        max_tool_calls: 8,
+        tool_timeout: Duration::from_millis(200),
+        turn_timeout: Duration::from_secs(5),
+        // One token is more than the first call can avoid spending, so the
+        // second call is the answer.
+        max_turn_input_tokens: 1,
+    };
+    let driver = common::build_driver(model, config, events.clone(), dir.path(), limits);
+
+    let outcome = driver.run("do it", CancelToken::new()).await;
+
+    assert!(outcome.is_done(), "{outcome:?}");
+    assert_eq!(outcome.answer.body, "final answer");
+    assert!(events
+        .for_turn(outcome.turn_id)
+        .iter()
+        .any(|record| matches!(record.event, Event::TurnBudgetExhausted { .. })));
+
+    let requests = seen.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[1].0, 0, "the budget call carries no tools");
+    assert!(!requests[1]
+        .1
+        .iter()
+        .any(|message| message.content.to_lowercase().contains("token")));
 }
