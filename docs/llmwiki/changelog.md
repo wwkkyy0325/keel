@@ -1726,3 +1726,17 @@
   is never prefilled because it is not an explicit input.
 - Verify: `prefill_fills_the_prompt_without_starting_a_turn` and
   `a_prefilled_prompt_is_visible_in_the_input_box`.
+
+### Default state directory
+
+- With no `--state-dir` and no bundle `state_dir`, the state root is
+  `KEEL_HOME`, then `~/.keel` (`%USERPROFILE%\.keel` on Windows). The store,
+  trash and output spills live under it; a plain run now persists its session.
+- An explicit `--state-dir` or bundle `state_dir` overrides the default, and
+  `--store` overrides only the database. The reference bundles dropped their
+  repo-local state path and use the default.
+- The eval harness sets `KEEL_HOME` to a per-case temporary directory, so
+  eval runs stay out of the developer's home.
+- Verify: the three `state_home` tests plus two smoke runs (KEEL_HOME store;
+  explicit state dir overriding it). Task doc:
+  `docs/llmwiki/tasks/default-state-dir.md`.

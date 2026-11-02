@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -72,6 +73,8 @@ def run_case(case_dir: Path, profile: str | None = None, keep: bool = False) -> 
     timeout = int(meta.get("case", {}).get("timeout_seconds", 300)) + 60
 
     workspace = Path(tempfile.mkdtemp(prefix=f"keel-{case_id}-"))
+    # Keep eval state out of the developer's home directory.
+    state_home = Path(tempfile.mkdtemp(prefix=f"keel-{case_id}-state-"))
     if (case_dir / "setup").is_dir():
         shutil.copytree(case_dir / "setup", workspace, dirs_exist_ok=True)
 
@@ -95,10 +98,13 @@ def run_case(case_dir: Path, profile: str | None = None, keep: bool = False) -> 
 
     started = dt.datetime.now(dt.timezone.utc)
     timed_out = False
+    env = os.environ.copy()
+    env["KEEL_HOME"] = str(state_home)
     try:
         cli = subprocess.run(
             command,
             cwd=REPO_ROOT,
+            env=env,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -167,6 +173,7 @@ def run_case(case_dir: Path, profile: str | None = None, keep: bool = False) -> 
 
     if not keep:
         shutil.rmtree(workspace, ignore_errors=True)
+        shutil.rmtree(state_home, ignore_errors=True)
     return report
 
 

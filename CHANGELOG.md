@@ -132,6 +132,11 @@ First complete kernel and reference host.
   relative to the job file; explicit CLI flags override the job.
 - `--tui --job` (or `--tui --input`) pre-fills the prompt with the job input;
   it is not submitted until the user presses Enter.
+- The state root defaults to `KEEL_HOME`, then `~/.keel`
+  (`%USERPROFILE%\.keel` on Windows). The store, trash and output spills live
+  under it, so a plain run persists its session. `--state-dir` or a bundle's
+  `state_dir` overrides it; `--store` overrides only the database. The eval
+  harness isolates itself with a temporary `KEEL_HOME`.
 
 ### Performance
 

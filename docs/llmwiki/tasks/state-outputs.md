@@ -26,13 +26,15 @@ the model can read it back from either location.
 - [x] The outputs directory keeps the newest 200 `turn-*-call-*.txt` files;
       pruning is best effort and leaves other files alone. Verify:
       `old_spills_are_pruned_and_other_files_are_kept`.
-- [ ] An OS-level default state directory remains future work.
+- [x] The state root now has a default (`KEEL_HOME` or `~/.keel`); see
+      `docs/llmwiki/tasks/default-state-dir.md`.
 
 ## Boundaries
 
 - The read exception covers only the configured outputs directory and only
   reads; everything else under `.keel` stays denied.
-- Without a state directory, the spill stays in `<workspace>/.keel/outputs`.
+- Without a resolvable state root (no `--state-dir`, bundle path, `KEEL_HOME`
+  or home directory), the spill stays in `<workspace>/.keel/outputs`.
 - The marker is an absolute path. A model that is not allowed to read it gets
   the normal permission decision; the exception is what makes it reachable.
 - Pruning keeps the newest 200 files, so a marker to an older spill can now

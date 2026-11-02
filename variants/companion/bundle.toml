@@ -1,3 +1,2 @@
 name = "companion"
 profile = "profile.deepseek.toml"
-state_dir = "../../.keel/state"

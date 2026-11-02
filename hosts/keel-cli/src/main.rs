@@ -231,17 +231,19 @@ async fn run() -> Result<ExitCode, KernelError> {
         roots.extend(args.roots.iter().map(|(path, _)| path.clone()));
         return check_plugins(path, &roots, args.json).await;
     }
-    let state_dir = match &args.state_dir {
+    let state_dir = match args.state_dir.clone().or_else(default_state_dir) {
         Some(dir) => {
-            std::fs::create_dir_all(dir).map_err(|error| KernelError::Io {
+            std::fs::create_dir_all(&dir).map_err(|error| KernelError::Io {
                 message: format!("cannot create state directory `{}`: {error}", dir.display()),
             })?;
-            Some(std::fs::canonicalize(dir).map_err(|error| KernelError::Io {
-                message: format!(
-                    "cannot resolve state directory `{}`: {error}",
-                    dir.display()
-                ),
-            })?)
+            Some(
+                std::fs::canonicalize(&dir).map_err(|error| KernelError::Io {
+                    message: format!(
+                        "cannot resolve state directory `{}`: {error}",
+                        dir.display()
+                    ),
+                })?,
+            )
         }
         None => None,
     };
@@ -1591,6 +1593,23 @@ fn print_json<T: serde::Serialize + ?Sized>(value: &T) -> Result<(), KernelError
 }
 
 /// Parses `<session>:<turn>` from `--fork-from`.
+/// The state root when neither `--state-dir` nor a bundle sets one:
+/// `KEEL_HOME`, then a `.keel` directory under the user profile. This matches
+/// the observable Claude Code layout (a home directory with an environment
+/// override); no source was read or copied.
+fn state_home(env: &impl Fn(&str) -> Option<std::ffi::OsString>) -> Option<PathBuf> {
+    if let Some(dir) = env("KEEL_HOME") {
+        return Some(PathBuf::from(dir));
+    }
+    env("USERPROFILE")
+        .or_else(|| env("HOME"))
+        .map(|home| PathBuf::from(home).join(".keel"))
+}
+
+fn default_state_dir() -> Option<PathBuf> {
+    state_home(&|key| std::env::var_os(key))
+}
+
 /// `--store` wins; otherwise a state directory supplies `<state>/keel.db`.
 fn resolve_store_path(store: &Option<PathBuf>, state_dir: &Option<PathBuf>) -> Option<PathBuf> {
     store
@@ -1676,6 +1695,41 @@ async fn check_plugins(
 mod tests {
     use super::*;
     use keel_core::VerifySpec;
+
+    #[test]
+    fn keel_home_overrides_the_default_state_root() {
+        let env = |key: &str| match key {
+            "KEEL_HOME" => Some(std::ffi::OsString::from("/tmp/keel")),
+            _ => None,
+        };
+        assert_eq!(state_home(&env), Some(PathBuf::from("/tmp/keel")));
+    }
+
+    #[test]
+    fn the_default_state_root_is_a_home_dot_directory() {
+        let env = |key: &str| match key {
+            "USERPROFILE" => Some(std::ffi::OsString::from("C:/Users/me")),
+            "HOME" => Some(std::ffi::OsString::from("/home/me")),
+            _ => None,
+        };
+        assert_eq!(
+            state_home(&env),
+            Some(PathBuf::from("C:/Users/me").join(".keel"))
+        );
+    }
+
+    #[test]
+    fn home_is_the_fallback_and_no_home_means_no_state_dir() {
+        let env = |key: &str| match key {
+            "HOME" => Some(std::ffi::OsString::from("/home/me")),
+            _ => None,
+        };
+        assert_eq!(
+            state_home(&env),
+            Some(PathBuf::from("/home/me").join(".keel"))
+        );
+        assert_eq!(state_home(&|_| None), None);
+    }
 
     #[test]
     fn a_state_directory_supplies_the_default_store() {

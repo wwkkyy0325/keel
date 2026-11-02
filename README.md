@@ -315,7 +315,7 @@ working directory:
 # variants/coding/bundle.toml
 name = "coding"
 profile = "profile.deepseek.toml"
-state_dir = "../../.keel/state"
+# state_dir = "../../.keel/state"   # optional; defaults to KEEL_HOME or ~/.keel
 ```
 
 ```bash
@@ -323,16 +323,15 @@ cargo run -p keel-cli -- --tui --bundle variants/coding/bundle.toml
 ```
 
 `--bundle` is mutually exclusive with `--profile` and `--plugins`;
-`--workspace` still selects the task directory. A bundle with `state_dir`
-(or an explicit `--state-dir`) moves the SQLite store to
-`<state>/keel.db`, the trash to `<state>/trash` and truncated tool output to
-`<state>/outputs`, so cleaning or deleting the workspace no longer loses
-sessions or undo history and leaves no `.keel` directory behind. `--store`
-still overrides the database path. Without a state directory, the spill stays
-in `<workspace>/.keel/outputs`; the marker carries the absolute path and the
-permission engine allows reads there either way. The outputs directory keeps
-the newest 200 spill files and prunes older ones; unrelated files are left
-alone.
+`--workspace` still selects the task directory. The state root defaults to
+`KEEL_HOME`, then `~/.keel` (`%USERPROFILE%\.keel` on Windows); `--state-dir`
+or a bundle's `state_dir` overrides it, and `--store` overrides only the
+database. The store lives at `<state>/keel.db`, the trash at
+`<state>/trash` and truncated tool output at `<state>/outputs`, so sessions
+and undo history survive workspace cleanup and no `.keel` directory appears
+in the task directory. If no home can be found, the host falls back to the
+workspace-local layout. The outputs directory keeps the newest 200 spill
+files and prunes older ones; unrelated files are left alone.
 
 The reference bundles are `variants/coding/bundle.toml` and
 `variants/companion/bundle.toml`; both use `deepseek-flash` and need
@@ -375,8 +374,10 @@ text is placed in the prompt for review and is not submitted automatically.
 ## Store, branches and views
 
 `--store` keeps sessions in SQLite; a new process resumes from the snapshot.
-With `--state-dir` (or a bundle that sets it), the same commands take
-`--state-dir PATH` instead of `--store`.
+Without `--store`, the default state root supplies `<state>/keel.db` (see
+Bundle and state), so a normal run persists its session. The view, delete and
+fork commands take `--state-dir PATH` instead of `--store` when using the
+default.
 
 ```bash
 cargo run -p keel-cli -- --profile variants/companion/profile.deepseek.toml \
