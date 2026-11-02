@@ -20,9 +20,10 @@ rebuilding the file or running destructive git commands.
       `list_trash_names_the_backups_and_their_paths`.
 - [x] Enable the tools in the coding profiles. Verify: profile validation and
       a CLI smoke run.
-- [x] Add `make_dir`, `move_file` and `delete_file`. Delete copies the file
-      into the trash before removing it; move backs up an existing
-      destination and stays on one volume. Verify: `file_tool_tests`.
+- [x] Add `make_dir`, `move_file` and `delete_file`. Delete moves the file
+      into the trash on the same volume (copying across volumes); move backs
+      up an existing destination and stays on one volume. Verify:
+      `file_tool_tests` and `discard_moves_the_file_and_keeps_it_restorable`.
 
 ## Decisions
 

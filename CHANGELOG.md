@@ -57,9 +57,10 @@ First complete kernel and reference host.
   execution stays confirm-only, and a drive root or system directory is
   refused. `RootScope` is part of the permission surface.
 - New built-in tools: `make_dir`, `move_file` and `delete_file`.
-  `delete_file` copies the file into the trash before removing it; `move_file`
-  backs up an existing destination and stays on one volume. The coding
-  profiles expose all three.
+  `delete_file` uses the new `TrashStore::discard`; the local backend moves the
+  file into the trash instead of copying it and falls back to copy across
+  volumes. `move_file` backs up an existing destination and stays on one
+  volume. The coding profiles expose all three.
 
 ### Reference host
 

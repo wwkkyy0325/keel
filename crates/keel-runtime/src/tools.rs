@@ -226,8 +226,7 @@ impl Tool for DeleteFileTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "delete_file".to_owned(),
-            description: "Delete one regular file; the file is copied into the trash first."
-                .to_owned(),
+            description: "Delete one regular file; it is moved into the trash first.".to_owned(),
             risk: RiskLevel::Mutating,
             params: vec![ParamSpec {
                 name: "path".to_owned(),
@@ -282,21 +281,13 @@ impl Tool for DeleteFileTool {
             );
         }
 
-        let entry = match self.trash.backup(&resolved).await {
-            Ok(entry) => entry,
-            Err(error) => return ToolResult::failure(ctx.call_id, "delete_file", error),
-        };
-        match tokio::fs::remove_file(&resolved).await {
-            Ok(()) => ToolResult::success(
+        match self.trash.discard(&resolved).await {
+            Ok(entry) => ToolResult::success(
                 ctx.call_id,
                 "delete_file",
-                format!(
-                    "deleted {} (backup in trash as {})",
-                    resolved.display(),
-                    entry.id
-                ),
+                format!("deleted {} (trash entry {})", resolved.display(), entry.id),
             ),
-            Err(error) => ToolResult::failure(ctx.call_id, "delete_file", io_error(&error)),
+            Err(error) => ToolResult::failure(ctx.call_id, "delete_file", error),
         }
     }
 }
@@ -1528,7 +1519,7 @@ mod file_tool_tests {
     }
 
     #[tokio::test]
-    async fn delete_file_backs_up_before_removing() {
+    async fn delete_file_moves_the_file_into_the_trash() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("junk.txt"), "junk").unwrap();
         let trash = trash(dir.path());
@@ -1538,11 +1529,13 @@ mod file_tool_tests {
             .call(args(&[("path", "junk.txt")]), &ctx(dir.path()))
             .await;
 
-        assert!(content(&result).contains("backup in trash as"));
+        assert!(content(&result).contains("trash entry"));
         assert!(!dir.path().join("junk.txt").exists());
         let entries = trash.list(10).await.unwrap();
         assert_eq!(entries.len(), 1);
         assert!(entries[0].original.ends_with("junk.txt"));
+        assert!(entries[0].stored.is_file());
+        assert_eq!(std::fs::read_to_string(&entries[0].stored).unwrap(), "junk");
     }
 
     #[tokio::test]

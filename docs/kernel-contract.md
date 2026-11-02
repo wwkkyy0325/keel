@@ -65,7 +65,9 @@ Stable within a major version:
   cannot list) and the `list_trash`/`restore_file` tools. `restore_file` takes
   the target path from the tool argument, so the permission gate approves the
   real file; an entry is accepted only for its recorded path, and the current
-  version is backed up first. `LocalTrashStore::new(workspace)` keeps
+  version is backed up first. `TrashStore::discard` removes a file while
+  keeping it recoverable; the default backs up then removes, and a local
+  backend may move it instead. `LocalTrashStore::new(workspace)` keeps
   `<workspace>/.keel/trash`; `LocalTrashStore::at(dir)` uses `dir` directly so
   a host can put undo data in a state directory.
 - Permission mode: a host may call `TurnDriver::escalate_full_auto(ttl)` and

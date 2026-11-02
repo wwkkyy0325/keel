@@ -160,10 +160,10 @@ cancellation and interjection distinct. See ADR 0010.
   call, allow a path prefix, or escalate the session to `full_auto`. Path
   grants and escalation carry a TTL and can be revoked; only the user or host
   approves, and grants never bypass the deny list.
-- Deletion is soft: the target is copied into a `TrashStore` before removal.
-  Overwrite backs up the previous version first. A failed trash operation
-  aborts; there is no hard delete fallback. The agent never empties the trash;
-  a restore is itself backed up.
+- Deletion is soft: the target is moved into a `TrashStore` when it is on the
+  same volume, otherwise copied, then removed. Overwrite backs up the previous
+  version first. A failed trash operation aborts; there is no hard delete
+  fallback. The agent never empties the trash; a restore is itself backed up.
 - Path scan covers absolute paths and traversal; `..` never climbs above the
   drive or filesystem root. Before the gate, the dispatcher canonicalizes the
   requested path (including a not-yet-existing write target, through its

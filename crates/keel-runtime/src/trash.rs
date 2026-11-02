@@ -28,6 +28,17 @@ pub struct TrashEntry {
 pub trait TrashStore: Send + Sync {
     async fn backup(&self, path: &Path) -> Result<TrashEntry, ToolError>;
 
+    /// Removes a file while keeping a recoverable copy. The default backs up
+    /// and then removes; a local backend can move the file instead, which is
+    /// what large deletions need.
+    async fn discard(&self, path: &Path) -> Result<TrashEntry, ToolError> {
+        let entry = self.backup(path).await?;
+        tokio::fs::remove_file(path)
+            .await
+            .map_err(|error| ToolError::io(error.to_string()))?;
+        Ok(entry)
+    }
+
     async fn list(&self, _limit: usize) -> Result<Vec<TrashEntry>, ToolError> {
         Err(ToolError::new(
             ErrorCode::Internal,
@@ -143,18 +154,15 @@ impl LocalTrashStore {
             stored,
         })
     }
-}
 
-#[async_trait]
-impl TrashStore for LocalTrashStore {
-    async fn backup(&self, path: &Path) -> Result<TrashEntry, ToolError> {
+    /// Validates the source and allocates the trash location and id.
+    async fn prepare(&self, path: &Path) -> Result<(String, PathBuf), ToolError> {
         let trash_dir = self.trash_dir();
         if path.starts_with(&trash_dir) {
             return Err(ToolError::invalid_arguments(
-                "refusing to back up a file that is already in the trash",
+                "refusing to trash a file that is already in the trash",
             ));
         }
-
         let metadata = tokio::fs::metadata(path).await.map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
                 ToolError::not_found(format!("`{}` does not exist", path.display()))
@@ -168,11 +176,9 @@ impl TrashStore for LocalTrashStore {
                 path.display()
             )));
         }
-
         tokio::fs::create_dir_all(&trash_dir)
             .await
             .map_err(|error| ToolError::io(error.to_string()))?;
-
         let millis = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -184,11 +190,47 @@ impl TrashStore for LocalTrashStore {
             .unwrap_or_else(|| "item".to_owned());
         let id = format!("{millis}-{counter}-{file_name}");
         let stored = trash_dir.join(&id);
+        Ok((id, stored))
+    }
+}
 
+#[async_trait]
+impl TrashStore for LocalTrashStore {
+    async fn backup(&self, path: &Path) -> Result<TrashEntry, ToolError> {
+        let (id, stored) = self.prepare(path).await?;
         tokio::fs::copy(path, &stored)
             .await
             .map_err(|error| ToolError::io(error.to_string()))?;
         self.write_meta(&id, path).await?;
+
+        Ok(TrashEntry {
+            id,
+            original: path.to_path_buf(),
+            stored,
+        })
+    }
+
+    async fn discard(&self, path: &Path) -> Result<TrashEntry, ToolError> {
+        let (id, stored) = self.prepare(path).await?;
+        match tokio::fs::rename(path, &stored).await {
+            Ok(()) => {
+                if let Err(error) = self.write_meta(&id, path).await {
+                    // Put the file back rather than leave an unreachable copy.
+                    let _ = tokio::fs::rename(&stored, path).await;
+                    return Err(error);
+                }
+            }
+            Err(_) => {
+                // A volume boundary: copy, record, then remove the source.
+                tokio::fs::copy(path, &stored)
+                    .await
+                    .map_err(|error| ToolError::io(error.to_string()))?;
+                self.write_meta(&id, path).await?;
+                tokio::fs::remove_file(path)
+                    .await
+                    .map_err(|error| ToolError::io(error.to_string()))?;
+            }
+        }
 
         Ok(TrashEntry {
             id,
@@ -262,6 +304,22 @@ mod tests {
             .starts_with(dir.path().join("state").join("trash")));
         assert!(dir.path().join("state").join("trash").join("meta").is_dir());
         assert!(!dir.path().join(".keel").exists());
+    }
+
+    #[tokio::test]
+    async fn discard_moves_the_file_and_keeps_it_restorable() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("large.bin");
+        std::fs::write(&source, "payload").unwrap();
+        let store = LocalTrashStore::new(dir.path().to_path_buf());
+
+        let entry = store.discard(&source).await.unwrap();
+
+        assert!(!source.exists());
+        assert!(entry.stored.is_file());
+        assert_eq!(std::fs::read_to_string(&entry.stored).unwrap(), "payload");
+        let found = store.find(&entry.id).await.unwrap();
+        assert_eq!(found.original, source);
     }
 
     #[tokio::test]

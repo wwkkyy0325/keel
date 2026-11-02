@@ -1684,3 +1684,14 @@
   read-only root; the run loaded the profile, created `state/keel.db`, and
   `--view sessions` showed the job's session. Task doc:
   `docs/llmwiki/tasks/job-file.md`.
+
+### Trash moves on the same volume
+
+- `TrashStore::discard` removes a file while keeping it recoverable. The
+  default backs up and removes; `LocalTrashStore` renames the file into the
+  trash when it is on the same volume and falls back to copy plus remove
+  across volumes.
+- `delete_file` uses `discard`, so deleting a large file no longer doubles
+  disk usage. The message names the trash entry instead of a "backup".
+- Verify: `discard_moves_the_file_and_keeps_it_restorable`,
+  `delete_file_moves_the_file_into_the_trash`, and the full suite.

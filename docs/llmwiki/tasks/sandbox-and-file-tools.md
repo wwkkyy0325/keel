@@ -23,9 +23,11 @@ denied. The reference tool set also lacked move, delete and mkdir.
 - [x] MCP servers start in the workspace directory, matching `roots/list`.
       Verify: the MCP transport tests plus a manual plugin run.
 - [x] `make_dir`, `move_file` and `delete_file` are registered and exposed by
-      the coding profiles. Delete copies to the trash first; move backs up an
-      existing destination and stays on one volume. Verify:
-      `file_tool_tests` and the profile validation tests.
+      the coding profiles. Delete moves into the trash on the same volume
+      (copying across volumes); move backs up an existing destination and
+      stays on one volume. Verify: `file_tool_tests`,
+      `discard_moves_the_file_and_keeps_it_restorable` and the profile
+      validation tests.
 - [x] Real tidy run on a scratch folder with a shell-free profile: 7 tool
       calls, 8.1 s, 81.0% cache hit. It created `Archive`, moved three `.txt`
       files (including one from a nested folder), deleted `junk.log` into the

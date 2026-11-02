@@ -72,8 +72,8 @@ derived project; publishing the kernel is not required for personal use.
   PATH, so allowlisted names start without a shell.
 - Explicit undo: `list_trash` lists recoverable versions and `restore_file`
   restores the newest one, or a specific entry; the current version is backed
-  up first. `delete_file` backs a file up before removing it; `move_file`
-  backs up an existing destination; `make_dir` creates parents.
+  up first. `delete_file` moves a file into the trash before removing it;
+  `move_file` backs up an existing destination; `make_dir` creates parents.
 - Symlink-safe paths: the dispatcher canonicalizes every requested path before
   the permission gate, so a link inside the workspace cannot redirect a read
   or write outside it; `..` never climbs above the root.
@@ -215,8 +215,9 @@ not mean rebuilding the file or running destructive git commands:
 - `restore_file` with `path` restores the newest backup for that file; with
   `entry` it restores a specific version. The current version is backed up
   first, so a restore is itself reversible.
-- `delete_file` copies a regular file into the trash before removing it, so a
-  deletion is recoverable.
+- `delete_file` moves a regular file into the trash (copying only when the
+  trash is on another volume) before removing it, so a deletion is recoverable
+  without doubling disk usage.
 - `move_file` moves a file or directory on one volume; an existing destination
   file is backed up first. Moving it back is the inverse operation.
 - `make_dir` creates a directory and any missing parents; it is idempotent.
