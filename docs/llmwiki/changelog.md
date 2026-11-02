@@ -1670,3 +1670,17 @@
   workspace stayed empty.
 - Truncated output still spills to `<workspace>/.keel/outputs`; moving it is
   future work. Task doc: `docs/llmwiki/tasks/bundle-and-state.md`.
+
+### Job file
+
+- `--job PATH` binds a bundle/profile, workspace, extra roots, state
+  directory, session id and the first input into one reusable task. Every
+  path resolves relative to the job file; unknown fields and access values are
+  rejected.
+- Explicit CLI composition wins as a whole; `--workspace`, `--input`,
+  `--session-id`, `--state-dir` and `--store` override the job's fields, and
+  CLI `--root` entries are added to the job's roots.
+- Real smoke: a job referenced a bundle, set a workspace, session and a
+  read-only root; the run loaded the profile, created `state/keel.db`, and
+  `--view sessions` showed the job's session. Task doc:
+  `docs/llmwiki/tasks/job-file.md`.

@@ -332,6 +332,39 @@ The reference bundles are `variants/coding/bundle.toml` and
 `DEEPSEEK_API_KEY`. For the no-key mock, keep using
 `--profile variants/coding/profile.toml`.
 
+## Jobs
+
+A job binds composition, scope, state and the first input into a reusable
+task. Every path is relative to the job file:
+
+```toml
+# jobs/tidy-downloads.toml
+bundle = "../Keel/variants/coding/bundle.toml"
+workspace = "D:/Downloads"
+session_id = "tidy"
+input = "Organize this folder: create Archive, move the old installers, and delete junk."
+
+[[roots]]
+path = "E:/Archive"
+access = "rw"
+
+[[roots]]
+path = "D:/Photos"
+access = "ro"
+```
+
+```bash
+cargo run -p keel-cli -- --job jobs/tidy-downloads.toml
+```
+
+Explicit CLI flags win over the job, and job values win over the defaults:
+`--workspace`, `--input`, `--session-id`, `--state-dir` and `--store`
+override the job's fields, and CLI `--root` entries are added to the job's
+roots. `--profile`, `--plugins` or `--bundle` on the CLI replace the job's
+composition as a whole. A job may set `bundle` or `profile`/`plugins`, not
+both. `input` runs in line mode; `--tui --job` applies the scope and state but
+starts with an empty prompt.
+
 ## Store, branches and views
 
 `--store` keeps sessions in SQLite; a new process resumes from the snapshot.

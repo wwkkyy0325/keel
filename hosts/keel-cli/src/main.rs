@@ -1,5 +1,6 @@
 mod acceptance;
 mod bundle;
+mod job;
 mod mcp;
 mod store;
 mod terminal;
@@ -1199,8 +1200,12 @@ fn parse_args() -> Result<Args, KernelError> {
     let mut plugins = None;
     let mut bundle = None;
     let mut state_dir = None;
+    let mut job_path: Option<PathBuf> = None;
     let mut profile_set = false;
     let mut plugins_set = false;
+    let mut input_set = false;
+    let mut workspace_set = false;
+    let mut session_id_set = false;
     let mut plugins_check = false;
     let mut fork_from = None;
     let mut delete_session = None;
@@ -1231,12 +1236,14 @@ fn parse_args() -> Result<Args, KernelError> {
                 input = args
                     .next()
                     .ok_or_else(|| invalid_config("missing value for `--input`"))?;
+                input_set = true;
             }
             "--workspace" => {
                 workspace = PathBuf::from(
                     args.next()
                         .ok_or_else(|| invalid_config("missing value for `--workspace`"))?,
                 );
+                workspace_set = true;
             }
             "--bundle" => {
                 bundle =
@@ -1248,6 +1255,12 @@ fn parse_args() -> Result<Args, KernelError> {
                 state_dir =
                     Some(PathBuf::from(args.next().ok_or_else(|| {
                         invalid_config("missing value for `--state-dir`")
+                    })?));
+            }
+            "--job" => {
+                job_path =
+                    Some(PathBuf::from(args.next().ok_or_else(|| {
+                        invalid_config("missing value for `--job`")
                     })?));
             }
             "--root" => {
@@ -1330,6 +1343,7 @@ fn parse_args() -> Result<Args, KernelError> {
                 session_id = args
                     .next()
                     .ok_or_else(|| invalid_config("missing value for `--session-id`"))?;
+                session_id_set = true;
             }
             "--context-snapshots" => {
                 context_snapshots = true;
@@ -1447,6 +1461,44 @@ fn parse_args() -> Result<Args, KernelError> {
         return Err(invalid_config(
             "`--bundle` and `--plugins` are mutually exclusive",
         ));
+    }
+
+    if let Some(path) = &job_path {
+        let job = job::Job::load(path)?;
+        // Explicit CLI composition wins as a whole; a job fills it only when
+        // the CLI said nothing about the profile, plugins or bundle.
+        if bundle.is_none() && !profile_set && !plugins_set {
+            if let Some(job_bundle) = job.bundle {
+                bundle = Some(job_bundle);
+            } else if let Some(job_profile) = job.profile {
+                profile = job_profile;
+            }
+            if plugins.is_none() {
+                plugins = job.plugins;
+            }
+        }
+        if !workspace_set {
+            if let Some(job_workspace) = job.workspace {
+                workspace = job_workspace;
+            }
+        }
+        if state_dir.is_none() {
+            state_dir = job.state_dir;
+        }
+        if store.is_none() {
+            store = job.store;
+        }
+        if !session_id_set {
+            if let Some(id) = job.session_id {
+                session_id = id;
+            }
+        }
+        if !input_set {
+            if let Some(job_input) = job.input {
+                input = job_input;
+            }
+        }
+        roots.extend(job.roots);
     }
 
     Ok(Args {

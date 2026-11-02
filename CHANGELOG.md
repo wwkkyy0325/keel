@@ -119,6 +119,9 @@ First complete kernel and reference host.
   `<state>/keel.db` and the trash to `<state>/trash`; `--store` still
   overrides the database. `LocalTrashStore::at` accepts the trash directory
   directly.
+- `--job PATH` binds a bundle/profile, workspace, roots, state directory,
+  session id and the first input into one reusable task. Every path resolves
+  relative to the job file; explicit CLI flags override the job.
 
 ### Performance
 
