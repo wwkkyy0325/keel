@@ -130,6 +130,8 @@ First complete kernel and reference host.
 - `--job PATH` binds a bundle/profile, workspace, roots, state directory,
   session id and the first input into one reusable task. Every path resolves
   relative to the job file; explicit CLI flags override the job.
+- `--tui --job` (or `--tui --input`) pre-fills the prompt with the job input;
+  it is not submitted until the user presses Enter.
 
 ### Performance
 

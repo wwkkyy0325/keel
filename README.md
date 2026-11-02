@@ -239,6 +239,8 @@ cargo run -p keel-cli -- --tui --profile variants/coding/profile.deepseek.toml \
 
 - `Enter` sends; `Ctrl-C` cancels a running turn (quits when idle);
   `PgUp`/`PgDn` scroll; `Ctrl-L` clears the transcript.
+- `--input TEXT` (or a job's `input`) pre-fills the prompt; it is not sent
+  until you press `Enter`.
 - In a permission prompt, `↑`/`↓` selects an option and `Enter` confirms
   (default: Allow once); `Esc` defers. `d`/`a`/`s`/`f` remain shortcuts.
 - `Shift+Tab` switches `workspace_auto` ↔ `full_auto`; the bottom status line
@@ -367,8 +369,8 @@ Explicit CLI flags win over the job, and job values win over the defaults:
 override the job's fields, and CLI `--root` entries are added to the job's
 roots. `--profile`, `--plugins` or `--bundle` on the CLI replace the job's
 composition as a whole. A job may set `bundle` or `profile`/`plugins`, not
-both. `input` runs in line mode; `--tui --job` applies the scope and state but
-starts with an empty prompt.
+both. `input` runs in line mode; with `--tui --job` (or `--tui --input`) the
+text is placed in the prompt for review and is not submitted automatically.
 
 ## Store, branches and views
 

@@ -1718,3 +1718,11 @@
 - A marker that points at a pruned spill returns `NotFound`; the model can
   re-run the tool instead of reading a vanished file.
 - Verify: `old_spills_are_pruned_and_other_files_are_kept` and the full suite.
+
+### TUI job prefill
+
+- `--tui --job` (and `--tui --input`) place the input in the prompt without
+  starting a turn; the user still presses Enter. The default "hello from keel"
+  is never prefilled because it is not an explicit input.
+- Verify: `prefill_fills_the_prompt_without_starting_a_turn` and
+  `a_prefilled_prompt_is_visible_in_the_input_box`.

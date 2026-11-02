@@ -106,6 +106,8 @@ pub struct TuiHost {
     pub workspace: PathBuf,
     /// Every scope, primary first, labeled with its access.
     pub roots: Vec<String>,
+    /// Job or `--input` text placed in the prompt; never submitted.
+    pub prefill: Option<String>,
     pub interactions: mpsc::Receiver<InteractionJob>,
     pub ui: mpsc::Receiver<UiEvent>,
 }
@@ -232,6 +234,12 @@ impl App {
             turn_tools: 0,
             should_quit: false,
         }
+    }
+
+    /// Places text in the prompt without starting a turn.
+    fn prefill(&mut self, text: &str) {
+        self.input = text.chars().collect();
+        self.cursor = self.input.len();
     }
 
     fn notice(&mut self, text: impl Into<String>) {
@@ -865,6 +873,9 @@ pub async fn run(host: TuiHost) -> Result<ExitCode, KernelError> {
     );
     app.base_full_auto = host.config.permission_level == PermissionLevel::FullAuto;
     app.full_auto = app.base_full_auto;
+    if let Some(prefill) = host.prefill {
+        app.prefill(&prefill);
+    }
     let driver = Arc::new(host.driver);
     let (key_tx, mut key_rx) = mpsc::channel(64);
     let stop = Arc::new(AtomicBool::new(false));
@@ -1276,6 +1287,30 @@ mod tests {
         app.push_delta("ld");
 
         assert_eq!(app.blocks.last().unwrap().text, "world");
+    }
+
+    #[test]
+    fn prefill_fills_the_prompt_without_starting_a_turn() {
+        let mut app = app();
+        let blocks = app.blocks.len();
+
+        app.prefill("tidy the downloads");
+
+        assert_eq!(app.input.iter().collect::<String>(), "tidy the downloads");
+        assert_eq!(app.cursor, app.input.len());
+        assert_eq!(app.blocks.len(), blocks);
+        assert!(!app.running);
+    }
+
+    #[test]
+    fn a_prefilled_prompt_is_visible_in_the_input_box() {
+        let mut app = app();
+        app.prefill("tidy the downloads");
+
+        let rendered = frame(&app, 80, 24);
+
+        assert!(rendered.contains("tidy the downloads"), "{rendered}");
+        assert!(!rendered.contains("⏺ shell"), "{rendered}");
     }
 
     #[test]

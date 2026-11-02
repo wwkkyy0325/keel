@@ -532,6 +532,7 @@ async fn run() -> Result<ExitCode, KernelError> {
     if args.tui {
         let interactions = tui_interactions
             .ok_or_else(|| invalid_config("TUI interaction channel was not created"))?;
+        let prefill = args.input_set.then(|| args.input.clone());
         return tui::run(tui::TuiHost {
             driver,
             config,
@@ -541,6 +542,7 @@ async fn run() -> Result<ExitCode, KernelError> {
             session_id: args.session_id,
             workspace: workspace_root,
             roots,
+            prefill,
             interactions,
             ui: ui_rx,
         })
@@ -1133,6 +1135,8 @@ fn build_model(
 struct Args {
     profile: PathBuf,
     input: String,
+    /// True when the input came from `--input` or a job, not the default.
+    input_set: bool,
     workspace: PathBuf,
     /// Extra directories the agent may use, as `(path, access)`.
     roots: Vec<(PathBuf, AccessKind)>,
@@ -1511,6 +1515,7 @@ fn parse_args() -> Result<Args, KernelError> {
         if !input_set {
             if let Some(job_input) = job.input {
                 input = job_input;
+                input_set = true;
             }
         }
         roots.extend(job.roots);
@@ -1519,6 +1524,7 @@ fn parse_args() -> Result<Args, KernelError> {
     Ok(Args {
         profile,
         input,
+        input_set,
         workspace,
         roots,
         acceptance,

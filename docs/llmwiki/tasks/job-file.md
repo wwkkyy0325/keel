@@ -21,12 +21,15 @@ task, so a repeated operation is one file instead of a long flag list.
       read-only root. The run loaded `profile: coding`, created
       `state/keel.db`, and `--view sessions` showed `job-smoke`; the workspace
       stayed empty.
+- [x] `--tui --job` (or `--tui --input`) places the input in the prompt
+      without submitting it. Verify:
+      `prefill_fills_the_prompt_without_starting_a_turn`,
+      `a_prefilled_prompt_is_visible_in_the_input_box`.
 
 ## Boundaries
 
-- `input` runs in line mode. `--tui --job` applies the scope and state but
-  starts with an empty prompt; prefilling or auto-running the TUI is future
-  work.
+- `input` runs in line mode. With the TUI it is a prefill for review; the user
+  still presses Enter. Auto-running a job in the TUI is not implemented.
 - Precedence is deliberately simple: CLI composition replaces the job's
   composition; CLI roots add to the job's roots.
 - A job is data, not a scheduler. Running it repeatedly, watching a folder or
