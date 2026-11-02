@@ -1,0 +1,35 @@
+[profile]
+name = "coding-anthropic"
+
+[model]
+provider = "anthropic-compatible"
+model = "claude-sonnet-5-5"
+base_url = "https://api.anthropic.com"
+api_key_env = "ANTHROPIC_API_KEY"
+supports_reasoning = false
+thinking_budget = 0
+max_output_tokens = 4096
+context_window = 200000
+
+[context]
+stages = ["system", "memory", "history", "latest"]
+budget_tokens = 16000
+
+[tools]
+visible = ["echo", "read_file", "write_file", "list_trash", "restore_file", "list_dir", "code_search", "make_dir", "move_file", "delete_file", "shell"]
+budget = 12
+plan_mode = false
+
+[verification]
+mode = "none"
+
+[permission]
+level = "workspace_auto"
+
+[interaction]
+timeout_ms = 300000
+on_timeout = "defer_and_continue"
+max_per_turn = 4
+
+[persona]
+system = "prompts/coding.md"

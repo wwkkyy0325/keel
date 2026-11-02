@@ -30,6 +30,7 @@ the evidence trail for the clean-room claim.
 | 2026-11-01 | LongMemEval and LoCoMo papers, LoCoMo audit | Public papers/audit | Memory evaluation critique | Comparison only; no dataset vendored |
 | 2026-11-01 | DeepSeek Harness memory plugin pages (npm/GitHub) | Public package pages | Landscape survey | Comparison only; no plugin code copied |
 | 2026-11-04 | Claude Code settings documentation (public) | Public documentation | Design reference for a home-directory state root with an environment override | No source read or copied; Keel uses `KEEL_HOME` and `~/.keel`, implemented independently |
+| 2026-11-05 | Anthropic Messages API documentation (public) | Public documentation | Streaming event and tool-use mapping for the Anthropic adapter | No code copied; the wire mapping is implemented independently |
 
 ## Excluded materials
 

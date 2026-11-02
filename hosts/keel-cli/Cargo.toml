@@ -14,6 +14,7 @@ async-trait.workspace = true
 crossterm = { version = "0.28", features = ["event-stream"] }
 dotenvy.workspace = true
 keel-core.workspace = true
+keel-model-anthropic.workspace = true
 keel-model-openai.workspace = true
 keel-runtime.workspace = true
 ratatui = "0.29"

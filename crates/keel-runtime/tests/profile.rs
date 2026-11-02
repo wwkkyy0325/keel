@@ -107,6 +107,25 @@ fn deepseek_profile_loads_and_validates() {
 }
 
 #[test]
+fn anthropic_profile_loads_and_validates() {
+    let config = load_profile(&repo_root().join("variants/coding/profile.anthropic.toml")).unwrap();
+    assert_eq!(config.profile_name, "coding-anthropic");
+    assert_eq!(config.model_route.provider, "anthropic-compatible");
+    assert_eq!(config.model_route.model, "claude-sonnet-5-5");
+    assert_eq!(
+        config.model_base_url.as_deref(),
+        Some("https://api.anthropic.com")
+    );
+    assert_eq!(config.api_key_env.as_deref(), Some("ANTHROPIC_API_KEY"));
+    validate_config(
+        &config,
+        &common::standard_registry(&repo_root()),
+        &common::standard_context(),
+    )
+    .unwrap();
+}
+
+#[test]
 fn companion_profile_loads() {
     let config = load_profile(&repo_root().join("variants/companion/profile.toml")).unwrap();
     assert_eq!(config.profile_name, "companion");

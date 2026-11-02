@@ -1751,3 +1751,16 @@
 - Verify: `help_and_version_are_detected_before_parsing`, direct
   `--help`/`--version` runs, and the full workspace suite. Task doc:
   `docs/llmwiki/tasks/release-basics.md`.
+
+### Anthropic provider
+
+- New `keel-model-anthropic` crate: Messages API request mapping, streaming
+  text/thinking/tool-use decoding, usage, control-tool interactions, retries
+  and cancellation.
+- The host selects it with `provider = "anthropic-compatible"`;
+  `variants/coding/profile.anthropic.toml` targets `claude-sonnet-5-5` and
+  `ANTHROPIC_API_KEY`. The summarizer uses the same adapter.
+- Verified with six wire tests, a local HTTP streaming test (path and
+  headers), a profile validation test, and a host smoke against a local SSE
+  server. A live API call was not run because no key is present.
+- Task doc: `docs/llmwiki/tasks/anthropic-provider.md`.

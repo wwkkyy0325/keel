@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "crates/keel-core",
+  "crates/keel-model-anthropic",
   "crates/keel-model-openai",
   "crates/keel-policy",
   "crates/keel-runtime",
@@ -18,6 +19,7 @@ license = "Apache-2.0"
 async-trait = "0.1"
 dotenvy = "0.15"
 keel-core = { version = "0.1.0", path = "crates/keel-core" }
+keel-model-anthropic = { version = "0.1.0", path = "crates/keel-model-anthropic" }
 keel-model-openai = { version = "0.1.0", path = "crates/keel-model-openai" }
 keel-policy = { version = "0.1.0", path = "crates/keel-policy" }
 keel-runtime = { version = "0.1.0", path = "crates/keel-runtime" }

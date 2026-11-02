@@ -56,6 +56,7 @@ Keel/
       keel-memory-api/
     adapters/
       keel-model-openai/
+      keel-model-anthropic/
     plugins/
       keel-plugin-api/
     keel/                    # facade: the only stable surface for variants

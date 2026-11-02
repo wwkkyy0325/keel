@@ -19,6 +19,7 @@ use keel_core::{
     ModelChunk, ModelError, ModelProvider, ModelRequest, ModelStream, Policy, Session, TodoList,
     ToolArgs,
 };
+use keel_model_anthropic::{AnthropicConfig, AnthropicProvider};
 use keel_model_openai::{OpenAiConfig, OpenAiProvider};
 use keel_runtime::{
     load_profile, validate_config, AcceptanceVerifier, CodeSearchTool, ContextBuilder,
@@ -33,6 +34,7 @@ use terminal::TerminalInteractionPort;
 enum HostModel {
     Mock(MockModel),
     OpenAi(OpenAiProvider),
+    Anthropic(AnthropicProvider),
     /// A paced script for `--demo`: a tool call with a visible wait, then an
     /// answer streamed piece by piece.
     Demo(DemoModel),
@@ -142,6 +144,7 @@ impl ModelProvider for HostModel {
         match self {
             Self::Mock(model) => model.stream(request, cancel).await,
             Self::OpenAi(model) => model.stream(request, cancel).await,
+            Self::Anthropic(model) => model.stream(request, cancel).await,
             Self::Demo(model) => model.stream(request, cancel).await,
             Self::Paced { inner, delay } => {
                 let mut stream = inner.stream(request, cancel).await?;
@@ -1110,10 +1113,43 @@ fn build_openai_provider(
     .map_err(|error| invalid_config(error.to_string()))
 }
 
+fn build_anthropic_provider(
+    config: &RuntimeConfig,
+    max_retries: u32,
+) -> Result<AnthropicProvider, KernelError> {
+    let base_url = config
+        .model_base_url
+        .clone()
+        .unwrap_or_else(|| "https://api.anthropic.com".to_owned());
+    let api_key_env = config
+        .api_key_env
+        .clone()
+        .unwrap_or_else(|| "ANTHROPIC_API_KEY".to_owned());
+    let api_key = std::env::var(&api_key_env).map_err(|_| {
+        invalid_config(format!(
+            "{api_key_env} is not set. Copy .env.example to .env and fill it locally; never paste keys into the chat."
+        ))
+    })?;
+    if api_key.trim().is_empty() {
+        return Err(invalid_config(format!("{api_key_env} is empty")));
+    }
+    AnthropicProvider::new(AnthropicConfig {
+        base_url,
+        api_key,
+        model: config.model_route.model.clone(),
+        max_retries,
+    })
+    .map_err(|error| invalid_config(error.to_string()))
+}
+
 fn build_summarizer(config: &RuntimeConfig) -> Result<Option<Arc<dyn Summarizer>>, KernelError> {
     match config.model_route.provider.as_str() {
         "openai" | "openai-compatible" => {
             let provider = build_openai_provider(config, 1)?;
+            Ok(Some(Arc::new(ProviderSummarizer::new(provider))))
+        }
+        "anthropic" | "anthropic-compatible" => {
+            let provider = build_anthropic_provider(config, 1)?;
             Ok(Some(Arc::new(ProviderSummarizer::new(provider))))
         }
         _ => Ok(None),
@@ -1141,6 +1177,10 @@ fn build_model(
         "openai" | "openai-compatible" => {
             let provider = build_openai_provider(config, 2)?;
             Ok(HostModel::OpenAi(provider))
+        }
+        "anthropic" | "anthropic-compatible" => {
+            let provider = build_anthropic_provider(config, 2)?;
+            Ok(HostModel::Anthropic(provider))
         }
         other => Err(invalid_config(format!("unknown model provider `{other}`"))),
     }

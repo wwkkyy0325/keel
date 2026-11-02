@@ -41,7 +41,7 @@ The kernel contract, stability tiers and update procedure are in
 kernel-only build proves the boundary:
 
 ```bash
-cargo build -p keel-core -p keel-policy -p keel-runtime -p keel-model-openai
+cargo build -p keel-core -p keel-policy -p keel-runtime -p keel-model-openai -p keel-model-anthropic
 cargo run -p keel-runtime --example minimal_turn
 ```
 
@@ -92,9 +92,10 @@ derived project; publishing the kernel is not required for personal use.
 - `evals/` — capability evidence.
 - `docs/` — specs, ADRs, architecture and the case study.
 
-The workspace has five members: `keel-core`, `keel-policy`,
-`keel-model-openai`, `keel-runtime` and `hosts/keel-cli`. Crates are split only
-when a second consumer appears; see `docs/spec/03-modules.md`.
+The workspace has six members: `keel-core`, `keel-policy`,
+`keel-model-openai`, `keel-model-anthropic`, `keel-runtime` and
+`hosts/keel-cli`. Crates are split only when a second consumer appears; see
+`docs/spec/03-modules.md`.
 
 ## Clean-room notice
 
@@ -152,6 +153,18 @@ cp .env.example .env
 # edit .env and set OPENAI_API_KEY
 cargo run -p keel-cli -- --profile variants/coding/profile.openai.toml --input "hello"
 ```
+
+For an Anthropic endpoint:
+
+```bash
+cp .env.example .env
+# edit .env and set ANTHROPIC_API_KEY
+cargo run -p keel-cli -- --profile variants/coding/profile.anthropic.toml --input "hello"
+```
+
+The Anthropic profile uses the Messages API (`/v1/messages`), streaming text,
+tool use and usage. Prompt-cache and extended-thinking controls are not wired
+yet.
 
 The CLI loads `.env` automatically. Credentials stay in `.env`, never in the
 chat or a profile; the OS keyring is not wired yet.

@@ -12,6 +12,10 @@ First complete kernel and reference host.
 - Turn FSM, driver, tool dispatcher, cancellation and turn deadlines.
 - Typed tool protocol and model wire types; OpenAI-compatible streaming
   provider.
+- `keel-model-anthropic`: Anthropic Messages API streaming, text/thinking
+  deltas, `tool_use` input accumulation, tool-result history, the control tool
+  and usage. It sits beside `keel-model-openai`; no kernel crate depends on an
+  adapter.
 - Profile resolution into an immutable `RuntimeConfig`.
 - Bounded context: governor with watermarks and tool headroom, segment
   records, rolling memo, scoped facts, lexical recall and tool elision.
@@ -65,6 +69,9 @@ First complete kernel and reference host.
 
 ### Reference host
 
+- `provider = "anthropic-compatible"` selects `keel-model-anthropic`;
+  `variants/coding/profile.anthropic.toml` targets `claude-sonnet-5-5` and
+  `ANTHROPIC_API_KEY`. `.env.example` lists the key.
 - SQLite store: resume, per-turn checkpoints, branches, deletion, projection,
   fact/task history, context snapshots, the kernel event stream and
   `turns.error`.

@@ -16,6 +16,7 @@ that proves it, and products built on top.
 | `keel-policy` | Profile schema and the immutable `RuntimeConfig` |
 | `keel-runtime` | Turn FSM, driver, dispatcher, context stages and governor, permissions, acceptance, event log, tools, summarizer |
 | `keel-model-openai` | OpenAI-compatible wire mapping and streaming provider |
+| `keel-model-anthropic` | Anthropic Messages wire mapping and streaming provider |
 | `hosts/keel-cli` | **Reference host**, not kernel: composition, SQLite store, MCP adapter, frontend views, CLI |
 
 The CLI is the executable contract test: it runs the kernel the way a product
@@ -87,6 +88,9 @@ Stable within a major version:
   `ProviderSummarizer`, `TrashStore`.
 - `keel-model-openai`: `OpenAiConfig`, `OpenAiProvider`. Wire helper functions
   are public for testing and may change in a minor.
+- `keel-model-anthropic`: `AnthropicConfig`, `AnthropicProvider`,
+  `StreamDecoder`. The wire decoder is public for testing and may change in a
+  minor.
 
 Not part of the kernel contract:
 
@@ -118,6 +122,7 @@ keel-core = { path = "../Keel/crates/keel-core" }
 keel-policy = { path = "../Keel/crates/keel-policy" }
 keel-runtime = { path = "../Keel/crates/keel-runtime" }
 keel-model-openai = { path = "../Keel/crates/keel-model-openai" }
+keel-model-anthropic = { path = "../Keel/crates/keel-model-anthropic" }
 ```
 
 Git dependency on a tag, until crates are published:
@@ -137,8 +142,8 @@ Updating a derived project:
 The kernel-only build proves the boundary:
 
 ```bash
-cargo build -p keel-core -p keel-policy -p keel-runtime -p keel-model-openai
-cargo test -p keel-core -p keel-policy -p keel-runtime -p keel-model-openai
+cargo build -p keel-core -p keel-policy -p keel-runtime -p keel-model-openai -p keel-model-anthropic
+cargo test -p keel-core -p keel-policy -p keel-runtime -p keel-model-openai -p keel-model-anthropic
 ```
 
 CI runs this as a separate job, so a host change cannot hide a kernel
@@ -162,7 +167,7 @@ with its UI, and does not need the reference CLI.
 | Extension point | Contract test |
 |---|---|
 | `Tool` | `crates/keel-core/tests/tool_protocol.rs` |
-| `ModelProvider` | `crates/keel-model-openai/tests/`, `keel-runtime` mock tests |
+| `ModelProvider` | `crates/keel-model-openai/tests/`, `crates/keel-model-anthropic/tests/`, `keel-runtime` mock tests |
 | `Policy` and profile resolution | `crates/keel-runtime/tests/profile.rs`, `keel-policy` unit tests |
 | `ContextStage` | `crates/keel-runtime/tests/context.rs`, `window_matrix.rs` |
 | `EventSink` / `EventLog` | `crates/keel-runtime/tests/event_log.rs` |
