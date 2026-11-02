@@ -67,25 +67,31 @@ struct TrashMeta {
     original: PathBuf,
 }
 
-/// Workspace-local trash at `.keel/trash`.
+/// Local trash. `new` uses `<workspace>/.keel/trash`; `at` uses the given
+/// directory directly, so a host can keep undo data in a state directory.
 ///
 /// This is the deterministic backend for tests and headless hosts. An OS
 /// recycle-bin backend lands with the delete tool.
 pub struct LocalTrashStore {
-    root: PathBuf,
+    trash_root: PathBuf,
     counter: AtomicU64,
 }
 
 impl LocalTrashStore {
     pub fn new(root: PathBuf) -> Self {
+        Self::at(root.join(".keel").join("trash"))
+    }
+
+    /// Uses `trash_root` as the trash directory itself.
+    pub fn at(trash_root: PathBuf) -> Self {
         Self {
-            root,
+            trash_root,
             counter: AtomicU64::new(1),
         }
     }
 
     pub fn trash_dir(&self) -> PathBuf {
-        self.root.join(".keel").join("trash")
+        self.trash_root.clone()
     }
 
     fn meta_dir(&self) -> PathBuf {
@@ -241,6 +247,22 @@ impl TrashStore for LocalTrashStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn at_uses_the_given_directory_directly() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("notes.txt");
+        std::fs::write(&source, "old content").unwrap();
+        let store = LocalTrashStore::at(dir.path().join("state").join("trash"));
+
+        let entry = store.backup(&source).await.unwrap();
+
+        assert!(entry
+            .stored
+            .starts_with(dir.path().join("state").join("trash")));
+        assert!(dir.path().join("state").join("trash").join("meta").is_dir());
+        assert!(!dir.path().join(".keel").exists());
+    }
 
     #[tokio::test]
     async fn backup_copies_the_file_and_leaves_the_original() {

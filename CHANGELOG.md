@@ -111,6 +111,14 @@ First complete kernel and reference host.
   every scope.
 - `--root PATH[:ro|:rw]` adds a labeled scope; `/roots` lists them in the TUI.
   One writable root per phase, the rest read-only, is the intended use.
+- `--bundle PATH` loads a composition file that names the profile, optional
+  plugin file and optional state directory; its paths are relative to the
+  bundle. `--bundle` is mutually exclusive with `--profile`/`--plugins`.
+  Reference bundles live under `variants/coding` and `variants/companion`.
+- `--state-dir PATH` (or a bundle's `state_dir`) moves the SQLite store to
+  `<state>/keel.db` and the trash to `<state>/trash`; `--store` still
+  overrides the database. `LocalTrashStore::at` accepts the trash directory
+  directly.
 
 ### Performance
 

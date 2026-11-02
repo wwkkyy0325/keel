@@ -1,4 +1,5 @@
 mod acceptance;
+mod bundle;
 mod mcp;
 mod store;
 mod terminal;
@@ -204,7 +205,17 @@ async fn main() -> ExitCode {
 
 async fn run() -> Result<ExitCode, KernelError> {
     dotenvy::dotenv().ok();
-    let args = parse_args()?;
+    let mut args = parse_args()?;
+    if let Some(path) = &args.bundle {
+        let bundle = bundle::Bundle::load(path)?;
+        args.profile = bundle.profile;
+        if args.plugins.is_none() {
+            args.plugins = bundle.plugins;
+        }
+        if args.state_dir.is_none() {
+            args.state_dir = bundle.state_dir;
+        }
+    }
     if args.json && !args.plugins_check {
         return Err(invalid_config(
             "`--json` is only supported with `--plugins-check`",
@@ -219,7 +230,13 @@ async fn run() -> Result<ExitCode, KernelError> {
         roots.extend(args.roots.iter().map(|(path, _)| path.clone()));
         return check_plugins(path, &roots, args.json).await;
     }
-    let mut store = match &args.store {
+    if let Some(dir) = &args.state_dir {
+        std::fs::create_dir_all(dir).map_err(|error| KernelError::Io {
+            message: format!("cannot create state directory `{}`: {error}", dir.display()),
+        })?;
+    }
+    let store_path = resolve_store_path(&args.store, &args.state_dir);
+    let mut store = match &store_path {
         Some(path) => Some(store::Store::open(path)?),
         None => None,
     };
@@ -370,8 +387,10 @@ async fn run() -> Result<ExitCode, KernelError> {
         limits.tool_timeout = std::time::Duration::from_millis(ms);
     }
 
-    let trash: Arc<dyn TrashStore> =
-        Arc::new(LocalTrashStore::new(permissions.root().to_path_buf()));
+    let trash: Arc<dyn TrashStore> = match &args.state_dir {
+        Some(dir) => Arc::new(LocalTrashStore::at(dir.join("trash"))),
+        None => Arc::new(LocalTrashStore::new(permissions.root().to_path_buf())),
+    };
 
     let mut registry = ToolRegistry::new();
     registry.register(Arc::new(EchoTool::new()))?;
@@ -1127,6 +1146,11 @@ struct Args {
     context_snapshots: bool,
     /// Plugin file listing MCP servers to load.
     plugins: Option<PathBuf>,
+    /// Composition bundle: profile, optional plugins and optional state dir.
+    bundle: Option<PathBuf>,
+    /// Directory for the session store and the trash. When set, the store
+    /// defaults to `<state>/keel.db` and the trash to `<state>/trash`.
+    state_dir: Option<PathBuf>,
     /// Probe every configured MCP server and exit.
     plugins_check: bool,
     /// Copy a session checkpoint into `--session-id` before running.
@@ -1173,6 +1197,10 @@ fn parse_args() -> Result<Args, KernelError> {
     let mut session_id = "default".to_owned();
     let mut context_snapshots = false;
     let mut plugins = None;
+    let mut bundle = None;
+    let mut state_dir = None;
+    let mut profile_set = false;
+    let mut plugins_set = false;
     let mut plugins_check = false;
     let mut fork_from = None;
     let mut delete_session = None;
@@ -1197,6 +1225,7 @@ fn parse_args() -> Result<Args, KernelError> {
                     args.next()
                         .ok_or_else(|| invalid_config("missing value for `--profile`"))?,
                 );
+                profile_set = true;
             }
             "--input" => {
                 input = args
@@ -1208,6 +1237,18 @@ fn parse_args() -> Result<Args, KernelError> {
                     args.next()
                         .ok_or_else(|| invalid_config("missing value for `--workspace`"))?,
                 );
+            }
+            "--bundle" => {
+                bundle =
+                    Some(PathBuf::from(args.next().ok_or_else(|| {
+                        invalid_config("missing value for `--bundle`")
+                    })?));
+            }
+            "--state-dir" => {
+                state_dir =
+                    Some(PathBuf::from(args.next().ok_or_else(|| {
+                        invalid_config("missing value for `--state-dir`")
+                    })?));
             }
             "--root" => {
                 let spec = args
@@ -1298,6 +1339,7 @@ fn parse_args() -> Result<Args, KernelError> {
                     Some(PathBuf::from(args.next().ok_or_else(|| {
                         invalid_config("missing value for `--plugins`")
                     })?));
+                plugins_set = true;
             }
             "--plugins-check" => {
                 plugins_check = true;
@@ -1396,6 +1438,16 @@ fn parse_args() -> Result<Args, KernelError> {
             }
         }
     }
+    if bundle.is_some() && profile_set {
+        return Err(invalid_config(
+            "`--bundle` and `--profile` are mutually exclusive",
+        ));
+    }
+    if bundle.is_some() && plugins_set {
+        return Err(invalid_config(
+            "`--bundle` and `--plugins` are mutually exclusive",
+        ));
+    }
 
     Ok(Args {
         profile,
@@ -1419,6 +1471,8 @@ fn parse_args() -> Result<Args, KernelError> {
         session_id,
         context_snapshots,
         plugins,
+        bundle,
+        state_dir,
         plugins_check,
         fork_from,
         delete_session,
@@ -1464,6 +1518,13 @@ fn print_json<T: serde::Serialize + ?Sized>(value: &T) -> Result<(), KernelError
 }
 
 /// Parses `<session>:<turn>` from `--fork-from`.
+/// `--store` wins; otherwise a state directory supplies `<state>/keel.db`.
+fn resolve_store_path(store: &Option<PathBuf>, state_dir: &Option<PathBuf>) -> Option<PathBuf> {
+    store
+        .clone()
+        .or_else(|| state_dir.as_ref().map(|dir| dir.join("keel.db")))
+}
+
 /// Parses `--root <path>[:ro|:rw]`. The suffix is checked last, so a Windows
 /// drive letter is never mistaken for it.
 fn parse_root_spec(spec: &str) -> Result<(PathBuf, AccessKind), KernelError> {
@@ -1542,6 +1603,20 @@ async fn check_plugins(
 mod tests {
     use super::*;
     use keel_core::VerifySpec;
+
+    #[test]
+    fn a_state_directory_supplies_the_default_store() {
+        let state = Some(PathBuf::from("state"));
+        assert_eq!(
+            resolve_store_path(&None, &state),
+            Some(PathBuf::from("state").join("keel.db"))
+        );
+        assert_eq!(
+            resolve_store_path(&Some(PathBuf::from("custom.db")), &state),
+            Some(PathBuf::from("custom.db"))
+        );
+        assert_eq!(resolve_store_path(&None, &None), None);
+    }
 
     #[test]
     fn root_specs_parse_read_and_write_suffixes() {

@@ -301,9 +301,42 @@ The UI is deliberately small: no markdown rendering, syntax highlighting,
 mouse or model picker. It is a reference host, not a product; see
 `docs/llmwiki/tasks/tui.md`.
 
+## Bundle and state
+
+A bundle names the profile, optional plugin file and optional state directory
+in one file; every path is relative to the bundle, so it works from any
+working directory:
+
+```toml
+# variants/coding/bundle.toml
+name = "coding"
+profile = "profile.deepseek.toml"
+state_dir = "../../.keel/state"
+```
+
+```bash
+cargo run -p keel-cli -- --tui --bundle variants/coding/bundle.toml
+```
+
+`--bundle` is mutually exclusive with `--profile` and `--plugins`;
+`--workspace` still selects the task directory. A bundle with `state_dir`
+(or an explicit `--state-dir`) moves the SQLite store to
+`<state>/keel.db` and the trash to `<state>/trash`, so cleaning or deleting
+the workspace no longer loses sessions or undo history. `--store` still
+overrides the database path. Truncated tool output remains in
+`<workspace>/.keel/outputs` because the model reads it back; that is the one
+runtime file that stays with the workspace.
+
+The reference bundles are `variants/coding/bundle.toml` and
+`variants/companion/bundle.toml`; both use `deepseek-flash` and need
+`DEEPSEEK_API_KEY`. For the no-key mock, keep using
+`--profile variants/coding/profile.toml`.
+
 ## Store, branches and views
 
 `--store` keeps sessions in SQLite; a new process resumes from the snapshot.
+With `--state-dir` (or a bundle that sets it), the same commands take
+`--state-dir PATH` instead of `--store`.
 
 ```bash
 cargo run -p keel-cli -- --profile variants/companion/profile.deepseek.toml \

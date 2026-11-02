@@ -1656,3 +1656,17 @@
 - Real two-root smoke: read from a `:ro` root, wrote in the workspace, four
   calls, 4.2 s, 83.7% cache hit. Task doc:
   `docs/llmwiki/tasks/multi-root.md`.
+
+### Bundle and state directory
+
+- `--bundle PATH` loads a composition file with `profile`, optional `plugins`
+  and optional `state_dir`; paths resolve relative to the bundle. It is
+  mutually exclusive with `--profile` and `--plugins`.
+- `--state-dir PATH` (or a bundle's `state_dir`) moves the SQLite store to
+  `<state>/keel.db` and the trash to `<state>/trash`. `--store` still wins.
+  `LocalTrashStore::at` takes the trash directory directly.
+- Reference bundles exist for coding and companion. A mock bundle run from a
+  scratch directory loaded the profile and created the state database; the
+  workspace stayed empty.
+- Truncated output still spills to `<workspace>/.keel/outputs`; moving it is
+  future work. Task doc: `docs/llmwiki/tasks/bundle-and-state.md`.
