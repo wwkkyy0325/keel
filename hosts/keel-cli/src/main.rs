@@ -205,6 +205,18 @@ async fn main() -> ExitCode {
 }
 
 async fn run() -> Result<ExitCode, KernelError> {
+    let raw: Vec<String> = std::env::args().skip(1).collect();
+    match early_action(&raw) {
+        Some(EarlyAction::Help) => {
+            print!("{HELP}");
+            return Ok(ExitCode::SUCCESS);
+        }
+        Some(EarlyAction::Version) => {
+            println!("keel-cli {}", env!("CARGO_PKG_VERSION"));
+            return Ok(ExitCode::SUCCESS);
+        }
+        None => {}
+    }
     dotenvy::dotenv().ok();
     let mut args = parse_args()?;
     if let Some(path) = &args.bundle {
@@ -1199,6 +1211,61 @@ struct Args {
     before: Option<u32>,
 }
 
+const HELP: &str = "\
+keel-cli — a thin agent kernel reference host
+
+Usage:
+  keel-cli [options]
+
+Composition:
+  --bundle PATH          profile, plugins and state in one file
+  --job PATH             reusable task: composition, scope, state and input
+  --profile PATH         profile to load (default variants/coding/profile.toml)
+  --plugins PATH         MCP server list
+
+Scope and state:
+  --workspace PATH       task directory (default: current directory)
+  --root PATH[:ro|:rw]   extra directory; repeatable
+  --state-dir PATH       store/trash/outputs root (default KEEL_HOME or ~/.keel)
+  --store PATH           SQLite file; overrides the state store
+  --session-id ID        session id (default: default)
+
+Run:
+  --input TEXT           input for one turn; pre-filled but not sent in the TUI
+  --tui                  interactive terminal UI
+  --demo                 mock-only terminal demo
+  --session              read one input per line until EOF
+  --turn-timeout-ms N    turn deadline override
+  --tool-timeout-ms N    per-tool deadline override
+
+Views:
+  --view sessions|session|turn|memory|events
+  --turn N, --limit N, --before SEQ
+  --fork-from SESSION:TURN, --delete-session ID, --keep-checkpoints N
+
+Other:
+  -h, --help             show this help
+  -V, --version          show the version
+
+More flags and examples are in README.md.
+";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EarlyAction {
+    Help,
+    Version,
+}
+
+fn early_action(args: &[String]) -> Option<EarlyAction> {
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        return Some(EarlyAction::Help);
+    }
+    if args.iter().any(|arg| arg == "--version" || arg == "-V") {
+        return Some(EarlyAction::Version);
+    }
+    None
+}
+
 fn parse_args() -> Result<Args, KernelError> {
     let mut profile = PathBuf::from("variants/coding/profile.toml");
     let mut input = String::from("hello from keel");
@@ -1695,6 +1762,24 @@ async fn check_plugins(
 mod tests {
     use super::*;
     use keel_core::VerifySpec;
+
+    #[test]
+    fn help_and_version_are_detected_before_parsing() {
+        assert_eq!(
+            early_action(&["--help".to_owned()]),
+            Some(EarlyAction::Help)
+        );
+        assert_eq!(early_action(&["-h".to_owned()]), Some(EarlyAction::Help));
+        assert_eq!(early_action(&["-V".to_owned()]), Some(EarlyAction::Version));
+        assert_eq!(
+            early_action(&["--version".to_owned()]),
+            Some(EarlyAction::Version)
+        );
+        assert_eq!(early_action(&["--input".to_owned(), "x".to_owned()]), None);
+        assert!(HELP.contains("--bundle"));
+        assert!(HELP.contains("--state-dir"));
+        assert!(HELP.contains("--root"));
+    }
 
     #[test]
     fn keel_home_overrides_the_default_state_root() {

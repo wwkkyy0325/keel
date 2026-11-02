@@ -1740,3 +1740,14 @@
 - Verify: the three `state_home` tests plus two smoke runs (KEEL_HOME store;
   explicit state dir overriding it). Task doc:
   `docs/llmwiki/tasks/default-state-dir.md`.
+
+### Release basics
+
+- `--help`/`-h` prints a usage reference and `--version`/`-V` prints the host
+  version before parsing, so both work without a profile or valid flags.
+- CI now runs format, lint and the full test suite on Ubuntu, Windows and
+  macOS; a separate Linux job keeps `cargo deny`. The kernel job runs the
+  kernel-only tests and the `minimal_turn` example on every platform.
+- Verify: `help_and_version_are_detected_before_parsing`, direct
+  `--help`/`--version` runs, and the full workspace suite. Task doc:
+  `docs/llmwiki/tasks/release-basics.md`.

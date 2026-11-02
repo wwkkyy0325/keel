@@ -6,26 +6,50 @@ on:
 
 jobs:
   rust:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      # Several command and MCP tests use `python` as a portable fixture.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+
+  deny:
+    # The cargo-deny action is Linux-only; keep it in its own job instead of
+    # adding a runner condition inside the matrix.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
 
   kernel:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      # The kernel crates must build and pass their tests without the host.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # The kernel crates must build and pass their tests without the host,
+      # and the minimal host example must run on every platform.
       - run: cargo test -p keel-core -p keel-policy -p keel-runtime -p keel-model-openai
+      - run: cargo run -p keel-runtime --example minimal_turn
 
   harness:
     runs-on: ubuntu-latest

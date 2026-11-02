@@ -16,9 +16,13 @@ fn repository_root() -> PathBuf {
 }
 
 fn cli(arguments: &[&str], stdin: Option<&str>) -> Output {
+    // The default state root is the user's home; isolate every test so it
+    // never writes there. `--store` covers the database, not trash/outputs.
+    let state = tempfile::tempdir().expect("state home");
     let mut command = Command::new(env!("CARGO_BIN_EXE_keel-cli"));
     command
         .current_dir(repository_root())
+        .env("KEEL_HOME", state.path())
         .args(arguments)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -32,7 +36,9 @@ fn cli(arguments: &[&str], stdin: Option<&str>) -> Output {
             .write_all(input.as_bytes())
             .expect("write stdin");
     }
-    child.wait_with_output().expect("wait for keel-cli")
+    let output = child.wait_with_output().expect("wait for keel-cli");
+    drop(state);
+    output
 }
 
 fn session_arguments<'a>(workspace: &'a str, store: &'a str) -> Vec<&'a str> {

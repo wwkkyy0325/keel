@@ -117,6 +117,8 @@ sources recorded in `docs/spec/05-provenance.md`.
 ## Run
 
 ```bash
+cargo run -p keel-cli -- --help
+cargo run -p keel-cli -- --version
 cargo run -p keel-cli -- --profile variants/coding/profile.toml --input "hello"
 cargo run -p keel-cli -- --profile variants/companion/profile.toml --input "hello"
 ```
@@ -455,6 +457,10 @@ cargo deny check
 # Performance gates (release; ignored by default)
 cargo test --release -p keel-runtime --test performance -- --ignored --nocapture
 ```
+
+CI runs the same format, lint and test gates on Ubuntu, Windows and macOS,
+plus the kernel-only build and `minimal_turn` example on each platform.
+`cargo deny` runs in a separate Linux job.
 
 ## License
 

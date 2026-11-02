@@ -137,6 +137,11 @@ First complete kernel and reference host.
   under it, so a plain run persists its session. `--state-dir` or a bundle's
   `state_dir` overrides it; `--store` overrides only the database. The eval
   harness isolates itself with a temporary `KEEL_HOME`.
+- `--help`/`-h` prints usage and `--version`/`-V` prints the host version
+  before argument parsing.
+- CI runs the format, lint and test gates on Ubuntu, Windows and macOS, and
+  the kernel-only tests plus the `minimal_turn` example on each platform;
+  `cargo deny` stays in a separate Linux job.
 
 ### Performance
 
