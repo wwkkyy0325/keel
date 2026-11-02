@@ -77,6 +77,9 @@ derived project; publishing the kernel is not required for personal use.
 - Symlink-safe paths: the dispatcher canonicalizes every requested path before
   the permission gate, so a link inside the workspace cannot redirect a read
   or write outside it; `..` never climbs above the root.
+- Extra roots: `--root PATH[:ro|:rw]` adds read-only or read-write scopes for
+  tasks that span directories; `/roots` lists them. The most specific scope
+  wins, execution still asks, and drive/system roots are refused.
 - Per-call usage and cache telemetry, plus a cost model in
   `docs/llmwiki/cache-economics.md`.
 
@@ -171,6 +174,25 @@ outside it. Deletion is recoverable through the trash; interactions
 (questions, plan approval, permission confirmation and escalation) are kernel
 primitives, not domain tools. See ADR 0002 and ADR 0003.
 
+A task that spans more than one directory adds labeled roots instead of a
+wider workspace:
+
+```bash
+cargo run -p keel-cli -- --profile variants/coding/profile.deepseek.toml \
+  --workspace D:\Downloads \
+  --root E:\Archive:rw \
+  --root D:\Photos:ro \
+  --input "move the old installers to E:\Archive and list large photos"
+```
+
+`--root` is repeatable. `:ro` allows reads only, `:rw` (the default) allows
+reads and writes; execution still asks for confirmation. Relative tool paths
+stay in the workspace, other roots use absolute paths, and the most specific
+root wins. A drive root or a system directory (`C:\`, `C:\Windows`,
+`C:\Users`) is refused. In the TUI, `/roots` lists every scope. Use one
+writable root per phase and keep the others read-only; separate sessions when
+the phases should not share undo history.
+
 Tool calls stop at 30 s and the turn at 180 s. A first build or `npm install`
 may need more; raise the limits with `--tool-timeout-ms` and
 `--turn-timeout-ms`:
@@ -226,7 +248,7 @@ cargo run -p keel-cli -- --tui --profile variants/coding/profile.deepseek.toml \
   stays in memory and is never written to the store.
 - The transcript keeps every turn; `PgUp`/`PgDn` scroll it and a scrollbar
   appears when it is longer than the viewport.
-- `/help`, `/clear`, `/cost`, `/sessions`, `/cancel`, `/quit`.
+- `/help`, `/clear`, `/cost`, `/sessions`, `/roots`, `/cancel`, `/quit`.
 - While a turn runs, streamed text and tool lines are visible. When it
   finishes they collapse to the answer plus one aggregate line (`tools ·
   files · tokens · duration`), so the transcript keeps results, not process.

@@ -52,6 +52,10 @@ First complete kernel and reference host.
   filesystem root; a dangling symlink is refused.
 - `.keel/outputs` is readable so a truncated tool result can be re-read; the
   rest of `.keel` stays denied and the exception never permits a write.
+- Extra roots: `PermissionEngine::with_root(path, access)` adds a read-only or
+  read-write directory outside the workspace. The most specific root wins,
+  execution stays confirm-only, and a drive root or system directory is
+  refused. `RootScope` is part of the permission surface.
 - New built-in tools: `make_dir`, `move_file` and `delete_file`.
   `delete_file` copies the file into the trash before removing it; `move_file`
   backs up an existing destination and stays on one volume. The coding
@@ -103,7 +107,10 @@ First complete kernel and reference host.
 - MCP `number` parameters no longer flatten to integers. The tool uses the
   single JSON `arguments` mode instead, so fractional values survive the
   kernel's integer-only parameter model.
-- MCP servers start in the workspace directory, matching the `roots` reply.
+- MCP servers start in the workspace directory and `roots/list` advertises
+  every scope.
+- `--root PATH[:ro|:rw]` adds a labeled scope; `/roots` lists them in the TUI.
+  One writable root per phase, the rest read-only, is the intended use.
 
 ### Performance
 

@@ -7,14 +7,23 @@ use keel_core::{
     PermissionLevel, PermissionRequest,
 };
 
+/// One additional directory the agent may access.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RootScope {
+    pub path: PathBuf,
+    pub access: AccessKind,
+}
+
 /// Permission engine.
 ///
-/// The workspace root is the permission boundary for `WorkspaceAuto`.
-/// `FullAuto` removes that boundary but never the hard deny list. The
-/// dispatcher canonicalizes each requested path before the gate, so a symlink
-/// inside the workspace cannot redirect the check outside it.
+/// The workspace root is the permission boundary for `WorkspaceAuto`; a host
+/// may add labeled roots with read or read-write access. `FullAuto` removes
+/// every boundary but never the hard deny list. The dispatcher canonicalizes
+/// each requested path before the gate, so a symlink inside a root cannot
+/// redirect the check outside it.
 pub struct PermissionEngine {
     root: PathBuf,
+    extra_roots: Vec<RootScope>,
     base_level: PermissionLevel,
     grants: Mutex<Vec<Grant>>,
 }
@@ -35,11 +44,81 @@ impl PermissionEngine {
                     root.as_ref().display()
                 ),
             })?;
+        if root.parent().is_none() {
+            return Err(KernelError::InvalidConfig {
+                message: format!(
+                    "workspace root `{}` is a filesystem root; choose a narrower directory",
+                    root.display()
+                ),
+            });
+        }
+        if is_system_directory(&root) {
+            return Err(KernelError::InvalidConfig {
+                message: format!("workspace root `{}` is a system directory", root.display()),
+            });
+        }
         Ok(Self {
             root,
+            extra_roots: Vec::new(),
             base_level: level,
             grants: Mutex::new(Vec::new()),
         })
+    }
+
+    /// Adds a directory the agent may use outside the primary workspace.
+    ///
+    /// The path is canonicalized. Drive/filesystem roots and system
+    /// directories are refused: a job should name the smallest directory it
+    /// needs, not a whole volume.
+    pub fn with_root(
+        mut self,
+        path: impl AsRef<Path>,
+        access: AccessKind,
+    ) -> Result<Self, KernelError> {
+        let source = path.as_ref();
+        let path = std::fs::canonicalize(source)
+            .map(keel_core::simplify_path)
+            .map_err(|error| KernelError::InvalidConfig {
+                message: format!("root `{}` is not accessible: {error}", source.display()),
+            })?;
+        if access == AccessKind::Execute {
+            return Err(KernelError::InvalidConfig {
+                message: format!(
+                    "root `{}` cannot grant execute access; execution stays confirm-only",
+                    path.display()
+                ),
+            });
+        }
+        if path.parent().is_none() {
+            return Err(KernelError::InvalidConfig {
+                message: format!(
+                    "root `{}` is a filesystem root; choose a narrower directory",
+                    path.display()
+                ),
+            });
+        }
+        if is_system_directory(&path) {
+            return Err(KernelError::InvalidConfig {
+                message: format!("root `{}` is a system directory", path.display()),
+            });
+        }
+        if path == self.root || self.extra_roots.iter().any(|scope| scope.path == path) {
+            return Ok(self);
+        }
+        self.extra_roots.push(RootScope { path, access });
+        Ok(self)
+    }
+
+    /// Every scope the agent may use: the primary workspace first, then the
+    /// extra roots in the order they were added.
+    pub fn roots(&self) -> Vec<RootScope> {
+        let mut scopes = Vec::with_capacity(self.extra_roots.len() + 1);
+        scopes.push(RootScope {
+            path: self.root.clone(),
+            access: AccessKind::Write,
+        });
+        scopes.extend(self.extra_roots.iter().cloned());
+        scopes
     }
 
     pub fn root(&self) -> &Path {
@@ -134,7 +213,15 @@ impl PermissionGate for PermissionEngine {
             };
         }
 
-        let inside = resolved.starts_with(&self.root);
+        let scope_access = if resolved.starts_with(&self.root) {
+            Some(AccessKind::Write)
+        } else {
+            self.extra_roots
+                .iter()
+                .filter(|scope| resolved.starts_with(&scope.path))
+                .max_by_key(|scope| scope.path.components().count())
+                .map(|scope| scope.access)
+        };
         let grants = self.active_grants();
         let full_auto_granted = grants.iter().any(is_full_auto_grant);
         let path_granted = grants.iter().any(|grant| {
@@ -155,17 +242,65 @@ impl PermissionGate for PermissionEngine {
 
         match self.base_level {
             PermissionLevel::FullAuto => PermissionDecision::Allow,
-            PermissionLevel::WorkspaceAuto => match request.access {
-                AccessKind::Read | AccessKind::Write if inside => PermissionDecision::Allow,
-                _ => PermissionDecision::Confirm {
+            PermissionLevel::WorkspaceAuto => match scope_access {
+                Some(access) if permits(access, request.access) => PermissionDecision::Allow,
+                Some(_) if request.access == AccessKind::Execute => PermissionDecision::Confirm {
+                    reason: "execution requires confirmation".to_owned(),
+                },
+                Some(_) => PermissionDecision::Confirm {
+                    reason: format!("`{}` is read-only in this root", resolved.display()),
+                },
+                None => PermissionDecision::Confirm {
                     reason: format!(
-                        "`{}` is outside the workspace sandbox or requires execution access",
+                        "`{}` is outside the workspace and its extra roots",
                         resolved.display()
                     ),
                 },
             },
         }
     }
+}
+
+/// A read root allows reads only; a write root allows reads and writes.
+/// Execution is always a confirmation, wherever the path is.
+fn permits(scope: AccessKind, requested: AccessKind) -> bool {
+    match requested {
+        AccessKind::Read => true,
+        AccessKind::Write => scope == AccessKind::Write,
+        AccessKind::Execute => false,
+    }
+}
+
+/// A root that would hand the agent an operating-system area instead of a
+/// task directory. This is a guardrail against accidental `--root C:\`, not a
+/// security boundary.
+fn is_system_directory(path: &Path) -> bool {
+    let text = path.to_string_lossy().to_ascii_lowercase();
+    let text = text.trim_end_matches(['\\', '/']);
+    // A whole user-profile parent is too broad, but `C:\Users\<name>` is a
+    // normal workspace, so only the exact parent is refused.
+    if text == r"c:\users" || text == "/home" {
+        return true;
+    }
+    let windows = [
+        r"c:\windows",
+        r"c:\program files",
+        r"c:\program files (x86)",
+        r"c:\programdata",
+        r"c:\$recycle.bin",
+        r"c:\system volume information",
+    ];
+    if windows
+        .iter()
+        .any(|prefix| text == *prefix || text.starts_with(&format!("{prefix}\\")))
+    {
+        return true;
+    }
+    let unix = [
+        "/etc", "/usr", "/bin", "/sbin", "/boot", "/sys", "/proc", "/dev", "/var", "/root",
+    ];
+    unix.iter()
+        .any(|prefix| text == *prefix || text.starts_with(&format!("{prefix}/")))
 }
 
 fn is_denied(resolved: &Path) -> bool {
@@ -450,5 +585,135 @@ mod tests {
             engine.check(&request(AccessKind::Read, &path)),
             PermissionDecision::Deny { .. }
         ));
+    }
+}
+
+#[cfg(test)]
+mod root_scope_tests {
+    use super::*;
+    use keel_core::resolve_path;
+
+    fn request(access: AccessKind, path: &Path) -> PermissionRequest {
+        PermissionRequest {
+            tool: "test".to_owned(),
+            access,
+            path: Some(path.to_path_buf()),
+            detail: None,
+        }
+    }
+
+    #[test]
+    fn an_extra_read_root_allows_reads_and_confirms_writes() {
+        let workspace = tempfile::tempdir().unwrap();
+        let extra = tempfile::tempdir().unwrap();
+        let engine = PermissionEngine::new(workspace.path(), PermissionLevel::WorkspaceAuto)
+            .unwrap()
+            .with_root(extra.path(), AccessKind::Read)
+            .unwrap();
+        let path = extra.path().join("note.txt");
+
+        assert_eq!(
+            engine.check(&request(AccessKind::Read, &path)),
+            PermissionDecision::Allow
+        );
+        assert!(matches!(
+            engine.check(&request(AccessKind::Write, &path)),
+            PermissionDecision::Confirm { .. }
+        ));
+    }
+
+    #[test]
+    fn an_extra_write_root_allows_reads_and_writes() {
+        let workspace = tempfile::tempdir().unwrap();
+        let extra = tempfile::tempdir().unwrap();
+        let engine = PermissionEngine::new(workspace.path(), PermissionLevel::WorkspaceAuto)
+            .unwrap()
+            .with_root(extra.path(), AccessKind::Write)
+            .unwrap();
+        let path = extra.path().join("note.txt");
+
+        assert_eq!(
+            engine.check(&request(AccessKind::Read, &path)),
+            PermissionDecision::Allow
+        );
+        assert_eq!(
+            engine.check(&request(AccessKind::Write, &path)),
+            PermissionDecision::Allow
+        );
+    }
+
+    #[test]
+    fn execution_in_an_extra_root_still_requires_confirmation() {
+        let workspace = tempfile::tempdir().unwrap();
+        let extra = tempfile::tempdir().unwrap();
+        let engine = PermissionEngine::new(workspace.path(), PermissionLevel::WorkspaceAuto)
+            .unwrap()
+            .with_root(extra.path(), AccessKind::Write)
+            .unwrap();
+        let path = extra.path().join("script.sh");
+
+        assert!(matches!(
+            engine.check(&request(AccessKind::Execute, &path)),
+            PermissionDecision::Confirm { .. }
+        ));
+    }
+
+    #[test]
+    fn the_most_specific_root_wins() {
+        let workspace = tempfile::tempdir().unwrap();
+        let outer = tempfile::tempdir().unwrap();
+        let inner = outer.path().join("inner");
+        std::fs::create_dir(&inner).unwrap();
+        let engine = PermissionEngine::new(workspace.path(), PermissionLevel::WorkspaceAuto)
+            .unwrap()
+            .with_root(outer.path(), AccessKind::Write)
+            .unwrap()
+            .with_root(&inner, AccessKind::Read)
+            .unwrap();
+        let path = inner.join("note.txt");
+
+        assert_eq!(
+            engine.check(&request(AccessKind::Read, &path)),
+            PermissionDecision::Allow
+        );
+        assert!(matches!(
+            engine.check(&request(AccessKind::Write, &path)),
+            PermissionDecision::Confirm { .. }
+        ));
+    }
+
+    #[test]
+    fn the_primary_root_is_listed_first() {
+        let workspace = tempfile::tempdir().unwrap();
+        let extra = tempfile::tempdir().unwrap();
+        let engine = PermissionEngine::new(workspace.path(), PermissionLevel::WorkspaceAuto)
+            .unwrap()
+            .with_root(extra.path(), AccessKind::Read)
+            .unwrap();
+        let roots = engine.roots();
+        assert_eq!(roots.len(), 2);
+        assert_eq!(roots[0].path, resolve_path(engine.root(), engine.root()));
+        assert_eq!(roots[0].access, AccessKind::Write);
+        assert_eq!(roots[1].access, AccessKind::Read);
+    }
+
+    #[test]
+    fn a_filesystem_root_is_rejected() {
+        #[cfg(windows)]
+        let root = PathBuf::from("C:\\");
+        #[cfg(not(windows))]
+        let root = PathBuf::from("/");
+
+        assert!(PermissionEngine::new(&root, PermissionLevel::WorkspaceAuto).is_err());
+    }
+
+    #[test]
+    fn a_system_directory_is_rejected_as_a_root() {
+        #[cfg(windows)]
+        let root = PathBuf::from(r"C:\Windows");
+        #[cfg(not(windows))]
+        let root = PathBuf::from("/etc");
+
+        assert!(PermissionEngine::new(&root, PermissionLevel::WorkspaceAuto).is_err());
     }
 }

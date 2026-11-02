@@ -13,8 +13,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use keel_core::{
-    AcceptanceItem, ArgValue, CancelToken, Event, InteractionPort, KernelError, ModelChunk,
-    ModelError, ModelProvider, ModelRequest, ModelStream, Policy, Session, TodoList, ToolArgs,
+    AcceptanceItem, AccessKind, ArgValue, CancelToken, Event, InteractionPort, KernelError,
+    ModelChunk, ModelError, ModelProvider, ModelRequest, ModelStream, Policy, Session, TodoList,
+    ToolArgs,
 };
 use keel_model_openai::{OpenAiConfig, OpenAiProvider};
 use keel_runtime::{
@@ -214,7 +215,9 @@ async fn run() -> Result<ExitCode, KernelError> {
             .plugins
             .as_deref()
             .ok_or_else(|| invalid_config("`--plugins-check` needs `--plugins <file>`"))?;
-        return check_plugins(path, &args.workspace, args.json).await;
+        let mut roots = vec![args.workspace.clone()];
+        roots.extend(args.roots.iter().map(|(path, _)| path.clone()));
+        return check_plugins(path, &roots, args.json).await;
     }
     let mut store = match &args.store {
         Some(path) => Some(store::Store::open(path)?),
@@ -313,10 +316,11 @@ async fn run() -> Result<ExitCode, KernelError> {
         config.visible_tool_names.retain(|name| name != "todo");
     }
 
-    let permissions = Arc::new(PermissionEngine::new(
-        args.workspace,
-        config.permission_level,
-    )?);
+    let mut permissions = PermissionEngine::new(&args.workspace, config.permission_level)?;
+    for (path, access) in &args.roots {
+        permissions = permissions.with_root(path, *access)?;
+    }
+    let permissions = Arc::new(permissions);
 
     let stored = match &store {
         Some(store) => store.load(&args.session_id)?,
@@ -387,7 +391,12 @@ async fn run() -> Result<ExitCode, KernelError> {
         registry.register(Arc::new(TodoTool::new(todos.clone())))?;
     }
     if let Some(path) = &args.plugins {
-        let names = mcp::load(path, permissions.root(), &mut registry).await?;
+        let mcp_roots: Vec<PathBuf> = permissions
+            .roots()
+            .into_iter()
+            .map(|scope| scope.path)
+            .collect();
+        let names = mcp::load(path, &mcp_roots, &mut registry).await?;
         config.visible_tool_names.extend(names);
     }
     let registry = Arc::new(registry);
@@ -441,6 +450,11 @@ async fn run() -> Result<ExitCode, KernelError> {
         capture_context: args.context_snapshots,
     };
     let workspace_root = permissions.root().to_path_buf();
+    let roots: Vec<String> = permissions
+        .roots()
+        .iter()
+        .map(|scope| format!("{} [{}]", scope.path.display(), scope.access.as_str()))
+        .collect();
     let driver = TurnDriver::new(
         model,
         registry,
@@ -491,6 +505,7 @@ async fn run() -> Result<ExitCode, KernelError> {
             store,
             session_id: args.session_id,
             workspace: workspace_root,
+            roots,
             interactions,
             ui: ui_rx,
         })
@@ -1084,6 +1099,8 @@ struct Args {
     profile: PathBuf,
     input: String,
     workspace: PathBuf,
+    /// Extra directories the agent may use, as `(path, access)`.
+    roots: Vec<(PathBuf, AccessKind)>,
     acceptance: Option<PathBuf>,
     session: bool,
     max_model_calls: Option<u32>,
@@ -1170,6 +1187,7 @@ fn parse_args() -> Result<Args, KernelError> {
     let mut workspace = std::env::current_dir().map_err(|error| KernelError::Io {
         message: error.to_string(),
     })?;
+    let mut roots = Vec::new();
     let mut args = std::env::args().skip(1);
 
     while let Some(argument) = args.next() {
@@ -1190,6 +1208,12 @@ fn parse_args() -> Result<Args, KernelError> {
                     args.next()
                         .ok_or_else(|| invalid_config("missing value for `--workspace`"))?,
                 );
+            }
+            "--root" => {
+                let spec = args
+                    .next()
+                    .ok_or_else(|| invalid_config("missing value for `--root`"))?;
+                roots.push(parse_root_spec(&spec)?);
             }
             "--acceptance" => {
                 acceptance =
@@ -1377,6 +1401,7 @@ fn parse_args() -> Result<Args, KernelError> {
         profile,
         input,
         workspace,
+        roots,
         acceptance,
         session,
         max_model_calls,
@@ -1439,6 +1464,22 @@ fn print_json<T: serde::Serialize + ?Sized>(value: &T) -> Result<(), KernelError
 }
 
 /// Parses `<session>:<turn>` from `--fork-from`.
+/// Parses `--root <path>[:ro|:rw]`. The suffix is checked last, so a Windows
+/// drive letter is never mistaken for it.
+fn parse_root_spec(spec: &str) -> Result<(PathBuf, AccessKind), KernelError> {
+    let (path, access) = if let Some(path) = spec.strip_suffix(":ro") {
+        (path, AccessKind::Read)
+    } else if let Some(path) = spec.strip_suffix(":rw") {
+        (path, AccessKind::Write)
+    } else {
+        (spec, AccessKind::Write)
+    };
+    if path.is_empty() {
+        return Err(invalid_config("`--root` needs a path"));
+    }
+    Ok((PathBuf::from(path), access))
+}
+
 fn parse_fork(value: &str) -> Result<(String, u32), KernelError> {
     let (source, turn) = value
         .rsplit_once(':')
@@ -1455,10 +1496,10 @@ fn parse_fork(value: &str) -> Result<(String, u32), KernelError> {
 /// Probes every configured MCP server and reports one line per server.
 async fn check_plugins(
     path: &std::path::Path,
-    root: &std::path::Path,
+    roots: &[PathBuf],
     json: bool,
 ) -> Result<ExitCode, KernelError> {
-    let statuses = mcp::check(path, root).await?;
+    let statuses = mcp::check(path, roots).await?;
     if json {
         let rendered = serde_json::to_string_pretty(&statuses)
             .map_err(|error| invalid_config(format!("cannot encode plugin status: {error}")))?;
@@ -1501,6 +1542,27 @@ async fn check_plugins(
 mod tests {
     use super::*;
     use keel_core::VerifySpec;
+
+    #[test]
+    fn root_specs_parse_read_and_write_suffixes() {
+        assert_eq!(
+            parse_root_spec("D:/Archive:ro").unwrap(),
+            (PathBuf::from("D:/Archive"), AccessKind::Read)
+        );
+        assert_eq!(
+            parse_root_spec("D:/Archive:rw").unwrap(),
+            (PathBuf::from("D:/Archive"), AccessKind::Write)
+        );
+        assert_eq!(
+            parse_root_spec("D:/Archive").unwrap(),
+            (PathBuf::from("D:/Archive"), AccessKind::Write)
+        );
+        assert_eq!(
+            parse_root_spec(r"C:\Archive:ro").unwrap(),
+            (PathBuf::from(r"C:\Archive"), AccessKind::Read)
+        );
+        assert!(parse_root_spec(":ro").is_err());
+    }
 
     fn compute_item(id: &str, expected: &str) -> AcceptanceItem {
         AcceptanceItem {

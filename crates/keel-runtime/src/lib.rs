@@ -33,7 +33,7 @@ pub use governor::{ContextGovernor, Pressure, PressureLevel};
 pub use interaction::{DeferAllInteractionPort, InteractionBroker};
 pub use keel_policy::{RuntimeConfig, TurnLimits};
 pub use mock_model::{MockModel, MockStep};
-pub use permission::PermissionEngine;
+pub use permission::{PermissionEngine, RootScope};
 pub use profile::{from_profile_str, load_profile, validate_config};
 pub use registry::ToolRegistry;
 pub use summarizer::{

@@ -29,6 +29,10 @@ Stable within a major version:
   versioned), `Tool`, `ToolSchema`, `ToolArgs`, `ToolResult`, `ModelProvider`,
   `ContextStage`, `Policy`, `PermissionGate`, `InteractionPort`, `Event`,
   `EventSink`, `KernelError`, `ErrorCode`.
+- `keel-runtime` permission surface: `PermissionEngine`, `RootScope` and
+  `PermissionEngine::with_root(path, access)`. Extra roots are read-only or
+  read-write; execution is always confirm-only; the most specific root wins;
+  drive roots and system directories are refused.
 - The event enum is the live UI/audit feed: turn and state changes, context
   builds, tool starts/finishes, `PermissionDecided` for every gate decision,
   interactions, memory and summary events. `Event` serializes with snake_case
@@ -158,6 +162,7 @@ with its UI, and does not need the reference CLI.
 | `InteractionPort` | `crates/keel-runtime/tests/interactions.rs` |
 | `PermissionGate` | `crates/keel-runtime` permission unit tests; `permission_decisions_are_recorded_as_events` |
 | Path confinement | `a_symlink_cannot_read_outside_the_workspace`, `a_symlink_cannot_write_outside_the_workspace`, `parent_components_do_not_pop_the_filesystem_root` |
+| Extra roots | `an_extra_read_root_allows_reads_and_confirms_writes`, `an_extra_write_root_allows_reads_and_writes`, `the_most_specific_root_wins`, `a_filesystem_root_is_rejected` |
 | Tool output spill | `reading_a_spilled_output_is_allowed`, `the_rest_of_keel_stays_denied` |
 | `Summarizer` | `crates/keel-runtime` summarizer unit tests |
 | `TrashStore` | `crates/keel-runtime` trash unit tests |

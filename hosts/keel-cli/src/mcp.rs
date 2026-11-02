@@ -147,19 +147,21 @@ fn kill_tree(child: &mut Child) {
 struct McpServer {
     transport: Transport,
     next_id: u64,
-    /// Workspace advertised through the `roots` capability.
-    root: PathBuf,
+    /// Roots advertised through the `roots` capability; the first is the
+    /// workspace and the spawn working directory.
+    roots: Vec<PathBuf>,
 }
 
 impl McpServer {
-    async fn spawn(command: &str, args: &[String], root: &Path) -> Result<Self, String> {
+    async fn spawn(command: &str, args: &[String], roots: &[PathBuf]) -> Result<Self, String> {
+        let primary = roots.first().cloned().unwrap_or_default();
         let program = command;
         let mut command = Command::new(program);
         command
             .args(args)
             // Relative paths in a server should resolve against the workspace
             // it serves, matching the `roots` reply below.
-            .current_dir(root)
+            .current_dir(&primary)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
@@ -187,11 +189,11 @@ impl McpServer {
                 reader: BufReader::new(stdout),
             })),
             next_id: 1,
-            root: root.to_path_buf(),
+            roots: roots.to_vec(),
         })
     }
 
-    fn http(url: String, root: &Path) -> Self {
+    fn http(url: String, roots: &[PathBuf]) -> Self {
         Self {
             transport: Transport::Http {
                 client: reqwest::Client::new(),
@@ -199,7 +201,7 @@ impl McpServer {
                 session: None,
             },
             next_id: 1,
-            root: root.to_path_buf(),
+            roots: roots.to_vec(),
         }
     }
 
@@ -272,7 +274,7 @@ impl McpServer {
         self.next_id = self.next_id.saturating_add(1);
         let message = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
         let body = self.send(&message).await?;
-        let root = self.root.clone();
+        let roots = self.roots.clone();
         // HTTP: the response body may carry server requests next to our
         // response. Answer them with a POST before returning.
         if let Some(body) = body {
@@ -282,7 +284,7 @@ impl McpServer {
                     request.get("method").and_then(Value::as_str),
                     request.get("id"),
                 ) {
-                    let reply = server_request_reply(method, request_id, &root);
+                    let reply = server_request_reply(method, request_id, &roots);
                     self.send(&reply).await?;
                 }
             }
@@ -306,7 +308,7 @@ impl McpServer {
                 if let (Some(method), Some(request_id)) =
                     (value.get("method").and_then(Value::as_str), value.get("id"))
                 {
-                    let reply = server_request_reply(method, request_id, &root);
+                    let reply = server_request_reply(method, request_id, &roots);
                     let mut line = reply.to_string();
                     line.push('\n');
                     inner
@@ -365,14 +367,22 @@ impl McpServer {
 /// is refused with a JSON-RPC error instead of being ignored. Sampling is
 /// deliberately refused: it would spend the user's tokens and send context to
 /// the server without going through the kernel's permission and audit path.
-fn server_request_reply(method: &str, id: &Value, root: &Path) -> Value {
+fn server_request_reply(method: &str, id: &Value, roots: &[PathBuf]) -> Value {
     match method {
         "ping" => json!({"jsonrpc": "2.0", "id": id, "result": {}}),
-        "roots/list" => json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "result": {"roots": [{"uri": workspace_uri(root), "name": "workspace"}]}
-        }),
+        "roots/list" => {
+            let roots: Vec<Value> = roots
+                .iter()
+                .enumerate()
+                .map(|(index, root)| {
+                    json!({
+                        "uri": workspace_uri(root),
+                        "name": if index == 0 { "workspace".to_owned() } else { format!("root-{index}") }
+                    })
+                })
+                .collect();
+            json!({"jsonrpc": "2.0", "id": id, "result": {"roots": roots}})
+        }
         _ => json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -616,13 +626,13 @@ pub struct ServerStatus {
 /// A failing server does not stop the others; the caller reports each line and
 /// decides the exit code. The transports are dropped at the end of each probe,
 /// which kills the server process tree.
-pub async fn check(path: &Path, root: &Path) -> Result<Vec<ServerStatus>, KernelError> {
+pub async fn check(path: &Path, roots: &[PathBuf]) -> Result<Vec<ServerStatus>, KernelError> {
     let file = read_plugin_file(path)?;
     let mut statuses = Vec::new();
     for server in file.servers {
         let started = std::time::Instant::now();
         let result = async {
-            let mut running = connect(&server, root).await?;
+            let mut running = connect(&server, roots).await?;
             running.initialize().await?;
             Ok::<usize, String>(running.list_tools().await?.len())
         }
@@ -647,11 +657,11 @@ fn read_plugin_file(path: &Path) -> Result<PluginFile, KernelError> {
     })
 }
 
-async fn connect(server: &ServerConfig, root: &Path) -> Result<McpServer, String> {
+async fn connect(server: &ServerConfig, roots: &[PathBuf]) -> Result<McpServer, String> {
     if let Some(url) = &server.url {
-        Ok(McpServer::http(url.clone(), root))
+        Ok(McpServer::http(url.clone(), roots))
     } else if let Some(command) = &server.command {
-        McpServer::spawn(command, &server.args, root).await
+        McpServer::spawn(command, &server.args, roots).await
     } else {
         Err("set either `command` or `url`".to_owned())
     }
@@ -660,13 +670,14 @@ async fn connect(server: &ServerConfig, root: &Path) -> Result<McpServer, String
 /// Loads the plugin file and registers every discovered MCP tool.
 pub async fn load(
     path: &Path,
-    root: &Path,
+    roots: &[PathBuf],
     registry: &mut keel_runtime::ToolRegistry,
 ) -> Result<Vec<String>, KernelError> {
     let file = read_plugin_file(path)?;
+    let primary = roots.first().cloned().unwrap_or_default();
     let mut names = Vec::new();
     for server in file.servers {
-        let mut running = match connect(&server, root).await {
+        let mut running = match connect(&server, roots).await {
             Ok(server) => server,
             Err(error) => {
                 eprintln!("plugin `{}` skipped: {error}", server.name);
@@ -686,7 +697,7 @@ pub async fn load(
         };
         let shared = Arc::new(Mutex::new(running));
         for tool in tools {
-            if let Some(tool) = McpTool::new(shared.clone(), &server.name, root, &tool) {
+            if let Some(tool) = McpTool::new(shared.clone(), &server.name, &primary, &tool) {
                 names.push(tool.schema().name.clone());
                 registry
                     .register(Arc::new(tool))
@@ -1032,17 +1043,18 @@ mod tests {
 
     #[test]
     fn server_requests_are_answered_by_method() {
-        let root = Path::new("workspace root");
-        let ping = server_request_reply("ping", &json!(7), root);
+        let roots = [PathBuf::from("workspace root"), PathBuf::from("archive")];
+        let ping = server_request_reply("ping", &json!(7), &roots);
         assert_eq!(ping["result"], json!({}));
         assert_eq!(ping["id"], json!(7));
 
-        let roots = server_request_reply("roots/list", &json!("r1"), root);
-        assert_eq!(roots["result"]["roots"][0]["name"], "workspace");
-        let uri = roots["result"]["roots"][0]["uri"].as_str().unwrap();
+        let reply = server_request_reply("roots/list", &json!("r1"), &roots);
+        assert_eq!(reply["result"]["roots"][0]["name"], "workspace");
+        assert_eq!(reply["result"]["roots"][1]["name"], "root-1");
+        let uri = reply["result"]["roots"][0]["uri"].as_str().unwrap();
         assert!(uri.ends_with("/workspace%20root"), "{uri}");
 
-        let refused = server_request_reply("sampling/createMessage", &json!(8), root);
+        let refused = server_request_reply("sampling/createMessage", &json!(8), &roots);
         assert_eq!(refused["error"]["code"], json!(-32601));
     }
 
@@ -1144,7 +1156,7 @@ mod tests {
         });
 
         let dir = tempfile::tempdir().unwrap();
-        let mut server = McpServer::http(format!("http://{address}"), dir.path());
+        let mut server = McpServer::http(format!("http://{address}"), &[dir.path().to_path_buf()]);
         let error = server.request("tools/list", json!({})).await.unwrap_err();
 
         assert!(error.contains("exceeds"), "{error}");
@@ -1267,7 +1279,7 @@ mod tests {
         }
 
         let seen = Arc::new(Mutex::new(Vec::new()));
-        let mut server = McpServer::http(mock_server(seen.clone()).await, Path::new("."));
+        let mut server = McpServer::http(mock_server(seen.clone()).await, &[PathBuf::from(".")]);
         server.initialize().await.unwrap();
         let tools = server.list_tools().await.unwrap();
         assert_eq!(tools.len(), 1);
@@ -1317,7 +1329,7 @@ mod tests {
         )
         .unwrap();
 
-        let statuses = check(&plugins, dir.path()).await.unwrap();
+        let statuses = check(&plugins, &[dir.path().to_path_buf()]).await.unwrap();
         assert_eq!(statuses.len(), 1);
         assert!(statuses[0].error.is_none(), "{:?}", statuses[0].error);
         assert_eq!(statuses[0].tools, 2);
@@ -1325,7 +1337,7 @@ mod tests {
         let mut server = McpServer::spawn(
             "python",
             &[fixture.display().to_string(), db.display().to_string()],
-            dir.path(),
+            &[dir.path().to_path_buf()],
         )
         .await
         .unwrap();

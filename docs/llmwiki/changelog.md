@@ -1642,3 +1642,17 @@
   to the trash first, move backs up an existing destination.
 - Verify: the symlink, normalization and spill tests, `file_tool_tests`, the
   full workspace suite and a terminal smoke run.
+
+### Extra roots
+
+- `PermissionEngine::with_root(path, access)` adds a `RootScope` outside the
+  workspace. Read-only scopes allow reads and confirm writes; read-write
+  scopes allow both. The most specific root wins, execution stays
+  confirm-only, and a drive/filesystem root or system directory is refused.
+- `--root PATH[:ro|:rw]` is repeatable; `/roots` lists every scope in the
+  terminal UI.
+- MCP `roots/list` advertises every scope and the server still starts in the
+  primary workspace.
+- Real two-root smoke: read from a `:ro` root, wrote in the workspace, four
+  calls, 4.2 s, 83.7% cache hit. Task doc:
+  `docs/llmwiki/tasks/multi-root.md`.

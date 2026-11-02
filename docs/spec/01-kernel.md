@@ -142,7 +142,11 @@ cancellation and interjection distinct. See ADR 0010.
   run automatically; outside actions require confirmation. It gates tool
   calls, not processes: an approved `shell` command or MCP server is not
   confined to the workspace.
-- `full_auto` removes the workspace boundary but never the hard deny list.
+- A host may add labeled roots outside the workspace. Each root is read-only
+  or read-write; execution still requires confirmation, and the most specific
+  root wins. A drive root or a system directory is refused as a root.
+- `full_auto` removes the workspace boundary and every extra root, but never
+  the hard deny list.
 - The deny list covers system/privileged paths, credential stores, secret
   files, other users' homes, privilege escalation, destructive storage
   commands, security bypass, Keel audit/`.git` internals and

@@ -104,6 +104,8 @@ pub struct TuiHost {
     pub store: Option<Store>,
     pub session_id: String,
     pub workspace: PathBuf,
+    /// Every scope, primary first, labeled with its access.
+    pub roots: Vec<String>,
     pub interactions: mpsc::Receiver<InteractionJob>,
     pub ui: mpsc::Receiver<UiEvent>,
 }
@@ -164,6 +166,8 @@ struct App {
     workspace: String,
     model: String,
     permission: String,
+    /// Every scope, primary first, labeled with its access.
+    roots: Vec<String>,
     blocks: Vec<Block>,
     input: Vec<char>,
     cursor: usize,
@@ -194,11 +198,12 @@ struct App {
 }
 
 impl App {
-    fn new(workspace: String, model: String, permission: String) -> Self {
+    fn new(workspace: String, model: String, permission: String, roots: Vec<String>) -> Self {
         Self {
             workspace,
             model,
             permission,
+            roots,
             blocks: vec![Block {
                 kind: BlockKind::Notice,
                 text: "type a request; /help lists commands".to_owned(),
@@ -856,6 +861,7 @@ pub async fn run(host: TuiHost) -> Result<ExitCode, KernelError> {
         workspace,
         host.config.model_route.model.clone(),
         host.config.permission_level.as_str().to_owned(),
+        host.roots.clone(),
     );
     app.base_full_auto = host.config.permission_level == PermissionLevel::FullAuto;
     app.full_auto = app.base_full_auto;
@@ -954,7 +960,7 @@ fn start_turn(
 
 fn run_slash(app: &mut App, command: &str, store: Option<&Store>) {
     match command.trim() {
-        "/help" => app.notice("commands: /help /clear /cost /sessions /cancel /quit"),
+        "/help" => app.notice("commands: /help /clear /cost /sessions /roots /cancel /quit"),
         "/quit" | "/exit" => app.should_quit = true,
         "/clear" => app.blocks.clear(),
         "/cost" => app.notice(format!(
@@ -962,6 +968,16 @@ fn run_slash(app: &mut App, command: &str, store: Option<&Store>) {
             app.usage.input, app.usage.output, app.usage.cached
         )),
         "/cancel" => app.cancel_turn(),
+        "/roots" => {
+            if app.roots.is_empty() {
+                app.notice("no roots recorded");
+            } else {
+                let roots = app.roots.clone();
+                for root in roots {
+                    app.notice(format!("root {root}"));
+                }
+            }
+        }
         "/sessions" => match store {
             Some(store) => match crate::view::sessions(store.connection()) {
                 Ok(sessions) if sessions.is_empty() => app.notice("no sessions"),
@@ -1129,6 +1145,7 @@ mod tests {
             "Keel".to_owned(),
             "mock".to_owned(),
             "workspace_auto".to_owned(),
+            Vec::new(),
         )
     }
 
@@ -1196,6 +1213,27 @@ mod tests {
             app.handle_key(key(KeyCode::Enter)),
             Some(Command::Slash("/help".to_owned()))
         );
+    }
+
+    #[test]
+    fn slash_roots_lists_every_scope() {
+        let mut app = App::new(
+            "Keel".to_owned(),
+            "mock".to_owned(),
+            "workspace_auto".to_owned(),
+            vec!["C:/ws [write]".to_owned(), "D:/Archive [read]".to_owned()],
+        );
+
+        run_slash(&mut app, "/roots", None);
+
+        let notices: Vec<String> = app
+            .blocks
+            .iter()
+            .filter(|block| matches!(&block.kind, BlockKind::Notice))
+            .map(|block| block.text.clone())
+            .collect();
+        assert!(notices.contains(&"root C:/ws [write]".to_owned()));
+        assert!(notices.contains(&"root D:/Archive [read]".to_owned()));
     }
 
     #[test]
