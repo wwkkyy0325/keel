@@ -28,7 +28,10 @@ pub fn compact_args(args: &ToolArgs) -> String {
 }
 
 /// Summarizes one tool result for history, spilling long output once.
-pub async fn summarize_output(root: &Path, turn: u64, call: usize, output: &str) -> String {
+///
+/// The marker names the spill file by absolute path, so the model can read it
+/// back even when the host keeps outputs outside the workspace.
+pub async fn summarize_output(outputs: &Path, turn: u64, call: usize, output: &str) -> String {
     let redacted = redact_secrets(output);
     let chars = redacted.chars().count();
     if chars <= TOOL_HEAD_CHARS + TOOL_TAIL_CHARS {
@@ -39,9 +42,9 @@ pub async fn summarize_output(root: &Path, turn: u64, call: usize, output: &str)
     let tail_skip = chars.saturating_sub(TOOL_TAIL_CHARS);
     let tail: String = redacted.chars().skip(tail_skip).collect();
 
-    let relative = format!(".keel/outputs/turn-{turn}-call-{call}.txt");
-    let marker = match write_spill(&root.join(&relative), &redacted).await {
-        Ok(()) => format!("[truncated {chars} chars; full output: {relative}]"),
+    let path = outputs.join(format!("turn-{turn}-call-{call}.txt"));
+    let marker = match write_spill(&path, &redacted).await {
+        Ok(()) => format!("[truncated {chars} chars; full output: {}]", path.display()),
         Err(_) => format!("[truncated {chars} chars; full output unavailable]"),
     };
     format!("{head}\n{marker}\n{tail}")
@@ -94,19 +97,21 @@ mod tests {
     #[tokio::test]
     async fn short_output_is_kept_as_is() {
         let dir = tempfile::tempdir().unwrap();
-        let output = summarize_output(dir.path(), 1, 0, "short").await;
+        let outputs = dir.path().join("outputs");
+        let output = summarize_output(&outputs, 1, 0, "short").await;
 
         assert_eq!(output, "short");
-        assert!(!dir.path().join(".keel").exists());
+        assert!(!outputs.exists());
     }
 
     #[tokio::test]
     async fn long_output_keeps_head_and_tail_and_spills_once() {
         let dir = tempfile::tempdir().unwrap();
+        let outputs = dir.path().join(".keel/outputs");
         let full: String = (0..5000)
             .map(|index| (b'a' + (index % 26) as u8) as char)
             .collect();
-        let summary = summarize_output(dir.path(), 7, 2, &full).await;
+        let summary = summarize_output(&outputs, 7, 2, &full).await;
 
         let head: String = full.chars().take(TOOL_HEAD_CHARS).collect();
         let tail: String = full
@@ -115,24 +120,23 @@ mod tests {
             .collect();
         assert!(summary.starts_with(&head));
         assert!(summary.ends_with(&tail));
-        assert!(summary
-            .contains("[truncated 5000 chars; full output: .keel/outputs/turn-7-call-2.txt]"));
+        let spill = outputs.join("turn-7-call-2.txt");
+        assert!(summary.contains(&format!("full output: {}", spill.display())));
 
-        let spilled = tokio::fs::read_to_string(dir.path().join(".keel/outputs/turn-7-call-2.txt"))
-            .await
-            .unwrap();
+        let spilled = tokio::fs::read_to_string(&spill).await.unwrap();
         assert_eq!(spilled, full);
     }
 
     #[tokio::test]
     async fn spilled_output_is_redacted() {
         let dir = tempfile::tempdir().unwrap();
+        let outputs = dir.path().join(".keel/outputs");
         let secret = "sk-abcdefghijklmnopqrstuvwxyz";
         let full = format!("{secret}\n{}\n{}", "y".repeat(4000), "z".repeat(1000));
-        let summary = summarize_output(dir.path(), 1, 0, &full).await;
+        let summary = summarize_output(&outputs, 1, 0, &full).await;
 
         assert!(!summary.contains(secret));
-        let spilled = tokio::fs::read_to_string(dir.path().join(".keel/outputs/turn-1-call-0.txt"))
+        let spilled = tokio::fs::read_to_string(outputs.join("turn-1-call-0.txt"))
             .await
             .unwrap();
         assert!(!spilled.contains(secret));

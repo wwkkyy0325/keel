@@ -284,8 +284,9 @@ fits. A near-empty summary must not absorb the records it cannot replace.
 - The result is recorded as status, exit code, and the head and tail of the
   output by character count.
 - Only when a result is truncated is the full output written once to
-  `.keel/outputs/<id>`; the truncation marker carries that path so the model
-  can re-read it with `read_file` when the summary is not enough.
+  `.keel/outputs/<id>` (or the host-configured outputs directory); the
+  truncation marker carries the absolute path so the model can re-read it with
+  `read_file` when the summary is not enough.
 - Results produced earlier in the same turn are not truncated in place;
   truncation applies when the entry enters history.
 - `read_file` results keep path and line range, so the model can re-request

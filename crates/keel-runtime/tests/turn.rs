@@ -978,21 +978,17 @@ async fn a_large_tool_result_is_summarized_and_spilled() {
             })
             .unwrap_or_else(|| panic!("no tool block in history: {last:?}"));
         assert!(assistant.content.starts_with("done"));
-        assert!(assistant
-            .content
-            .contains("[truncated 200000 chars; full output: .keel/outputs/turn-1-call-0.txt]"));
+        assert!(assistant.content.contains("truncated 200000 chars"));
+        assert!(assistant.content.contains("turn-1-call-0.txt"));
     }
 
-    let spilled =
-        std::fs::read_to_string(dir.path().join(".keel/outputs/turn-1-call-0.txt")).unwrap();
+    let spill = dir.path().join(".keel/outputs/turn-1-call-0.txt");
+    let spilled = std::fs::read_to_string(&spill).unwrap();
     assert_eq!(spilled.chars().count(), 200_000);
 
     let tool = keel_runtime::ReadFileTool::new();
     let mut read_args = ToolArgs::new();
-    read_args.insert(
-        "path",
-        ArgValue::String(".keel/outputs/turn-1-call-0.txt".to_owned()),
-    );
+    read_args.insert("path", ArgValue::String(spill.display().to_string()));
     let ctx = ToolCtx {
         turn_id: TurnId::new(99),
         call_id: ToolCallId::next(),

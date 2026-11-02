@@ -223,8 +223,9 @@ not mean rebuilding the file or running destructive git commands:
 - `make_dir` creates a directory and any missing parents; it is idempotent.
 
 Shell commands can still modify or delete files without a backup; use the
-typed file tools for edits that must be undoable. `.keel/outputs` is readable
-so a truncated tool result can be re-read; the rest of `.keel` stays denied.
+typed file tools for edits that must be undoable. The configured outputs
+directory is readable so a truncated tool result can be re-read; the rest of
+`.keel` stays denied.
 
 ## Terminal UI
 
@@ -322,11 +323,12 @@ cargo run -p keel-cli -- --tui --bundle variants/coding/bundle.toml
 `--bundle` is mutually exclusive with `--profile` and `--plugins`;
 `--workspace` still selects the task directory. A bundle with `state_dir`
 (or an explicit `--state-dir`) moves the SQLite store to
-`<state>/keel.db` and the trash to `<state>/trash`, so cleaning or deleting
-the workspace no longer loses sessions or undo history. `--store` still
-overrides the database path. Truncated tool output remains in
-`<workspace>/.keel/outputs` because the model reads it back; that is the one
-runtime file that stays with the workspace.
+`<state>/keel.db`, the trash to `<state>/trash` and truncated tool output to
+`<state>/outputs`, so cleaning or deleting the workspace no longer loses
+sessions or undo history and leaves no `.keel` directory behind. `--store`
+still overrides the database path. Without a state directory, the spill stays
+in `<workspace>/.keel/outputs`; the marker carries the absolute path and the
+permission engine allows reads there either way.
 
 The reference bundles are `variants/coding/bundle.toml` and
 `variants/companion/bundle.toml`; both use `deepseek-flash` and need

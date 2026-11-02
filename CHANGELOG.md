@@ -50,8 +50,9 @@ First complete kernel and reference host.
   deepest existing ancestor, so a symlink inside the workspace cannot point a
   read or write outside it. `..` no longer climbs above the drive or
   filesystem root; a dangling symlink is refused.
-- `.keel/outputs` is readable so a truncated tool result can be re-read; the
-  rest of `.keel` stays denied and the exception never permits a write.
+- The outputs directory (default `.keel/outputs`) is readable so a truncated
+  tool result can be re-read; the rest of `.keel` stays denied and the
+  exception never permits a write.
 - Extra roots: `PermissionEngine::with_root(path, access)` adds a read-only or
   read-write directory outside the workspace. The most specific root wins,
   execution stays confirm-only, and a drive root or system directory is
@@ -117,9 +118,13 @@ First complete kernel and reference host.
   bundle. `--bundle` is mutually exclusive with `--profile`/`--plugins`.
   Reference bundles live under `variants/coding` and `variants/companion`.
 - `--state-dir PATH` (or a bundle's `state_dir`) moves the SQLite store to
-  `<state>/keel.db` and the trash to `<state>/trash`; `--store` still
-  overrides the database. `LocalTrashStore::at` accepts the trash directory
-  directly.
+  `<state>/keel.db`, the trash to `<state>/trash` and truncated tool output to
+  `<state>/outputs`; `--store` still overrides the database.
+  `LocalTrashStore::at` accepts the trash directory directly.
+- Tool spill is configurable: `TurnDriver::with_outputs_dir` writes it,
+  `PermissionEngine::with_outputs` allows reading it, and the truncation marker
+  carries the absolute path. The default remains
+  `<workspace>/.keel/outputs`.
 - `--job PATH` binds a bundle/profile, workspace, roots, state directory,
   session id and the first input into one reusable task. Every path resolves
   relative to the job file; explicit CLI flags override the job.

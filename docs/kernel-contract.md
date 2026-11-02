@@ -32,7 +32,9 @@ Stable within a major version:
 - `keel-runtime` permission surface: `PermissionEngine`, `RootScope` and
   `PermissionEngine::with_root(path, access)`. Extra roots are read-only or
   read-write; execution is always confirm-only; the most specific root wins;
-  drive roots and system directories are refused.
+  drive roots and system directories are refused. `PermissionEngine::with_outputs`
+  names the readable spill directory and `TurnDriver::with_outputs_dir` writes
+  spills there; both default to `<workspace>/.keel/outputs`.
 - The event enum is the live UI/audit feed: turn and state changes, context
   builds, tool starts/finishes, `PermissionDecided` for every gate decision,
   interactions, memory and summary events. `Event` serializes with snake_case
@@ -49,11 +51,11 @@ Stable within a major version:
   declared path (for a write target that does not exist yet, through its
   deepest existing ancestor), so a symlink inside the workspace cannot point
   the check outside it. `..` never climbs above the drive or filesystem root.
-  A dangling symlink is refused. The exception is `.keel/outputs`, which is
-  readable so a truncated tool result can be re-read; the rest of `.keel` is
-  denied and the exception never allows a write. This is a permission
-  boundary, not an OS sandbox: an approved command or MCP server is not
-  confined.
+  A dangling symlink is refused. The exception is the configured outputs
+  directory (default `<workspace>/.keel/outputs`), which is readable so a
+  truncated tool result can be re-read; the rest of `.keel` is denied and the
+  exception never allows a write. This is a permission boundary, not an OS
+  sandbox: an approved command or MCP server is not confined.
 - Built-in tool resource bounds: command output is captured as a bounded head
   and tail (64 KiB per stream), `read_file` refuses a file over 8 MiB, and a
   timed-out or cancelled command kills its process tree. A host may wrap the

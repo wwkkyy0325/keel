@@ -28,6 +28,7 @@ sessions and undo data out of the task directory.
   existing profile, plugin and permission paths.
 - `--store` wins over the state-derived database; an explicit `--state-dir`
   overrides a bundle's value.
-- Truncated tool output stays in `<workspace>/.keel/outputs` because the model
-  reads it back; the state directory covers the store and the trash.
+- Truncated tool output follows the state directory (`<state>/outputs`); with
+  no state directory it stays in `<workspace>/.keel/outputs`. See
+  `docs/llmwiki/tasks/state-outputs.md`.
 - A bundle may name a plugin file but does not discover plugins.

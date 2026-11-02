@@ -171,6 +171,9 @@ pub struct TurnDriver<M> {
     /// estimate: tool schemas and provider template overhead.
     overhead: AtomicU64,
     summarizer: Option<Arc<dyn Summarizer>>,
+    /// Where long tool outputs are spilled. `None` uses
+    /// `<workspace>/.keel/outputs`.
+    outputs_dir: Option<PathBuf>,
     todos: Option<Arc<Mutex<TodoList>>>,
     options: KernelOptions,
     /// Pressure read on the previous turn; the summary update happens before
@@ -214,6 +217,7 @@ impl<M: ModelProvider> TurnDriver<M> {
             working_set,
             overhead: AtomicU64::new(0),
             summarizer: None,
+            outputs_dir: None,
             todos: config.todos,
             options: config.options,
             last_level: Mutex::new(PressureLevel::Green),
@@ -224,6 +228,14 @@ impl<M: ModelProvider> TurnDriver<M> {
     /// Enables model-written summaries for large sealed segments.
     pub fn with_summarizer(mut self, summarizer: Arc<dyn Summarizer>) -> Self {
         self.summarizer = Some(summarizer);
+        self
+    }
+
+    /// Sets where long tool outputs spill. The host should allow reads on this
+    /// directory through the permission engine so the model can follow the
+    /// marker.
+    pub fn with_outputs_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.outputs_dir = Some(dir.into());
         self
     }
 
@@ -1158,9 +1170,11 @@ impl<M: ModelProvider> TurnDriver<M> {
                     // summary. A large read_file must not push the current
                     // turn over the context budget; the spill path is carried
                     // in the marker so the model can re-read a region.
-                    let output =
-                        summarize_output(&self.workspace_root, turn_id.get(), index, &content)
-                            .await;
+                    let outputs = self
+                        .outputs_dir
+                        .clone()
+                        .unwrap_or_else(|| self.workspace_root.join(".keel").join("outputs"));
+                    let output = summarize_output(&outputs, turn_id.get(), index, &content).await;
                     let live = if self.options.bounded_tools {
                         output.clone()
                     } else {

@@ -16,10 +16,11 @@ denied. The reference tool set also lacked move, delete and mkdir.
       so `..` cannot turn an absolute path into a relative one. Verify:
       `parent_components_do_not_pop_the_filesystem_root`,
       `an_absolute_path_keeps_its_drive_and_root`.
-- [x] `.keel/outputs` is readable, so the spill marker is no longer a dead
-      path; the rest of `.keel` stays denied and the exception is read-only.
-      Verify: `reading_a_spilled_output_is_allowed`,
-      `the_rest_of_keel_stays_denied`.
+- [x] The outputs directory is readable, so the spill marker is no longer a
+      dead path; the rest of `.keel` stays denied and the exception is
+      read-only. The directory is configurable (see
+      `docs/llmwiki/tasks/state-outputs.md`). Verify:
+      `reading_a_spilled_output_is_allowed`, `the_rest_of_keel_stays_denied`.
 - [x] MCP servers start in the workspace directory, matching `roots/list`.
       Verify: the MCP transport tests plus a manual plugin run.
 - [x] `make_dir`, `move_file` and `delete_file` are registered and exposed by

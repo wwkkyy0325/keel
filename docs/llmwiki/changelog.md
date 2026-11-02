@@ -1695,3 +1695,17 @@
   disk usage. The message names the trash entry instead of a "backup".
 - Verify: `discard_moves_the_file_and_keeps_it_restorable`,
   `delete_file_moves_the_file_into_the_trash`, and the full suite.
+
+### Outputs in the state directory
+
+- `summarize_output` takes the outputs directory and writes an absolute path
+  into the truncation marker. `TurnDriver::with_outputs_dir` and
+  `PermissionEngine::with_outputs` let the host place and allow that directory.
+- With `--state-dir` (or a bundle's `state_dir`), spills go to
+  `<state>/outputs`; the workspace keeps no `.keel` directory. Without a state
+  directory the default stays `<workspace>/.keel/outputs`.
+- The read exception is limited to the configured outputs directory and only
+  permits reads.
+- Smoke: a 5000-character echo produced a 5000-byte spill in the state outputs
+  directory, the store lived in the state directory, and the workspace stayed
+  empty. Task doc: `docs/llmwiki/tasks/state-outputs.md`.

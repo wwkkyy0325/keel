@@ -231,12 +231,21 @@ async fn run() -> Result<ExitCode, KernelError> {
         roots.extend(args.roots.iter().map(|(path, _)| path.clone()));
         return check_plugins(path, &roots, args.json).await;
     }
-    if let Some(dir) = &args.state_dir {
-        std::fs::create_dir_all(dir).map_err(|error| KernelError::Io {
-            message: format!("cannot create state directory `{}`: {error}", dir.display()),
-        })?;
-    }
-    let store_path = resolve_store_path(&args.store, &args.state_dir);
+    let state_dir = match &args.state_dir {
+        Some(dir) => {
+            std::fs::create_dir_all(dir).map_err(|error| KernelError::Io {
+                message: format!("cannot create state directory `{}`: {error}", dir.display()),
+            })?;
+            Some(std::fs::canonicalize(dir).map_err(|error| KernelError::Io {
+                message: format!(
+                    "cannot resolve state directory `{}`: {error}",
+                    dir.display()
+                ),
+            })?)
+        }
+        None => None,
+    };
+    let store_path = resolve_store_path(&args.store, &state_dir);
     let mut store = match &store_path {
         Some(path) => Some(store::Store::open(path)?),
         None => None,
@@ -338,6 +347,11 @@ async fn run() -> Result<ExitCode, KernelError> {
     for (path, access) in &args.roots {
         permissions = permissions.with_root(path, *access)?;
     }
+    let outputs_dir = state_dir
+        .as_ref()
+        .map(|dir| dir.join("outputs"))
+        .unwrap_or_else(|| permissions.root().join(".keel").join("outputs"));
+    permissions = permissions.with_outputs(outputs_dir.clone());
     let permissions = Arc::new(permissions);
 
     let stored = match &store {
@@ -388,7 +402,7 @@ async fn run() -> Result<ExitCode, KernelError> {
         limits.tool_timeout = std::time::Duration::from_millis(ms);
     }
 
-    let trash: Arc<dyn TrashStore> = match &args.state_dir {
+    let trash: Arc<dyn TrashStore> = match &state_dir {
         Some(dir) => Arc::new(LocalTrashStore::at(dir.join("trash"))),
         None => Arc::new(LocalTrashStore::new(permissions.root().to_path_buf())),
     };
@@ -491,7 +505,8 @@ async fn run() -> Result<ExitCode, KernelError> {
             todos: todos.clone(),
             options,
         },
-    );
+    )
+    .with_outputs_dir(outputs_dir);
 
     let driver = if args.no_memo {
         driver

@@ -24,6 +24,9 @@ pub struct RootScope {
 pub struct PermissionEngine {
     root: PathBuf,
     extra_roots: Vec<RootScope>,
+    /// Directory whose files are readable so the model can follow a spill
+    /// marker. Defaults to `<workspace>/.keel/outputs`.
+    outputs: PathBuf,
     base_level: PermissionLevel,
     grants: Mutex<Vec<Grant>>,
 }
@@ -57,12 +60,21 @@ impl PermissionEngine {
                 message: format!("workspace root `{}` is a system directory", root.display()),
             });
         }
+        let outputs = root.join(".keel").join("outputs");
         Ok(Self {
             root,
             extra_roots: Vec::new(),
+            outputs,
             base_level: level,
             grants: Mutex::new(Vec::new()),
         })
+    }
+
+    /// Sets the directory whose files may be read back after a tool result is
+    /// truncated. The path should already be canonical and absolute.
+    pub fn with_outputs(mut self, path: impl Into<PathBuf>) -> Self {
+        self.outputs = path.into();
+        self
     }
 
     /// Adds a directory the agent may use outside the primary workspace.
@@ -199,11 +211,10 @@ impl PermissionGate for PermissionEngine {
         };
 
         let resolved = resolve_path(&self.root, path);
-        // Truncated tool output is written to `.keel/outputs` and the model is
-        // told to read it back. The rest of `.keel` stays denied, and the
-        // exception is read-only.
-        let spill = self.root.join(".keel").join("outputs");
-        if request.access == AccessKind::Read && resolved.starts_with(&spill) {
+        // Truncated tool output is written to the configured outputs
+        // directory and the model is told to read it back. The rest of
+        // `.keel` stays denied, and the exception is read-only.
+        if request.access == AccessKind::Read && resolved.starts_with(&self.outputs) {
             return PermissionDecision::Allow;
         }
         if is_denied(&resolved) {
@@ -454,6 +465,26 @@ mod tests {
                 PermissionDecision::Allow
             );
         }
+    }
+
+    #[test]
+    fn a_configured_outputs_directory_is_readable() {
+        let workspace = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let outputs = state.path().join("outputs");
+        let engine = PermissionEngine::new(workspace.path(), PermissionLevel::WorkspaceAuto)
+            .unwrap()
+            .with_outputs(&outputs);
+        let path = outputs.join("turn-1-call-0.txt");
+
+        assert_eq!(
+            engine.check(&request(AccessKind::Read, &path)),
+            PermissionDecision::Allow
+        );
+        assert!(matches!(
+            engine.check(&request(AccessKind::Write, &path)),
+            PermissionDecision::Confirm { .. }
+        ));
     }
 
     #[test]

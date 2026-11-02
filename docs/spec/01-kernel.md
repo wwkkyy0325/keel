@@ -169,8 +169,10 @@ cancellation and interjection distinct. See ADR 0010.
   requested path (including a not-yet-existing write target, through its
   deepest existing ancestor), so a symlink inside the workspace cannot point
   the check outside it. A dangling symlink is refused.
-- `.keel/outputs` is readable so truncated tool output can be re-read; the
-  rest of `.keel` stays denied, and the exception never permits a write.
+- The configured outputs directory (default `<workspace>/.keel/outputs`) is
+  readable so truncated tool output can be re-read; the rest of `.keel` stays
+  denied, and the exception never permits a write. A host may move outputs
+  outside the workspace, and the spill marker names the absolute path.
 - This is a permission boundary, not an OS sandbox. Container/seatbelt/job
   confinement of commands and plugins is a host option, not a kernel claim.
 - Audit is always on; it is not sampled and not optional.

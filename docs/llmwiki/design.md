@@ -62,7 +62,8 @@ depend on the crates and bring their own host and UI. See
 - `budget_tokens` is the working-set target and `context_window` is the hard
   capacity; a 1M window does not mean a 1M working set.
 - Tool entries keep the call, status and head and tail by character count; the
-  full output spills to `.keel/outputs/` and stays reachable.
+  full output spills to the configured outputs directory (default
+  `.keel/outputs/`) and stays reachable by its absolute path.
 - Facts are sedimented at a seal: durable ones become global, the rest stay
   session-scoped.
 - `L2` and `L3` are structured extracts until the summarization research
