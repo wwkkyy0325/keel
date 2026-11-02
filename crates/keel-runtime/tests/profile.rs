@@ -117,6 +117,7 @@ fn anthropic_profile_loads_and_validates() {
         Some("https://api.anthropic.com")
     );
     assert_eq!(config.api_key_env.as_deref(), Some("ANTHROPIC_API_KEY"));
+    assert_eq!(config.api_key_keyring.as_deref(), Some("keel:anthropic"));
     validate_config(
         &config,
         &common::standard_registry(&repo_root()),

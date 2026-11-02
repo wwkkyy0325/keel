@@ -7,6 +7,7 @@ mod terminal;
 mod tui;
 mod view;
 
+use std::io::{IsTerminal, Read};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -222,6 +223,12 @@ async fn run() -> Result<ExitCode, KernelError> {
     }
     dotenvy::dotenv().ok();
     let mut args = parse_args()?;
+    if let Some(name) = &args.keyring_set {
+        return set_keyring(name);
+    }
+    if let Some(name) = &args.keyring_delete {
+        return delete_keyring(name);
+    }
     if let Some(path) = &args.bundle {
         let bundle = bundle::Bundle::load(path)?;
         args.profile = bundle.profile;
@@ -1083,6 +1090,92 @@ fn done_or_error(outcome: TurnOutcome) -> Result<(), KernelError> {
     }
 }
 
+/// `service:account`, both non-empty.
+fn split_keyring_name(name: &str) -> Result<(&str, &str), KernelError> {
+    let (service, account) = name
+        .split_once(':')
+        .ok_or_else(|| invalid_config("keyring entry must be `service:account`"))?;
+    if service.is_empty() || account.is_empty() {
+        return Err(invalid_config("keyring entry must be `service:account`"));
+    }
+    Ok((service, account))
+}
+
+/// Environment first, then the OS keyring. The value is never logged.
+fn resolve_api_key(
+    config: &RuntimeConfig,
+    default_env: &str,
+    default_keyring: &str,
+) -> Result<String, KernelError> {
+    let env_name = config.api_key_env.as_deref().unwrap_or(default_env);
+    if let Ok(value) = std::env::var(env_name) {
+        if !value.trim().is_empty() {
+            return Ok(value);
+        }
+    }
+    let entry_name = config.api_key_keyring.as_deref().unwrap_or(default_keyring);
+    let (service, account) = split_keyring_name(entry_name)?;
+    let entry = keyring::Entry::new(service, account).map_err(|error| {
+        invalid_config(format!("cannot open keyring entry `{entry_name}`: {error}"))
+    })?;
+    match entry.get_password() {
+        Ok(secret) if !secret.trim().is_empty() => Ok(secret),
+        Ok(_) => Err(invalid_config(format!(
+            "keyring entry `{entry_name}` is empty"
+        ))),
+        Err(keyring::Error::NoEntry) => Err(invalid_config(format!(
+            "{env_name} is not set and keyring entry `{entry_name}` does not exist. Set the environment variable or run `--keyring-set {entry_name}`."
+        ))),
+        Err(error) => Err(invalid_config(format!(
+            "cannot read keyring entry `{entry_name}`: {error}"
+        ))),
+    }
+}
+
+fn set_keyring(name: &str) -> Result<ExitCode, KernelError> {
+    let (service, account) = split_keyring_name(name)?;
+    if std::io::stdin().is_terminal() {
+        eprintln!(
+            "the terminal echoes typed input; pipe the secret from a password manager instead"
+        );
+    }
+    let mut secret = String::new();
+    std::io::stdin()
+        .read_to_string(&mut secret)
+        .map_err(|error| KernelError::Io {
+            message: format!("cannot read the secret: {error}"),
+        })?;
+    let secret = secret.trim();
+    if secret.is_empty() {
+        return Err(invalid_config("the secret is empty"));
+    }
+    let entry = keyring::Entry::new(service, account)
+        .map_err(|error| invalid_config(format!("cannot open keyring entry `{name}`: {error}")))?;
+    entry
+        .set_password(secret)
+        .map_err(|error| invalid_config(format!("cannot store keyring entry `{name}`: {error}")))?;
+    println!("stored keyring entry {service}:{account}");
+    Ok(ExitCode::SUCCESS)
+}
+
+fn delete_keyring(name: &str) -> Result<ExitCode, KernelError> {
+    let (service, account) = split_keyring_name(name)?;
+    let entry = keyring::Entry::new(service, account)
+        .map_err(|error| invalid_config(format!("cannot open keyring entry `{name}`: {error}")))?;
+    match entry.delete_credential() {
+        Ok(()) => {
+            println!("deleted keyring entry {service}:{account}");
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(keyring::Error::NoEntry) => Err(invalid_config(format!(
+            "keyring entry `{name}` does not exist"
+        ))),
+        Err(error) => Err(invalid_config(format!(
+            "cannot delete keyring entry `{name}`: {error}"
+        ))),
+    }
+}
+
 fn build_openai_provider(
     config: &RuntimeConfig,
     max_retries: u32,
@@ -1091,18 +1184,7 @@ fn build_openai_provider(
         .model_base_url
         .clone()
         .unwrap_or_else(|| "https://api.openai.com/v1".to_owned());
-    let api_key_env = config
-        .api_key_env
-        .clone()
-        .unwrap_or_else(|| "OPENAI_API_KEY".to_owned());
-    let api_key = std::env::var(&api_key_env).map_err(|_| {
-        invalid_config(format!(
-            "{api_key_env} is not set. Copy .env.example to .env and fill it locally; never paste keys into the chat."
-        ))
-    })?;
-    if api_key.trim().is_empty() {
-        return Err(invalid_config(format!("{api_key_env} is empty")));
-    }
+    let api_key = resolve_api_key(config, "OPENAI_API_KEY", "keel:openai")?;
     OpenAiProvider::new(OpenAiConfig {
         base_url,
         api_key,
@@ -1121,18 +1203,7 @@ fn build_anthropic_provider(
         .model_base_url
         .clone()
         .unwrap_or_else(|| "https://api.anthropic.com".to_owned());
-    let api_key_env = config
-        .api_key_env
-        .clone()
-        .unwrap_or_else(|| "ANTHROPIC_API_KEY".to_owned());
-    let api_key = std::env::var(&api_key_env).map_err(|_| {
-        invalid_config(format!(
-            "{api_key_env} is not set. Copy .env.example to .env and fill it locally; never paste keys into the chat."
-        ))
-    })?;
-    if api_key.trim().is_empty() {
-        return Err(invalid_config(format!("{api_key_env} is empty")));
-    }
+    let api_key = resolve_api_key(config, "ANTHROPIC_API_KEY", "keel:anthropic")?;
     AnthropicProvider::new(AnthropicConfig {
         base_url,
         api_key,
@@ -1216,6 +1287,10 @@ struct Args {
     store: Option<PathBuf>,
     /// Session id inside the store.
     session_id: String,
+    /// Store a secret in the OS keyring; the secret is read from stdin.
+    keyring_set: Option<String>,
+    /// Delete an entry from the OS keyring.
+    keyring_delete: Option<String>,
     /// Keep the turn-start message list in the store.
     context_snapshots: bool,
     /// Plugin file listing MCP servers to load.
@@ -1283,6 +1358,10 @@ Views:
   --turn N, --limit N, --before SEQ
   --fork-from SESSION:TURN, --delete-session ID, --keep-checkpoints N
 
+Credentials:
+  --keyring-set SERVICE:ACCOUNT     read a secret from stdin and store it
+  --keyring-delete SERVICE:ACCOUNT  remove a stored secret
+
 Other:
   -h, --help             show this help
   -V, --version          show the version
@@ -1324,6 +1403,8 @@ fn parse_args() -> Result<Args, KernelError> {
     let mut tool_timeout_ms = None;
     let mut store = None;
     let mut session_id = "default".to_owned();
+    let mut keyring_set = None;
+    let mut keyring_delete = None;
     let mut context_snapshots = false;
     let mut plugins = None;
     let mut bundle = None;
@@ -1472,6 +1553,18 @@ fn parse_args() -> Result<Args, KernelError> {
                     .next()
                     .ok_or_else(|| invalid_config("missing value for `--session-id`"))?;
                 session_id_set = true;
+            }
+            "--keyring-set" => {
+                keyring_set = Some(
+                    args.next()
+                        .ok_or_else(|| invalid_config("missing value for `--keyring-set`"))?,
+                );
+            }
+            "--keyring-delete" => {
+                keyring_delete = Some(
+                    args.next()
+                        .ok_or_else(|| invalid_config("missing value for `--keyring-delete`"))?,
+                );
             }
             "--context-snapshots" => {
                 context_snapshots = true;
@@ -1651,6 +1744,8 @@ fn parse_args() -> Result<Args, KernelError> {
         tool_timeout_ms,
         store,
         session_id,
+        keyring_set,
+        keyring_delete,
         context_snapshots,
         plugins,
         bundle,
@@ -1819,6 +1914,17 @@ mod tests {
         assert!(HELP.contains("--bundle"));
         assert!(HELP.contains("--state-dir"));
         assert!(HELP.contains("--root"));
+    }
+
+    #[test]
+    fn keyring_names_need_a_service_and_an_account() {
+        assert_eq!(
+            split_keyring_name("keel:openai").unwrap(),
+            ("keel", "openai")
+        );
+        assert!(split_keyring_name("nocolon").is_err());
+        assert!(split_keyring_name(":account").is_err());
+        assert!(split_keyring_name("service:").is_err());
     }
 
     #[test]

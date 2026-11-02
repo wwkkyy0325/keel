@@ -166,8 +166,9 @@ The Anthropic profile uses the Messages API (`/v1/messages`), streaming text,
 tool use and usage. Prompt-cache and extended-thinking controls are not wired
 yet.
 
-The CLI loads `.env` automatically. Credentials stay in `.env`, never in the
-chat or a profile; the OS keyring is not wired yet.
+The CLI loads `.env` automatically. The environment variable wins; when it is
+absent the host reads the profile's `api_key_keyring` entry from the OS
+keyring. Credentials never belong in the chat or a profile.
 
 The workspace defaults to the current directory: start the CLI in the folder
 you want it to work in. `--workspace PATH` is for scripts and evals that run
@@ -452,12 +453,29 @@ parts. Reports live in `evals/reports/`; the measured results are summarised in
 
 ## Secrets
 
-Keys never go into the chat or the repository. Put credentials in `.env`
-(gitignored; copy `.env.example`); the OS keyring is not wired yet. Input is never blocked;
-when it matches a secret pattern, the turn records a `SecretWarning` event and
-the CLI prints the notice with that turn's result. Test keys and hashes trigger
-the same patterns, so blocking would make the CLI unusable. The event log
-redacts detected secrets. If a real key was ever pasted into a chat, rotate it.
+Keys never go into the chat or the repository. The host resolves a credential
+in this order:
+
+1. The profile's `api_key_env` variable, normally loaded from `.env`
+   (gitignored; copy `.env.example`).
+2. The profile's `api_key_keyring` entry, in the OS keyring. Store it with the
+   secret on stdin so it never appears in shell history or the process list:
+
+```bash
+# Windows Credential Manager / macOS Keychain / Linux keyutils
+printf '%s' "$KEY" | cargo run -p keel-cli -- --keyring-set keel:anthropic
+cargo run -p keel-cli -- --keyring-delete keel:anthropic
+```
+
+A terminal echoes typed input; pipe the secret from a password manager or
+secret store instead. The Linux backend is the kernel keyring, so it is
+session-scoped, not a Secret Service replacement.
+
+Input is never blocked; when it matches a secret pattern, the turn records a
+`SecretWarning` event and the CLI prints the notice with that turn's result.
+Test keys and hashes trigger the same patterns, so blocking would make the CLI
+unusable. The event log redacts detected secrets. If a real key was ever pasted
+into a chat, rotate it.
 
 ## Verification
 

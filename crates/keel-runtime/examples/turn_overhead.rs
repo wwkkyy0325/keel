@@ -46,6 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         model_base_url: None,
         api_key_env: None,
+        api_key_keyring: None,
         supports_reasoning: false,
         max_output_tokens: 256,
         context_window: 128_000,

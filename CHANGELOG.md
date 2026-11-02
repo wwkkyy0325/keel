@@ -72,6 +72,11 @@ First complete kernel and reference host.
 - `provider = "anthropic-compatible"` selects `keel-model-anthropic`;
   `variants/coding/profile.anthropic.toml` targets `claude-sonnet-5-5` and
   `ANTHROPIC_API_KEY`. `.env.example` lists the key.
+- Credentials resolve from the profile's `api_key_env` first, then its
+  `api_key_keyring` entry in the OS keyring. `--keyring-set service:account`
+  reads a secret from stdin and `--keyring-delete` removes it; the secret is
+  never printed. Windows uses Credential Manager, macOS the Keychain, Linux
+  the kernel keyring.
 - SQLite store: resume, per-turn checkpoints, branches, deletion, projection,
   fact/task history, context snapshots, the kernel event stream and
   `turns.error`.

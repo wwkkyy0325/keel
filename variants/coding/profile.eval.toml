@@ -6,6 +6,7 @@ provider = "openai-compatible"
 model = "deepseek-flash"
 base_url = "https://api.deepseek.com"
 api_key_env = "DEEPSEEK_API_KEY"
+api_key_keyring = "keel:deepseek"
 supports_reasoning = true
 thinking_budget = 0
 max_output_tokens = 4096

@@ -1764,3 +1764,16 @@
   headers), a profile validation test, and a host smoke against a local SSE
   server. A live API call was not run because no key is present.
 - Task doc: `docs/llmwiki/tasks/anthropic-provider.md`.
+
+### Keyring credentials
+
+- Profiles gain `api_key_keyring` (`service:account`); the host resolves the
+  environment variable first, then the profile entry, then the provider
+  default (`keel:openai`, `keel:anthropic`).
+- `--keyring-set service:account` reads a secret from stdin and stores it in
+  the OS keyring; `--keyring-delete` removes it. The secret is never printed.
+- Windows uses Credential Manager, macOS the Keychain, Linux kernel keyutils.
+- Smoke: stored `keel-smoke:test`, ran a keyring-only profile against a local
+  Anthropic SSE server, saw `x-api-key: smoke-secret`, then deleted the entry
+  and confirmed a second delete reports "does not exist".
+- Task doc: `docs/llmwiki/tasks/keyring.md`.

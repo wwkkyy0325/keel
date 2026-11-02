@@ -6,6 +6,7 @@ provider = "anthropic-compatible"
 model = "claude-sonnet-5-5"
 base_url = "https://api.anthropic.com"
 api_key_env = "ANTHROPIC_API_KEY"
+api_key_keyring = "keel:anthropic"
 supports_reasoning = false
 thinking_budget = 0
 max_output_tokens = 4096

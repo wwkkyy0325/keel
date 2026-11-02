@@ -42,6 +42,8 @@ struct ModelSection {
     #[serde(default)]
     api_key_env: Option<String>,
     #[serde(default)]
+    api_key_keyring: Option<String>,
+    #[serde(default)]
     supports_reasoning: bool,
     thinking_budget: u32,
     #[serde(default = "default_max_output_tokens")]
@@ -245,6 +247,7 @@ pub fn from_profile_str(raw: &str, base_dir: &Path) -> Result<RuntimeConfig, Ker
         context_window: file.model.context_window,
         model_base_url: file.model.base_url,
         api_key_env: file.model.api_key_env,
+        api_key_keyring: file.model.api_key_keyring,
         supports_reasoning: file.model.supports_reasoning,
         interaction,
     })

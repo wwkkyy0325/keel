@@ -48,6 +48,7 @@ pub fn runtime_config(
         },
         model_base_url: None,
         api_key_env: None,
+        api_key_keyring: None,
         supports_reasoning: false,
         max_output_tokens: 1024,
         context_window: 128_000,
