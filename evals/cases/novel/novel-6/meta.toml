@@ -1,0 +1,13 @@
+[case]
+id = "novel-6"
+kind = "novel"
+timeout_seconds = 900
+profile = "variants/coding/profile.deepseek.writer.toml"
+model = "deepseek-flash"
+seeds = [1]
+
+[mechanisms]
+min_tool_calls = 8
+min_model_calls = 4
+max_permission_deny = 0
+forbid_budget_exhaustion = true

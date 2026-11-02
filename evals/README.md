@@ -68,3 +68,22 @@ happened and the turn did not burn its cost budget.
 `long-refactor` is the long-horizon case: twenty service modules at the
 workspace root, all raised from `LIMIT = 10` to `LIMIT = 25` in one turn,
 checked by two hidden tests.
+
+## Long-horizon cases
+
+Two cases exercise a long run rather than a single fix:
+
+- `coding/long-refactor` — twenty service modules updated in one turn.
+- `novel/novel-6` — a six-chapter Chinese novella generated in one turn with
+  the writer profile (`variants/coding/profile.deepseek.writer.toml`), checked
+  for chapter count, length, outline and character sheet. The working set is
+  24k: six chapters of tool arguments plus the transcript do not fit in 16k.
+- `coding/consumer-app` — a working `keel-notes` consumer crate built inside
+  an empty workspace, with path dependencies on the three kernel crates. This
+  case needs the unattended profile
+  (`variants/coding/profile.deepseek.consumer.toml`, `full_auto`): it reads the
+  kernel sources outside the workspace and runs `cargo`, and both would be
+  confirmations elsewhere.
+
+A case that cannot finish inside its working set is a finding, not a flake:
+the report records the overflow and the chapters that were written.

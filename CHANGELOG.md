@@ -216,6 +216,14 @@ First complete kernel and reference host.
 
 ### Evidence
 
+- `consumer-app`: a working `keel-notes` consumer crate built by the agent in
+  one turn inside an empty workspace — path dependencies on the three kernel
+  crates, a `ask` command over the mock provider, two passing unit tests —
+  25 model calls, 43 tool calls, 71 s, 94.5% cache hit.
+- `novel-6`: a six-chapter Chinese novella (8,069 characters) written in one
+  turn with `deepseek-flash`: 19 model calls, 36 tool calls, 156 s, 96% cache
+  hit. A first run with a 16k working set overflowed while re-emitting the
+  whole book; 24k and no full-book re-emission passed.
 - `long-refactor`: twenty service modules updated in one turn. A real
   `deepseek-flash` run finished in 18-26 s with 11-13 model calls, 49-52 tool
   calls and up to ten tools in one round; both hidden tests passed. The case

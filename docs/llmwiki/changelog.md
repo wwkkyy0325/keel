@@ -1898,3 +1898,19 @@
   thresholds (tool calls, model calls, permission denied, budget exhausted).
 - Real deepseek-flash run through the harness: 11 model calls, 49 tool calls,
   up to ten tools in one round, 0.0% permission denials, 18.4 s, verify OK.
+
+### Real long runs
+
+- `novel-6` (deepseek-flash, one turn): 8,069 Chinese characters in six
+  chapters, 19 model calls, 36 tool calls, 156 s, 96% cache hit, 8/8 todo
+  items, no wrap-up and no budget exhaustion. The first attempt at a 16k
+  working set overflowed on the final book assembly; 24k and no full-book
+  re-emission passed.
+- `long-refactor` (deepseek-flash): 20 modules, 11-13 model calls, 49-52 tool
+  calls, up to ten tools in one round, 18-26 s.
+
+- `consumer-app` (deepseek-flash, one turn): a working `keel-notes` crate
+  inside an empty workspace — path deps, an `ask` command, two unit tests —
+  25 model calls, 43 tool calls, 71 s, 94.5% cache hit. The first attempt
+  stopped and asked for permissions; the second wrote outside the workspace
+  because the task gave absolute paths; workspace-relative wording passed.
