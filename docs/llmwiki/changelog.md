@@ -1885,3 +1885,16 @@
 - End-to-end mock turn through the reference host: `state: Done`, 21 events,
   the SQLite store written, `--view sessions` reports the turn.
 - Verify: the harness prints `11 passed, 0 failed`.
+
+### Long task, mock and real
+
+- `examples/long_task.rs`: sixty writes in one turn with the mock — 62 model
+  calls, 60 tool calls, one continuation, all files written, no budget
+  exhaustion (66 ms).
+- `evals/cases/coding/long-refactor`: twenty modules in one turn, two hidden
+  tests; the case rejects the setup and accepts the reference.
+- `run_case.py` now reads the persisted event stream and the per-call tool
+  counts, records `mechanisms`, and fails a case that misses its declared
+  thresholds (tool calls, model calls, permission denied, budget exhausted).
+- Real deepseek-flash run through the harness: 11 model calls, 49 tool calls,
+  up to ten tools in one round, 0.0% permission denials, 18.4 s, verify OK.

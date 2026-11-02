@@ -44,3 +44,27 @@ cargo run -p keel-cli -- \
   --input "$(cat evals/cases/coding/task-001/task.md)"
 bash evals/cases/coding/task-001/verify.sh "$workspace"
 ```
+
+## Mechanism checks
+
+A case can declare what the run must have exercised. `run_case.py` reads the
+persisted event stream (`--view events`) and the per-call tool counts, then
+fails the case when a rule is not met:
+
+```toml
+[mechanisms]
+min_tool_calls = 20
+min_model_calls = 5
+max_permission_deny = 0
+forbid_budget_exhaustion = true
+```
+
+The report records `mechanisms` next to the verify result: model calls, tool
+calls, continuations, wrap-ups, final calls, permission decisions per kind,
+the largest tool batch in one round and the number of multi-tool rounds. A
+passing case therefore also says the tool loop stayed active, parallelism
+happened and the turn did not burn its cost budget.
+
+`long-refactor` is the long-horizon case: twenty service modules at the
+workspace root, all raised from `LIMIT = 10` to `LIMIT = 25` in one turn,
+checked by two hidden tests.

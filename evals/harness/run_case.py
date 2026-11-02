@@ -46,6 +46,71 @@ def parse_usage(text: str) -> dict[str, int] | None:
     }
 
 
+def parse_call_tools(text: str) -> list[int]:
+    return [int(match) for match in re.findall(r"^call: \d+ .* tools=(\d+)$", text, re.M)]
+
+
+def collect_mechanisms(state_home: Path, timeout: int) -> dict:
+    """Read the persisted event stream and report what the run exercised."""
+    store = state_home / "keel.db"
+    if not store.exists():
+        return {}
+    command = [
+        "cargo", "run", "-q", "-p", "keel-cli", "--",
+        "--store", str(store), "--view", "events",
+    ]
+    try:
+        cli = subprocess.run(
+            command,
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if cli.returncode != 0 or not cli.stdout.strip():
+        return {}
+    try:
+        rows = json.loads(cli.stdout)
+    except json.JSONDecodeError:
+        return {}
+
+    counts = {
+        "model_calls": 0,
+        "tool_calls": 0,
+        "continuations": 0,
+        "budget_exhausted": False,
+        "wrap_ups": 0,
+        "final_calls": 0,
+        "permission_allow": 0,
+        "permission_confirm": 0,
+        "permission_deny": 0,
+    }
+    for row in rows:
+        name = row.get("name")
+        if name == "model_started":
+            counts["model_calls"] += 1
+        elif name == "tool_started":
+            counts["tool_calls"] += 1
+        elif name == "turn_continued":
+            counts["continuations"] += 1
+        elif name == "turn_budget_exhausted":
+            counts["budget_exhausted"] = True
+        elif name == "wrap_up_injected":
+            counts["wrap_ups"] += 1
+        elif name == "final_call_forced":
+            counts["final_calls"] += 1
+        elif name == "permission_decided":
+            decision = (row.get("payload") or {}).get("decision")
+            key = f"permission_{decision}"
+            if key in counts:
+                counts[key] += 1
+    return counts
+
+
 def load_meta(case_dir: Path) -> dict:
     with (case_dir / "meta.toml").open("rb") as handle:
         return tomllib.load(handle)
@@ -120,6 +185,29 @@ def run_case(case_dir: Path, profile: str | None = None, keep: bool = False) -> 
         stdout = (error.stdout or "") if isinstance(error.stdout, str) else ""
         stderr = (error.stderr or "") if isinstance(error.stderr, str) else ""
 
+    mechanisms = collect_mechanisms(state_home, timeout)
+    per_round = parse_call_tools(stdout)
+    mechanisms["max_tools_per_round"] = max(per_round) if per_round else 0
+    mechanisms["multi_tool_rounds"] = sum(1 for count in per_round if count > 1)
+
+    rules = meta.get("mechanisms", {})
+    failures = []
+    if mechanisms.get("tool_calls", 0) < int(rules.get("min_tool_calls", 0)):
+        failures.append(
+            f"tool_calls {mechanisms.get('tool_calls', 0)} < {rules['min_tool_calls']}"
+        )
+    if mechanisms.get("model_calls", 0) < int(rules.get("min_model_calls", 0)):
+        failures.append(
+            f"model_calls {mechanisms.get('model_calls', 0)} < {rules['min_model_calls']}"
+        )
+    if rules.get("require_continuation") and mechanisms.get("continuations", 0) < 1:
+        failures.append("no turn continuation")
+    if rules.get("forbid_budget_exhaustion") and mechanisms.get("budget_exhausted"):
+        failures.append("the turn budget was exhausted")
+    if mechanisms.get("permission_deny", 0) > int(rules.get("max_permission_deny", 10**9)):
+        failures.append("a permission was denied")
+    mechanisms["failures"] = failures
+
     bash_bin = shutil.which("bash") or "bash"
     verify = subprocess.run(
         [bash_bin, "verify.sh", posix_path(workspace)],
@@ -143,6 +231,7 @@ def run_case(case_dir: Path, profile: str | None = None, keep: bool = False) -> 
         and cli_exit == 0
         and verify.returncode == 0
         and state == "Done"
+        and not mechanisms.get("failures")
     )
     report = {
         "case": case_id,
@@ -160,6 +249,7 @@ def run_case(case_dir: Path, profile: str | None = None, keep: bool = False) -> 
         "verification": parse_field(stdout, "verification"),
         "duration_ms": parse_field(stdout, "duration_ms"),
         "usage": parse_usage(stdout),
+        "mechanisms": mechanisms,
         "workspace": str(workspace) if keep else None,
         "stdout_tail": stdout[-MAX_OUTPUT:],
         "stderr_tail": stderr[-MAX_OUTPUT:],
@@ -188,6 +278,7 @@ def main() -> int:
     print(f"{'PASS' if report['passed'] else 'FAIL'} {report['case']}")
     print(f"  state={report['state']} verify_exit={report['verify_exit']}")
     print(f"  usage={report['usage']} duration_ms={report['duration_ms']}")
+    print(f"  mechanisms={report.get('mechanisms')}")
     print(f"  report={report['report_path']}")
     return 0 if report["passed"] else 1
 

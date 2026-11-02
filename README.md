@@ -54,6 +54,9 @@ derived project; publishing the kernel is not required for personal use.
 network it checks turn continuation, the token budget, activity-based command
 timeouts, the permission matrix, large-file truncation, the non-standard
 program marker and the parallel-read cap, then prints `N passed, M failed`.
+`long_task` rehearses a sixty-file task in one turn (62 model calls, 60 tool
+calls, one early stop) and fails unless every file is written and the turn
+completes without user input.
 
 ## Implemented
 

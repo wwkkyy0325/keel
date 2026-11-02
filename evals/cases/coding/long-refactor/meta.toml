@@ -1,0 +1,13 @@
+[case]
+id = "long-refactor"
+kind = "coding"
+timeout_seconds = 600
+profile = "variants/coding/profile.deepseek.toml"
+model = "deepseek-flash"
+seeds = [1]
+
+[mechanisms]
+min_tool_calls = 20
+min_model_calls = 5
+max_permission_deny = 0
+forbid_budget_exhaustion = true

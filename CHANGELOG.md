@@ -206,6 +206,8 @@ First complete kernel and reference host.
 
 - `crates/keel-runtime/examples/minimal_turn.rs` runs one turn without the
   reference CLI: profile, two stages, one tool, a mock model and a driver.
+- `crates/keel-runtime/examples/long_task.rs` rehearses a sixty-file task in
+  one turn with the mock: 62 model calls, 60 tool calls, one continuation.
 - `crates/keel-runtime/examples/behaviors.rs` verifies eleven runtime
   behaviors against the mock provider with no network and prints a pass/fail
   summary: continuation, token budget, command activity windows, the
@@ -214,6 +216,11 @@ First complete kernel and reference host.
 
 ### Evidence
 
+- `long-refactor`: twenty service modules updated in one turn. A real
+  `deepseek-flash` run finished in 18-26 s with 11-13 model calls, 49-52 tool
+  calls and up to ten tools in one round; both hidden tests passed. The case
+  declares mechanism thresholds, and `run_case.py` fails it when the tool
+  loop, parallelism, permission decisions or the turn budget deviate.
 - 50-chapter novel: 57/57 turns, 0 overflow, 78.9% cache hit.
 - 20 curated coding cases: 20/20.
 - Five companion personas, 20 turns each: 100/100.
