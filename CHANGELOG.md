@@ -16,6 +16,12 @@ First complete kernel and reference host.
   deltas, `tool_use` input accumulation, tool-result history, the control tool
   and usage. It sits beside `keel-model-openai`; no kernel crate depends on an
   adapter.
+- Interjections: a bounded, deduplicated per-turn queue (`TurnDriver::interject`).
+  Items are delivered before the next model call as `[user interjection] …`,
+  never during a stream or tool round. `InterjectionQueued`,
+  `InterjectionDelivered` and `InterjectionDropped` audit the lifecycle; an
+  item that misses the last safe point is returned in
+  `TurnOutcome::late_interjections`.
 - Profile resolution into an immutable `RuntimeConfig`.
 - Bounded context: governor with watermarks and tool headroom, segment
   records, rolling memo, scoped facts, lexical recall and tool elision.
@@ -149,6 +155,9 @@ First complete kernel and reference host.
   under it, so a plain run persists its session. `--state-dir` or a bundle's
   `state_dir` overrides it; `--store` overrides only the database. The eval
   harness isolates itself with a temporary `KEEL_HOME`.
+- TUI: `Enter` while a turn runs queues an interjection instead of rejecting
+  the input; `/cancel` still cancels, and a late interjection is shown as a
+  notice after the turn. The line modes still read between turns.
 - `--help`/`-h` prints usage and `--version`/`-V` prints the host version
   before argument parsing.
 - CI runs the format, lint and test gates on Ubuntu, Windows and macOS, and

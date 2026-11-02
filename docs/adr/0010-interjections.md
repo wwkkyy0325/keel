@@ -2,8 +2,9 @@
 
 ## Status
 
-Proposed. The contract is fixed here; the implementation lands with an
-interactive host. The current CLI is line-based and has no mid-turn reader.
+Accepted. The kernel provides the bounded queue, safe-point delivery and
+audit events. The reference TUI implements `queue` mode; the line modes still
+read between turns.
 
 ## Context
 

@@ -872,6 +872,12 @@ fn print_outcome(
     if let Some(error) = &outcome.error {
         println!("error: {error} ({})", error.code().as_str());
     }
+    if !outcome.late_interjections.is_empty() {
+        println!(
+            "late interjections: {}",
+            outcome.late_interjections.join(" | ")
+        );
+    }
     if let Some((estimate, budget)) =
         events
             .for_turn(outcome.turn_id)

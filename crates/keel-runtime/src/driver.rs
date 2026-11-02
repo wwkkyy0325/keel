@@ -20,6 +20,7 @@ use crate::event_log::EventLog;
 use crate::fsm::TurnFsm;
 use crate::governor::{ContextGovernor, PressureLevel};
 use crate::interaction::InteractionBroker;
+use crate::interjection::{InterjectionPush, InterjectionQueue};
 use crate::permission::PermissionEngine;
 use crate::registry::ToolRegistry;
 use crate::summarizer::{
@@ -115,6 +116,9 @@ pub struct TurnOutcome {
     pub text: String,
     pub error: Option<KernelError>,
     pub deferred_interactions: Vec<InteractionId>,
+    /// User messages that arrived too late for a safe point. The host shows
+    /// them so they are not silently lost.
+    pub late_interjections: Vec<String>,
     /// Secret-like input seen at turn start. The turn still runs; the host
     /// surfaces the notice with this turn's result.
     pub secret_warning: Option<SecretKind>,
@@ -180,6 +184,10 @@ pub struct TurnDriver<M> {
     /// this turn's context is assembled, so this is the freshest signal.
     last_level: Mutex<PressureLevel>,
     next_turn: AtomicU64,
+    /// User messages that arrived mid-turn, delivered at safe points.
+    interjections: InterjectionQueue,
+    /// The running turn id, or 0 when idle. Used to stamp queued events.
+    active_turn: AtomicU64,
 }
 
 impl<M: ModelProvider> TurnDriver<M> {
@@ -222,6 +230,8 @@ impl<M: ModelProvider> TurnDriver<M> {
             options: config.options,
             last_level: Mutex::new(PressureLevel::Green),
             next_turn: AtomicU64::new(1),
+            interjections: InterjectionQueue::default(),
+            active_turn: AtomicU64::new(0),
         }
     }
 
@@ -274,10 +284,28 @@ impl<M: ModelProvider> TurnDriver<M> {
         self
     }
 
+    /// Queues a user message for the running turn. It is delivered at the next
+    /// safe point; the host reports `Full` or `Duplicate` to the user.
+    pub fn interject(&self, text: &str) -> InterjectionPush {
+        let outcome = self.interjections.push(text);
+        let active = self.active_turn.load(Ordering::Relaxed);
+        if let InterjectionPush::Queued(id) = outcome {
+            if active != 0 {
+                self.events.append(Event::InterjectionQueued {
+                    turn_id: keel_core::TurnId::new(active),
+                    id,
+                    text: text.trim().to_owned(),
+                });
+            }
+        }
+        outcome
+    }
+
     /// Runs one turn. The returned state is always terminal.
     pub async fn run(&self, input: &str, cancel: CancelToken) -> TurnOutcome {
         let started = std::time::Instant::now();
         let turn_id = keel_core::TurnId::new(self.next_turn.fetch_add(1, Ordering::Relaxed));
+        self.active_turn.store(turn_id.get(), Ordering::Relaxed);
         let mut fsm = TurnFsm::new();
         let mut text = String::new();
         self.events.append(Event::TurnStarted {
@@ -316,6 +344,20 @@ impl<M: ModelProvider> TurnDriver<M> {
             });
             let _ = self.step(&mut fsm, turn_id, TurnEvent::Fail);
         }
+
+        // Anything still queued missed the last safe point; report it rather
+        // than silently dropping it.
+        let mut late_interjections = Vec::new();
+        for item in self.interjections.drain() {
+            self.events.append(Event::InterjectionDropped {
+                turn_id,
+                id: item.id,
+                text: item.text.clone(),
+                reason: "turn ended before a safe point".to_owned(),
+            });
+            late_interjections.push(item.text);
+        }
+        self.active_turn.store(0, Ordering::Relaxed);
 
         let state = fsm.state();
         if state == TurnState::Cancelled {
@@ -389,6 +431,7 @@ impl<M: ModelProvider> TurnDriver<M> {
             text,
             error,
             deferred_interactions: stats.deferred,
+            late_interjections,
             secret_warning,
             model_calls: stats.model_calls,
             usage: stats.usage,
@@ -398,6 +441,20 @@ impl<M: ModelProvider> TurnDriver<M> {
             context: stats.context,
             wrap_up_report: stats.wrap_up_report,
             answer: stats.answer,
+        }
+    }
+
+    fn deliver_interjections(&self, turn_id: keel_core::TurnId, messages: &mut Vec<Arc<Message>>) {
+        for item in self.interjections.drain() {
+            self.events.append(Event::InterjectionDelivered {
+                turn_id,
+                id: item.id,
+                text: item.text.clone(),
+            });
+            messages.push(Arc::new(Message::user(format!(
+                "[user interjection] {}",
+                item.text
+            ))));
         }
     }
 
@@ -787,6 +844,11 @@ impl<M: ModelProvider> TurnDriver<M> {
                 self.step(fsm, turn_id, TurnEvent::WallClockLow)?;
                 break 'turn;
             }
+
+            // Safe point: before the next model call is built. This is also
+            // before the reserved final call, so a late constraint can still
+            // shape the answer. Never inside a stream or a tool round.
+            self.deliver_interjections(turn_id, &mut messages);
 
             let mut estimated_tokens = messages.iter().fold(0u32, |total, message| {
                 total.saturating_add(message.estimated_tokens())

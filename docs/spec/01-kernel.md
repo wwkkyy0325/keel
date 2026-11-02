@@ -101,8 +101,10 @@ domain tool list is unchanged.
 Interjections are a separate host queue, not interactions: a user message that
 arrives during a turn is delivered at a safe point (before a model call, after
 a tool round, before the final call) and never during a stream or a tool call.
-The host chooses `queue`, `interrupt` or `next_turn`; the kernel keeps
-cancellation and interjection distinct. See ADR 0010.
+The kernel provides the bounded queue, safe-point delivery and audit events;
+the host chooses `queue`, `interrupt` or `next_turn`. The reference TUI
+implements `queue`; the line modes read between turns. Cancellation and
+interjection stay distinct. See ADR 0010.
 
 ## Tool protocol
 

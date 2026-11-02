@@ -86,6 +86,12 @@ Stable within a major version:
   `KernelOptions`, `ContextBuilder` and the standard stages, `ToolDispatcher`,
   `ToolRegistry`, `PermissionEngine`, `AcceptanceVerifier`, `EventLog`,
   `ProviderSummarizer`, `TrashStore`.
+- Interjections: `InterjectionQueue`, `InterjectionPush` and
+  `TurnDriver::interject`. The queue is bounded and deduplicated; delivery
+  happens only at model-call safe points, and late items are reported in
+  `TurnOutcome::late_interjections` instead of being dropped silently.
+  `InterjectionQueued`, `InterjectionDelivered` and `InterjectionDropped`
+  carry the turn and id.
 - `keel-model-openai`: `OpenAiConfig`, `OpenAiProvider`. Wire helper functions
   are public for testing and may change in a minor.
 - `keel-model-anthropic`: `AnthropicConfig`, `AnthropicProvider`,

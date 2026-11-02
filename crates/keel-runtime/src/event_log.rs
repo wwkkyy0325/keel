@@ -99,6 +99,27 @@ fn redact_event(event: Event) -> Event {
             state,
             text: redact_secrets(&text),
         },
+        Event::InterjectionQueued { turn_id, id, text } => Event::InterjectionQueued {
+            turn_id,
+            id,
+            text: redact_secrets(&text),
+        },
+        Event::InterjectionDelivered { turn_id, id, text } => Event::InterjectionDelivered {
+            turn_id,
+            id,
+            text: redact_secrets(&text),
+        },
+        Event::InterjectionDropped {
+            turn_id,
+            id,
+            text,
+            reason,
+        } => Event::InterjectionDropped {
+            turn_id,
+            id,
+            text: redact_secrets(&text),
+            reason,
+        },
         other => other,
     }
 }

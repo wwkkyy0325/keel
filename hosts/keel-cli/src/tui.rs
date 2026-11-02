@@ -25,7 +25,7 @@ use keel_core::{
     CancelToken, Event, GrantScope, InteractionKind, InteractionPort, InteractionRequest,
     InteractionResponse, KernelError, PermissionLevel, TodoList, TokenUsage,
 };
-use keel_runtime::{EventLog, RuntimeConfig, TurnDriver, TurnOutcome};
+use keel_runtime::{EventLog, InterjectionPush, RuntimeConfig, TurnDriver, TurnOutcome};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -121,6 +121,8 @@ struct TurnDone {
 enum Command {
     Submit(String),
     Slash(String),
+    /// Queue a user message for the running turn.
+    Interject(String),
     /// Tab or Shift+Tab: switch between workspace-auto and full-auto.
     ToggleMode,
 }
@@ -294,6 +296,9 @@ impl App {
             done.outcome.duration_ms,
             done.outcome.answer.changes.len(),
         );
+        for text in &done.outcome.late_interjections {
+            self.notice(format!("interjection not delivered: {text}"));
+        }
     }
 
     /// Replaces the turn's process with its result: the final answer and one
@@ -488,10 +493,6 @@ impl App {
         }
         match key.code {
             KeyCode::Enter => {
-                if self.running {
-                    self.notice("a turn is running; Ctrl-C cancels it");
-                    return None;
-                }
                 let text: String = self.input.iter().collect();
                 if text.trim().is_empty() {
                     return None;
@@ -502,6 +503,8 @@ impl App {
                 self.cursor = 0;
                 if text.starts_with('/') {
                     Some(Command::Slash(text))
+                } else if self.running {
+                    Some(Command::Interject(text))
                 } else {
                     Some(Command::Submit(text))
                 }
@@ -895,6 +898,16 @@ pub async fn run(host: TuiHost) -> Result<ExitCode, KernelError> {
 
                     Some(Command::Submit(input)) => start_turn(&mut app, driver.clone(), turn_tx.clone(), input),
                     Some(Command::Slash(command)) => run_slash(&mut app, &command, store.as_ref()),
+                    Some(Command::Interject(text)) => match driver.interject(&text) {
+                        InterjectionPush::Queued(_) => {
+                            app.notice("interjection queued for the next safe point")
+                        }
+                        InterjectionPush::Duplicate => {
+                            app.notice("that interjection is already queued")
+                        }
+                        InterjectionPush::Full => app.notice("interjection queue is full"),
+                        InterjectionPush::Empty => {}
+                    },
                     Some(Command::ToggleMode) => toggle_mode(&mut app, &driver),
                     None => {}
                 }
@@ -1287,6 +1300,37 @@ mod tests {
         app.push_delta("ld");
 
         assert_eq!(app.blocks.last().unwrap().text, "world");
+    }
+
+    #[test]
+    fn enter_while_running_queues_an_interjection() {
+        let mut app = app();
+        app.running = true;
+        app.input = "stay in the workspace".chars().collect();
+        app.cursor = app.input.len();
+
+        assert_eq!(
+            app.handle_key(key(KeyCode::Enter)),
+            Some(Command::Interject("stay in the workspace".to_owned()))
+        );
+        assert!(app.input.is_empty());
+        assert_eq!(
+            app.history.last().map(String::as_str),
+            Some("stay in the workspace")
+        );
+    }
+
+    #[test]
+    fn a_slash_command_still_works_while_a_turn_runs() {
+        let mut app = app();
+        app.running = true;
+        app.input = "/cancel".chars().collect();
+        app.cursor = app.input.len();
+
+        assert_eq!(
+            app.handle_key(key(KeyCode::Enter)),
+            Some(Command::Slash("/cancel".to_owned()))
+        );
     }
 
     #[test]

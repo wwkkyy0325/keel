@@ -255,6 +255,9 @@ cargo run -p keel-cli -- --tui --profile variants/coding/profile.deepseek.toml \
 
 - `Enter` sends; `Ctrl-C` cancels a running turn (quits when idle);
   `PgUp`/`PgDn` scroll; `Ctrl-L` clears the transcript.
+- While a turn runs, `Enter` queues an interjection instead. The driver
+  delivers it before the next model call; `/cancel` still cancels, and a
+  message that arrives too late is reported after the turn.
 - `--input TEXT` (or a job's `input`) pre-fills the prompt; it is not sent
   until you press `Enter`.
 - In a permission prompt, `↑`/`↓` selects an option and `Enter` confirms

@@ -219,6 +219,22 @@ pub enum Event {
         interaction_id: InteractionId,
         outcome: InteractionOutcome,
     },
+    InterjectionQueued {
+        turn_id: TurnId,
+        id: u64,
+        text: String,
+    },
+    InterjectionDelivered {
+        turn_id: TurnId,
+        id: u64,
+        text: String,
+    },
+    InterjectionDropped {
+        turn_id: TurnId,
+        id: u64,
+        text: String,
+        reason: String,
+    },
     TurnReport {
         turn_id: TurnId,
         state: TurnState,
@@ -267,6 +283,9 @@ impl Event {
             | Self::TurnCancelled { turn_id, .. }
             | Self::InteractionRequested { turn_id, .. }
             | Self::InteractionResolved { turn_id, .. }
+            | Self::InterjectionQueued { turn_id, .. }
+            | Self::InterjectionDelivered { turn_id, .. }
+            | Self::InterjectionDropped { turn_id, .. }
             | Self::TurnReport { turn_id, .. } => *turn_id,
         }
     }
@@ -305,6 +324,9 @@ impl Event {
             Self::TurnCancelled { .. } => "turn_cancelled",
             Self::InteractionRequested { .. } => "interaction_requested",
             Self::InteractionResolved { .. } => "interaction_resolved",
+            Self::InterjectionQueued { .. } => "interjection_queued",
+            Self::InterjectionDelivered { .. } => "interjection_delivered",
+            Self::InterjectionDropped { .. } => "interjection_dropped",
             Self::TurnReport { .. } => "turn_report",
         }
     }

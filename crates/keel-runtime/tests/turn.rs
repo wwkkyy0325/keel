@@ -12,8 +12,8 @@ use keel_core::{
     TurnState, VerificationMode, VerifySpec,
 };
 use keel_runtime::{
-    DeferAllInteractionPort, EventLog, InteractionBroker, MockModel, MockStep, PermissionEngine,
-    RuntimeConfig, TurnDriver, TurnDriverConfig, TurnLimits,
+    DeferAllInteractionPort, EventLog, InteractionBroker, InterjectionPush, MockModel, MockStep,
+    PermissionEngine, RuntimeConfig, TurnDriver, TurnDriverConfig, TurnLimits,
 };
 
 struct RepromptPolicy {
@@ -1190,4 +1190,131 @@ async fn the_turn_start_context_is_captured_when_requested() {
         .messages
         .iter()
         .any(|message| message.role == "system"));
+}
+
+struct DelayedRecordingModel {
+    inner: MockModel,
+    seen: SeenRequests,
+    delay: Duration,
+}
+
+#[async_trait]
+impl ModelProvider for DelayedRecordingModel {
+    async fn stream(
+        &self,
+        request: ModelRequest,
+        cancel: &CancelToken,
+    ) -> Result<ModelStream, ModelError> {
+        self.seen
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push((request.tools.len(), request.messages.clone()));
+        tokio::time::sleep(self.delay).await;
+        self.inner.stream(request, cancel).await
+    }
+}
+
+#[tokio::test]
+async fn an_interjection_waits_for_the_next_safe_point() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&["echo"], 4, PermissionLevel::WorkspaceAuto);
+    let mut args = ToolArgs::new();
+    args.insert("text", ArgValue::String("hi".to_owned()));
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let model = DelayedRecordingModel {
+        inner: MockModel::new(vec![
+            MockStep::ToolCall {
+                name: "echo".to_owned(),
+                args,
+            },
+            MockStep::Text("done".to_owned()),
+        ]),
+        seen: seen.clone(),
+        delay: Duration::from_millis(50),
+    };
+    let driver = Arc::new(common::build_driver(
+        model,
+        config,
+        events.clone(),
+        dir.path(),
+        two_call_limits(),
+    ));
+    let pusher = driver.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert!(matches!(
+            pusher.interject("stay in the workspace"),
+            InterjectionPush::Queued(_)
+        ));
+    });
+
+    let outcome = driver.run("start", CancelToken::new()).await;
+    assert!(outcome.is_done(), "{outcome:?}");
+
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 2);
+    assert!(
+        !seen[0]
+            .1
+            .iter()
+            .any(|message| message.content.contains("[user interjection]")),
+        "the message arrived after the first request was built"
+    );
+    assert!(
+        seen[1].1.iter().any(|message| message
+            .content
+            .contains("[user interjection] stay in the workspace")),
+        "the second request must see the interjection"
+    );
+    assert!(events
+        .for_turn(outcome.turn_id)
+        .iter()
+        .any(|record| matches!(
+            &record.event,
+            Event::InterjectionDelivered { text, .. } if text == "stay in the workspace"
+        )));
+}
+
+#[tokio::test]
+async fn a_late_interjection_is_reported_instead_of_dropped_silently() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&["echo"], 4, PermissionLevel::WorkspaceAuto);
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let model = DelayedRecordingModel {
+        inner: MockModel::new(vec![MockStep::Text("answer".to_owned())]),
+        seen: seen.clone(),
+        delay: Duration::from_millis(50),
+    };
+    let limits = TurnLimits {
+        max_model_calls: 1,
+        max_tool_calls: 8,
+        tool_timeout: Duration::from_millis(200),
+        turn_timeout: Duration::from_secs(2),
+    };
+    let driver = Arc::new(common::build_driver(
+        model,
+        config,
+        events.clone(),
+        dir.path(),
+        limits,
+    ));
+    let pusher = driver.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        pusher.interject("too late");
+    });
+
+    let outcome = driver.run("finish", CancelToken::new()).await;
+    assert!(outcome.is_done(), "{outcome:?}");
+    assert_eq!(outcome.late_interjections, vec!["too late".to_owned()]);
+    assert!(events
+        .for_turn(outcome.turn_id)
+        .iter()
+        .any(|record| matches!(
+            &record.event,
+            Event::InterjectionDropped { text, reason, .. }
+                if text == "too late" && reason.contains("before a safe point")
+        )));
 }

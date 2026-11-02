@@ -1777,3 +1777,19 @@
   Anthropic SSE server, saw `x-api-key: smoke-secret`, then deleted the entry
   and confirmed a second delete reports "does not exist".
 - Task doc: `docs/llmwiki/tasks/keyring.md`.
+
+### Interjections
+
+- Kernel: bounded, deduplicated `InterjectionQueue`; `TurnDriver::interject`
+  stamps the active turn and emits `InterjectionQueued`. The driver drains at
+  the top of the model loop, so delivery happens before the next request and
+  before the final call, never inside a stream or tool round.
+- Delivered text enters the request as `[user interjection] …`; late items are
+  reported in `TurnOutcome::late_interjections` and `InterjectionDropped`.
+  Event-log redaction covers all three interjection events.
+- TUI: `Enter` while a turn runs queues an interjection; slash commands still
+  work; full/duplicate and late items are shown. The line printer reports late
+  items.
+- Verify: queue unit test, two driver tests (delivery after a stream/tool
+  round; late reporting), two TUI reducer tests, and the full suite.
+- Task doc: `docs/llmwiki/tasks/interjections.md`.
