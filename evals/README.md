@@ -69,6 +69,13 @@ happened and the turn did not burn its cost budget.
 workspace root, all raised from `LIMIT = 10` to `LIMIT = 25` in one turn,
 checked by two hidden tests.
 
+`background-command`, `tool-timeout` and `continuation` prove the runtime
+paths with real models: a background command that outlives the call, a silent
+command stopped by the inactivity window, and a turn that restarts itself when
+the seeded task list still has an item. `meta.toml` may set `tool_timeout_ms`,
+`todo_file` and `max_model_calls` for these; `[mechanisms]` can require a
+continuation.
+
 `subagent-delegation` proves the delegation path: the parent must call
 `spawn_agent`, the child writes `alpha.txt`, and the verifier checks the
 artifact and rejects the setup. The run also reports the parent's tool calls

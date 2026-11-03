@@ -1,0 +1,13 @@
+[case]
+id = "background-command"
+kind = "coding"
+timeout_seconds = 600
+profile = "variants/coding/profile.deepseek.consumer.toml"
+model = "deepseek-flash"
+seeds = [1]
+
+[mechanisms]
+min_tool_calls = 3
+min_model_calls = 2
+max_permission_deny = 0
+forbid_budget_exhaustion = true

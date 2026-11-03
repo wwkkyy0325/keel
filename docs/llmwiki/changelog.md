@@ -1996,3 +1996,14 @@
   acceptance phase, although the hidden tests passed.
 - Fix: `variants/coding/profile.eval.toml` tool budget 12 -> 60. Both cases
   rerun to PASS (10 and 6 tool calls), so the corrected set is 20/20.
+
+### Real-trigger eval cases
+
+- `background-command`: the agent starts a background python command, writes
+  another file, waits, and reads the background artifact. PASS in 9.1 s.
+- `tool-timeout`: a silent five-second command is stopped by a one-second
+  inactivity window and the agent records the error. PASS in 7.8 s.
+- `continuation`: a seeded two-item task list, the model stops after item one,
+  the driver continues the same turn (`continuations: 1`); both files exist.
+  PASS in 5.7 s.
+- `run_case.py` passes `tool_timeout_ms` and `todo_file` from `meta.toml`.

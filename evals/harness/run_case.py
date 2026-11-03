@@ -163,6 +163,12 @@ def run_case(case_dir: Path, profile: str | None = None, keep: bool = False) -> 
     max_calls = meta.get("case", {}).get("max_model_calls")
     if max_calls:
         command.extend(["--max-model-calls", str(max_calls)])
+    tool_timeout = meta.get("case", {}).get("tool_timeout_ms")
+    if tool_timeout:
+        command.extend(["--tool-timeout-ms", str(tool_timeout)])
+    todo_file = meta.get("case", {}).get("todo_file")
+    if todo_file:
+        command.extend(["--todo-file", str(case_dir / todo_file)])
 
     started = dt.datetime.now(dt.timezone.utc)
     timed_out = False

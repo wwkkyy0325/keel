@@ -1,0 +1,15 @@
+[case]
+id = "continuation"
+kind = "coding"
+timeout_seconds = 300
+profile = "variants/coding/profile.deepseek.consumer.toml"
+model = "deepseek-flash"
+seeds = [1]
+todo_file = "todos.txt"
+
+[mechanisms]
+min_tool_calls = 2
+min_model_calls = 2
+max_permission_deny = 0
+forbid_budget_exhaustion = true
+require_continuation = true

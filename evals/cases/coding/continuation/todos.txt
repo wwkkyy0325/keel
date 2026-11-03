@@ -1,0 +1,2 @@
+write a.txt with A
+write b.txt with B

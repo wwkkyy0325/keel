@@ -1,0 +1,14 @@
+[case]
+id = "tool-timeout"
+kind = "coding"
+timeout_seconds = 300
+profile = "variants/coding/profile.deepseek.consumer.toml"
+model = "deepseek-flash"
+seeds = [1]
+tool_timeout_ms = 1000
+
+[mechanisms]
+min_tool_calls = 2
+min_model_calls = 2
+max_permission_deny = 0
+forbid_budget_exhaustion = true
