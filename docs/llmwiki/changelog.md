@@ -1987,3 +1987,12 @@
   artifact (setup rejected, reference accepted).
 - Real deepseek run through the harness: PASS, 5 model calls, 6 tool calls,
   21,627 input tokens (including the child), 17.5 s.
+
+### Coding suite regression
+
+- 20 real deepseek cases under the new limits: 18/20 on the first run. The two
+  failures were `verification did not run`: both tasks used exactly the eval
+  profile's 12-call tool budget, hit `TurnsExhausted` and never reached the
+  acceptance phase, although the hidden tests passed.
+- Fix: `variants/coding/profile.eval.toml` tool budget 12 -> 60. Both cases
+  rerun to PASS (10 and 6 tool calls), so the corrected set is 20/20.
