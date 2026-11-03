@@ -2,7 +2,7 @@
 id = "subagent-delegation"
 kind = "coding"
 timeout_seconds = 600
-profile = "variants/coding/profile.deepseek.agent.toml"
+profile = "variants/coding/profile.deepseek.consumer.toml"
 model = "deepseek-flash"
 seeds = [1]
 

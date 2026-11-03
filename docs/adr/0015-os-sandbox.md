@@ -2,8 +2,11 @@
 
 ## Status
 
-Proposed. No code yet. The phased plan is
-`docs/llmwiki/tasks/os-sandbox.md`.
+Deferred. The design below is kept for when a real need appears; the plan is
+`docs/llmwiki/tasks/os-sandbox.md` and the first three steps are cheap, but
+the kernel work that shipped instead (activity timeouts, background commands,
+sub-agents) addressed the immediate task-completion problems. Nothing here is
+implemented.
 
 ## Context
 

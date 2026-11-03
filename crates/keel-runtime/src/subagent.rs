@@ -6,7 +6,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use keel_core::{
     ArgValue, CancelToken, ParamKind, ParamSpec, RiskLevel, TokenUsage, Tool, ToolArgs, ToolCtx,
-    ToolError, ToolResult, ToolSchema, TurnState,
+    ToolError, ToolResult, ToolSchema, TurnId, TurnState,
 };
 
 /// One delegation.
@@ -18,6 +18,8 @@ pub struct SubAgentSpec {
     pub task: String,
     pub max_model_calls: u32,
     pub max_tool_calls: u32,
+    /// Parent turn that delegated, for the audit event.
+    pub parent_turn: Option<TurnId>,
 }
 
 /// What the parent receives. The child transcript stays in the child.
@@ -108,6 +110,7 @@ impl Tool for SpawnAgentTool {
             task,
             max_model_calls: DEFAULT_MODEL_CALLS,
             max_tool_calls: DEFAULT_TOOL_CALLS,
+            parent_turn: Some(ctx.turn_id),
         };
         match self.runner.run(spec, &ctx.cancel).await {
             Ok(outcome) => {

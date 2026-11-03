@@ -2017,3 +2017,10 @@
 - `--interject TEXT --interject-after-ms N` injects a user message while the
   turn runs; the `interjection` case delivers it during a three-second shell
   call, and the model writes `injected.txt`. PASS: 3 model calls.
+
+### Kernel cleanup and sub-agent audit
+
+- `SubAgentFinished` (parent turn, role, state, usage, error) is appended to the
+  parent event log; a real run shows the event in `--view events`.
+- `profile.deepseek.agent.toml` folded into the consumer profile (one variant
+  fewer); the sandbox ADR is marked Deferred.

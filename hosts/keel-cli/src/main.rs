@@ -487,6 +487,7 @@ async fn run() -> Result<ExitCode, KernelError> {
         config: Arc::new(config.clone()),
         permissions: permissions.clone(),
         interactions: interactions.clone(),
+        events: events.clone(),
         outputs_dir: outputs_dir.clone(),
         base_registry: base_registry.clone(),
         depth: 0,
@@ -1120,6 +1121,7 @@ struct HostAgentRunner {
     config: Arc<RuntimeConfig>,
     permissions: Arc<PermissionEngine>,
     interactions: Arc<InteractionBroker>,
+    events: Arc<EventLog>,
     outputs_dir: PathBuf,
     /// Tools without a spawn tool; each child gets a clone plus one bound to
     /// a deeper runner.
@@ -1152,6 +1154,7 @@ impl HostAgentRunner {
             config: self.config.clone(),
             permissions: self.permissions.clone(),
             interactions: self.interactions.clone(),
+            events: self.events.clone(),
             outputs_dir: self.outputs_dir.clone(),
             base_registry: self.base_registry.clone(),
             depth: self.depth + 1,
@@ -1207,6 +1210,19 @@ impl HostAgentRunner {
             .iter()
             .filter(|record| matches!(record.event, Event::ToolStarted { .. }))
             .count() as u32;
+        let error = outcome.error.as_ref().map(|error| error.to_string());
+        if let Some(parent) = spec.parent_turn {
+            self.events.append(Event::SubAgentFinished {
+                turn_id: parent,
+                role: spec.role.clone(),
+                state: outcome.state,
+                model_calls: outcome.model_calls,
+                tool_calls,
+                input_tokens: outcome.usage.input_tokens,
+                output_tokens: outcome.usage.output_tokens,
+                error: error.clone(),
+            });
+        }
         Ok(SubAgentOutcome {
             state: outcome.state,
             answer: outcome.answer.body.clone(),
@@ -1214,7 +1230,7 @@ impl HostAgentRunner {
             tool_calls,
             input_tokens: outcome.usage.input_tokens,
             output_tokens: outcome.usage.output_tokens,
-            error: outcome.error.as_ref().map(|error| error.to_string()),
+            error,
         })
     }
 }
@@ -1824,9 +1840,9 @@ fn parse_args() -> Result<Args, KernelError> {
                 let value = args
                     .next()
                     .ok_or_else(|| invalid_config("missing value for `--interject-after-ms`"))?;
-                interject_after_ms = value
-                    .parse::<u64>()
-                    .map_err(|_| invalid_config("`--interject-after-ms` must be a positive integer"))?;
+                interject_after_ms = value.parse::<u64>().map_err(|_| {
+                    invalid_config("`--interject-after-ms` must be a positive integer")
+                })?;
             }
             "--tool-timeout-ms" => {
                 let value = args

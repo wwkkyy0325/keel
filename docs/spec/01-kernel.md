@@ -235,8 +235,10 @@ interjection stay distinct. See ADR 0010.
 - Sibling spawns may overlap: the tool declares itself concurrent even though
   it is `Mutating`. A child's registry binds `spawn_agent` to a deeper runner
   that refuses, so nesting is rejected while siblings are free. The result is
-  audited through the normal tool events; the usage is reported in the result
-  and the driver adds it to the turn usage, so the token budget sees it.
+  audited through the normal tool events; the host also appends
+  `SubAgentFinished` (parent turn, role, state, usage, error) to the parent
+  event log. The usage is reported in the result and the driver adds it to the
+  turn usage, so the token budget sees it.
 
 ## Secrets
 

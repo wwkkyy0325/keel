@@ -216,6 +216,17 @@ pub enum Event {
         turn_id: TurnId,
         input_tokens: u32,
     },
+    /// A delegated sub-agent finished; the parent turn and its usage.
+    SubAgentFinished {
+        turn_id: TurnId,
+        role: String,
+        state: TurnState,
+        model_calls: u32,
+        tool_calls: u32,
+        input_tokens: u32,
+        output_tokens: u32,
+        error: Option<String>,
+    },
     /// A background command finished and its result entered the turn.
     BackgroundResult {
         turn_id: TurnId,
@@ -301,6 +312,7 @@ impl Event {
             | Self::TurnContinued { turn_id, .. }
             | Self::TurnBudgetExhausted { turn_id, .. }
             | Self::BackgroundResult { turn_id, .. }
+            | Self::SubAgentFinished { turn_id, .. }
             | Self::TurnCancelled { turn_id, .. }
             | Self::InteractionRequested { turn_id, .. }
             | Self::InteractionResolved { turn_id, .. }
@@ -345,6 +357,7 @@ impl Event {
             Self::TurnContinued { .. } => "turn_continued",
             Self::TurnBudgetExhausted { .. } => "turn_budget_exhausted",
             Self::BackgroundResult { .. } => "background_result",
+            Self::SubAgentFinished { .. } => "sub_agent_finished",
             Self::TurnCancelled { .. } => "turn_cancelled",
             Self::InteractionRequested { .. } => "interaction_requested",
             Self::InteractionResolved { .. } => "interaction_resolved",

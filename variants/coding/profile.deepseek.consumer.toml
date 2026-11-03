@@ -17,7 +17,7 @@ stages = ["system", "task_state", "memory", "history", "latest"]
 budget_tokens = 24000
 
 [tools]
-visible = ["read_file", "write_file", "list_dir", "code_search", "make_dir", "shell", "todo"]
+visible = ["read_file", "write_file", "list_dir", "code_search", "make_dir", "shell", "todo", "spawn_agent"]
 budget = 1000
 plan_mode = false
 
