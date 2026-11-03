@@ -53,12 +53,11 @@ the mechanism.
       Verify: `redact_secrets` tests plus the dispatcher test that a `.env`
       write asks first.
 
-- [x] **5. Continue across turns while the task list is open.**
-      The host (`--input` and `--session`) starts another turn when a finished
-      turn still has pending items, up to `--auto-continues` (default 0:
-      batch only). At the limit it prints the remaining count instead of
-      looping forever. The TUI never restarts a turn alone; it shows the
-      remaining count and pre-fills the prompt, so one Enter continues. The turn input is a fixed nudge; the shared task list
+- [x] **5. Offer the next turn; never take it silently.**
+      A finished turn with open task items shows the remaining count and
+      pre-fills the prompt in the TUI. The host does not restart a turn by
+      itself: a new turn spends a new token budget, and that is the user's
+      decision. An earlier `--auto-continues` batch flag was removed. The turn input is a fixed nudge; the shared task list
       carries the state.
       Verify: real deepseek runs on the twenty-module case — with three model
       calls per turn it needed three turns, printed `auto-continue 1/2` and

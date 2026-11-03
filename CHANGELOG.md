@@ -187,12 +187,8 @@ First complete kernel and reference host.
 - TUI: `Enter` while a turn runs queues an interjection instead of rejecting
   the input; `/cancel` still cancels, and a late interjection is shown as a
   notice after the turn. The line modes still read between turns.
-- `--auto-continues N` (default 0, batch only) continues a task across turns:
-  when a turn ends with open task items and a terminal state of
-  `Done`/`Converge`, the host starts another turn with a nudge. At the limit it
-  prints the remaining count and returns control. The TUI never restarts a turn
-  by itself; it shows the remaining count and pre-fills the prompt so one
-  Enter continues.
+- A finished turn with open task items shows the remaining count and
+  pre-fills the prompt in the TUI; the host never restarts a turn by itself.
 - `--help`/`-h` prints usage and `--version`/`-V` prints the host version
   before argument parsing.
 - CI runs the format, lint and test gates on Ubuntu, Windows and macOS, and

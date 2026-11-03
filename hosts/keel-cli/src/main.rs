@@ -18,7 +18,7 @@ use async_trait::async_trait;
 use keel_core::{
     AcceptanceItem, AccessKind, ArgValue, CancelToken, Event, InteractionPort, KernelError,
     ModelChunk, ModelError, ModelProvider, ModelRequest, ModelStream, Policy, Session, TodoList,
-    TodoState, TodoStatus, ToolArgs, TurnState,
+    ToolArgs,
 };
 use keel_model_anthropic::{AnthropicConfig, AnthropicProvider};
 use keel_model_openai::{OpenAiConfig, OpenAiProvider};
@@ -582,7 +582,6 @@ async fn run() -> Result<ExitCode, KernelError> {
             turn_input: args.turn_input.as_deref(),
             stop_on_error: args.stop_on_error,
             retry_errors: args.retry_errors,
-            auto_continues: args.auto_continues,
             acceptance: acceptance_items.as_deref(),
             workspace_root: &workspace_root,
             store: store.as_mut(),
@@ -591,44 +590,21 @@ async fn run() -> Result<ExitCode, KernelError> {
         .await;
     }
 
-    let mut input = args.input.clone();
-    let mut continued = 0u32;
-    loop {
-        let outcome = driver.run(&input, CancelToken::new()).await;
-        print_outcome(&config, &events, &outcome, None);
-        print_todos(todos.as_ref());
-        if let Some(store) = store.as_mut() {
-            save_turn(
-                store,
-                &args.session_id,
-                &driver,
-                todos.as_ref(),
-                &input,
-                &outcome,
-                &events,
-            )?;
-        }
-
-        let remaining = unfinished_todos(todos.as_ref());
-        let finished = matches!(outcome.state, TurnState::Done | TurnState::Converge);
-        if !finished || remaining == 0 {
-            done_or_error(outcome)?;
-            break;
-        }
-        if continued >= args.auto_continues {
-            println!(
-                "auto-continue limit reached: {remaining} task(s) remain after {continued} continuation(s); the next turn is yours"
-            );
-            done_or_error(outcome)?;
-            break;
-        }
-        continued += 1;
-        println!(
-            "auto-continue {continued}/{}: {remaining} task(s) remain",
-            args.auto_continues
-        );
-        input = AUTO_CONTINUE.to_owned();
+    let outcome = driver.run(&args.input, CancelToken::new()).await;
+    print_outcome(&config, &events, &outcome, None);
+    print_todos(todos.as_ref());
+    if let Some(store) = store.as_mut() {
+        save_turn(
+            store,
+            &args.session_id,
+            &driver,
+            todos.as_ref(),
+            &args.input,
+            &outcome,
+            &events,
+        )?;
     }
+    done_or_error(outcome)?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -641,7 +617,6 @@ struct SessionHost<'a> {
     turn_input: Option<&'a std::path::Path>,
     stop_on_error: bool,
     retry_errors: u32,
-    auto_continues: u32,
     acceptance: Option<&'a [AcceptanceItem]>,
     workspace_root: &'a std::path::Path,
     store: Option<&'a mut store::Store>,
@@ -656,33 +631,26 @@ async fn run_session(mut host: SessionHost<'_>) -> Result<ExitCode, KernelError>
     let interactive = stdin.is_terminal();
     let mut line = String::new();
     let mut stopped = false;
-    let mut pending: Option<String> = None;
-    let mut auto_left = host.auto_continues;
     loop {
-        let input: String = match pending.take() {
-            Some(text) => text,
-            None => {
-                if interactive {
-                    print!("keel> ");
-                    let _ = std::io::stdout().flush();
-                }
-                line.clear();
-                let read = stdin
-                    .lock()
-                    .read_line(&mut line)
-                    .map_err(|error| KernelError::Io {
-                        message: error.to_string(),
-                    })?;
-                if read == 0 {
-                    break;
-                }
-                let text = line.trim_end_matches(['\r', '\n']);
-                if text.trim().is_empty() {
-                    continue;
-                }
-                text.to_owned()
-            }
-        };
+        if interactive {
+            print!("keel> ");
+            let _ = std::io::stdout().flush();
+        }
+        line.clear();
+        let read = stdin
+            .lock()
+            .read_line(&mut line)
+            .map_err(|error| KernelError::Io {
+                message: error.to_string(),
+            })?;
+        if read == 0 {
+            break;
+        }
+        let text = line.trim_end_matches(['\r', '\n']);
+        if text.trim().is_empty() {
+            continue;
+        }
+        let input = text.to_owned();
         // Show the persisted session sequence, not the driver's per-process
         // counter, so a resumed or forked session continues its numbering.
         let session_turn = match host.store.as_ref() {
@@ -750,22 +718,6 @@ async fn run_session(mut host: SessionHost<'_>) -> Result<ExitCode, KernelError>
         // The turn is printed and persisted; keeping its events would grow
         // with the session for the life of the process.
         host.events.clear();
-        let remaining = unfinished_todos(host.todos);
-        let finished = matches!(outcome.state, TurnState::Done | TurnState::Converge);
-        if finished && remaining > 0 && !host.stop_on_error {
-            if auto_left > 0 {
-                auto_left -= 1;
-                println!(
-                    "auto-continue {}: {remaining} task(s) remain",
-                    host.auto_continues - auto_left
-                );
-                pending = Some(AUTO_CONTINUE.to_owned());
-            } else if host.auto_continues > 0 {
-                println!(
-                    "auto-continue limit reached: {remaining} task(s) remain; waiting for your next input"
-                );
-            }
-        }
         if host.stop_on_error && !outcome.is_done() && !recovered {
             stopped = true;
             break;
@@ -1133,24 +1085,6 @@ fn print_outcome(
     }
 }
 
-/// Host nudge for the next turn: the same task list is still open.
-const AUTO_CONTINUE: &str = "[auto-continue] The task list still has unfinished items. Continue with the next item now. Do not restate the plan; finish the list or report exactly what blocks it.";
-
-/// Tasks the model has not completed or failed, or zero when the list is closed.
-fn unfinished_todos(todos: Option<&Arc<Mutex<TodoList>>>) -> usize {
-    let Some(handle) = todos else { return 0 };
-    let list = handle
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if list.state != TodoState::Active {
-        return 0;
-    }
-    list.items
-        .iter()
-        .filter(|item| matches!(item.status, TodoStatus::Pending | TodoStatus::InProgress))
-        .count()
-}
-
 fn done_or_error(outcome: TurnOutcome) -> Result<(), KernelError> {
     if outcome.is_done() {
         Ok(())
@@ -1341,8 +1275,6 @@ struct Args {
     acceptance: Option<PathBuf>,
     session: bool,
     max_model_calls: Option<u32>,
-    /// Host behavior: after a turn with open todos, start another turn.
-    auto_continues: u32,
     todo_file: Option<PathBuf>,
     no_todo: bool,
     no_recall: bool,
@@ -1427,7 +1359,6 @@ Run:
   --session              read one input per line until EOF
   --turn-timeout-ms N    turn deadline override (backstop)
   --tool-timeout-ms N    per-tool inactivity window
-  --auto-continues N     batch only: restart a finished turn while tasks remain (default 0)
 
 Views:
   --view sessions|session|turn|memory|events
@@ -1467,7 +1398,6 @@ fn parse_args() -> Result<Args, KernelError> {
     let mut acceptance = None;
     let mut session = false;
     let mut max_model_calls = None;
-    let mut auto_continues = 0u32;
     let mut todo_file = None;
     let mut no_todo = false;
     let mut no_recall = false;
@@ -1577,18 +1507,6 @@ fn parse_args() -> Result<Args, KernelError> {
                     ));
                 }
                 max_model_calls = Some(calls);
-            }
-            "--auto-continues" => {
-                let value = args
-                    .next()
-                    .ok_or_else(|| invalid_config("missing value for `--auto-continues`"))?;
-                let count = value.parse::<u32>().map_err(|_| {
-                    invalid_config("`--auto-continues` must be a non-negative integer")
-                })?;
-                if count > 20 {
-                    return Err(invalid_config("`--auto-continues` must be 20 or less"));
-                }
-                auto_continues = count;
             }
             "--todo-file" => {
                 todo_file =
@@ -1821,7 +1739,6 @@ fn parse_args() -> Result<Args, KernelError> {
         acceptance,
         session,
         max_model_calls,
-        auto_continues,
         todo_file,
         no_todo,
         no_recall,
@@ -2172,28 +2089,5 @@ mod tests {
         let list = shared.lock().unwrap();
         assert_eq!(list.completed(), 0);
         assert_eq!(list.current().map(|item| item.id), Some(first));
-    }
-
-    #[test]
-    fn unfinished_todos_counts_open_items_and_ignores_closed_lists() {
-        let todos = Arc::new(Mutex::new(TodoList::new()));
-        assert_eq!(unfinished_todos(Some(&todos)), 0);
-
-        let first = {
-            let mut list = todos.lock().unwrap();
-            let first = list.add_host("one").unwrap();
-            list.add_host("two").unwrap();
-            first
-        };
-        assert_eq!(unfinished_todos(Some(&todos)), 2);
-
-        {
-            let mut list = todos.lock().unwrap();
-            list.update_status(first, TodoStatus::Completed).unwrap();
-        }
-        assert_eq!(unfinished_todos(Some(&todos)), 1);
-
-        todos.lock().unwrap().state = TodoState::Completed;
-        assert_eq!(unfinished_todos(Some(&todos)), 0);
     }
 }
