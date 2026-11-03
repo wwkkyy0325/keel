@@ -10,7 +10,7 @@ mod view;
 use std::io::{IsTerminal, Read};
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -27,9 +27,9 @@ use keel_runtime::{
     ContextBuilder, DeleteFileTool, EchoTool, EventLog, HistoryStage, InteractionBroker,
     KernelOptions, LatestStage, ListDirTool, ListTrashTool, LocalBackgroundTasks, LocalTrashStore,
     MakeDirTool, MemoryStage, MockModel, MockStep, MoveFileTool, PermissionEngine,
-    ProviderSummarizer, ReadFileTool, RestoreFileTool, RuntimeConfig, ShellTool, Summarizer,
-    SystemStage, TaskStateStage, TodoTool, ToolRegistry, TrashStore, TurnDriver, TurnDriverConfig,
-    TurnOutcome, WriteFileTool,
+    ProviderSummarizer, ReadFileTool, RestoreFileTool, RuntimeConfig, ShellTool, SpawnAgentTool,
+    SubAgentOutcome, SubAgentRunner, SubAgentSpec, Summarizer, SystemStage, TaskStateStage,
+    TodoTool, ToolRegistry, TrashStore, TurnDriver, TurnDriverConfig, TurnOutcome, WriteFileTool,
 };
 use terminal::TerminalInteractionPort;
 
@@ -434,6 +434,22 @@ async fn run() -> Result<ExitCode, KernelError> {
 
     let background: Arc<dyn BackgroundTasks> =
         Arc::new(LocalBackgroundTasks::new(outputs_dir.clone()));
+    let events = Arc::new(EventLog::new());
+    let (ui_tx, ui_rx) = tokio::sync::mpsc::channel(256);
+    let (interaction_port, tui_interactions): (
+        Arc<dyn InteractionPort>,
+        Option<tokio::sync::mpsc::Receiver<tui::InteractionJob>>,
+    ) = if args.tui {
+        let (port, receiver) = tui::interaction_pair();
+        (Arc::new(port), Some(receiver))
+    } else {
+        (Arc::new(TerminalInteractionPort), None)
+    };
+    let interactions = Arc::new(InteractionBroker::new(
+        interaction_port,
+        config.interaction,
+        events.clone(),
+    ));
     let mut registry = ToolRegistry::new();
     registry.register(Arc::new(EchoTool::new()))?;
     registry.register(Arc::new(ReadFileTool::new()))?;
@@ -462,7 +478,19 @@ async fn run() -> Result<ExitCode, KernelError> {
         let names = mcp::load(path, &mcp_roots, &mut registry).await?;
         config.visible_tool_names.extend(names);
     }
+    let agent_slot: Arc<Mutex<Option<Arc<ToolRegistry>>>> = Arc::new(Mutex::new(None));
+    registry.register(Arc::new(SpawnAgentTool::new(Arc::new(HostAgentRunner {
+        config: Arc::new(config.clone()),
+        permissions: permissions.clone(),
+        interactions: interactions.clone(),
+        outputs_dir: outputs_dir.clone(),
+        registry: agent_slot.clone(),
+        depth: AtomicUsize::new(0),
+    }))))?;
     let registry = Arc::new(registry);
+    *agent_slot
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(registry.clone());
 
     let context = ContextBuilder::new(vec![
         Arc::new(SystemStage::new()),
@@ -473,22 +501,6 @@ async fn run() -> Result<ExitCode, KernelError> {
     ]);
     validate_config(&config, &registry, &context)?;
 
-    let events = Arc::new(EventLog::new());
-    let (ui_tx, ui_rx) = tokio::sync::mpsc::channel(256);
-    let (interaction_port, tui_interactions): (
-        Arc<dyn InteractionPort>,
-        Option<tokio::sync::mpsc::Receiver<tui::InteractionJob>>,
-    ) = if args.tui {
-        let (port, receiver) = tui::interaction_pair();
-        (Arc::new(port), Some(receiver))
-    } else {
-        (Arc::new(TerminalInteractionPort), None)
-    };
-    let interactions = Arc::new(InteractionBroker::new(
-        interaction_port,
-        config.interaction,
-        events.clone(),
-    ));
     if args.demo && config.model_route.provider != "mock" {
         return Err(invalid_config(
             "`--demo` needs the mock provider; use a real profile for real runs",
@@ -1088,6 +1100,99 @@ fn print_outcome(
             "notice: the input matched a credential pattern ({}); it was not blocked and is redacted from the log. If it is a live credential, keep it only in the file you named or in .env.",
             kind.as_str()
         );
+    }
+}
+
+/// Host runner for `spawn_agent`: one child turn, its own context and event
+/// log, shared permissions and interactions.
+struct HostAgentRunner {
+    config: Arc<RuntimeConfig>,
+    permissions: Arc<PermissionEngine>,
+    interactions: Arc<InteractionBroker>,
+    outputs_dir: PathBuf,
+    registry: Arc<Mutex<Option<Arc<ToolRegistry>>>>,
+    depth: AtomicUsize,
+}
+
+#[async_trait]
+impl SubAgentRunner for HostAgentRunner {
+    async fn run(
+        &self,
+        spec: SubAgentSpec,
+        cancel: &CancelToken,
+    ) -> Result<SubAgentOutcome, keel_core::ToolError> {
+        if self.depth.fetch_add(1, Ordering::SeqCst) > 0 {
+            self.depth.fetch_sub(1, Ordering::SeqCst);
+            return Err(keel_core::ToolError::permission_denied(
+                "nested sub-agents are not allowed",
+            ));
+        }
+        let result = self.run_inner(spec, cancel).await;
+        self.depth.fetch_sub(1, Ordering::SeqCst);
+        result
+    }
+}
+
+impl HostAgentRunner {
+    async fn run_inner(
+        &self,
+        spec: SubAgentSpec,
+        cancel: &CancelToken,
+    ) -> Result<SubAgentOutcome, keel_core::ToolError> {
+        let model = build_model(&self.config, "", false, false)
+            .map_err(|error| keel_core::ToolError::io(error.to_string()))?;
+        let registry = self
+            .registry
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+            .ok_or_else(|| keel_core::ToolError::io("sub-agent registry is not ready"))?;
+        let context = ContextBuilder::new(vec![
+            Arc::new(SystemStage::new()),
+            Arc::new(TaskStateStage::new()),
+            Arc::new(MemoryStage::new()),
+            Arc::new(HistoryStage::new()),
+            Arc::new(LatestStage::new()),
+        ]);
+        let policy: Arc<dyn Policy> = Arc::new((*self.config).clone());
+        let mut limits = self.config.limits();
+        limits.max_model_calls = spec.max_model_calls;
+        limits.max_tool_calls = spec.max_tool_calls;
+        let events = Arc::new(EventLog::new());
+        let driver = TurnDriver::new(
+            model,
+            registry,
+            context,
+            policy,
+            TurnDriverConfig {
+                events: events.clone(),
+                permissions: self.permissions.clone(),
+                interactions: self.interactions.clone(),
+                system_prompt: self.config.system_prompt.clone(),
+                max_output_tokens: self.config.max_output_tokens,
+                context_window: self.config.context_window,
+                limits,
+                todos: None,
+                background: None,
+                options: KernelOptions::default(),
+            },
+        )
+        .with_outputs_dir(self.outputs_dir.clone());
+        let outcome = driver.run(&spec.task, cancel.clone()).await;
+        let tool_calls = events
+            .for_turn(outcome.turn_id)
+            .iter()
+            .filter(|record| matches!(record.event, Event::ToolStarted { .. }))
+            .count() as u32;
+        Ok(SubAgentOutcome {
+            state: outcome.state,
+            answer: outcome.answer.body.clone(),
+            model_calls: outcome.model_calls,
+            tool_calls,
+            input_tokens: outcome.usage.input_tokens,
+            output_tokens: outcome.usage.output_tokens,
+            error: outcome.error.as_ref().map(|error| error.to_string()),
+        })
     }
 }
 

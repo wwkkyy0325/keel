@@ -57,12 +57,8 @@ the mechanism.
       A finished turn with open task items shows the remaining count and
       pre-fills the prompt in the TUI. The host does not restart a turn by
       itself: a new turn spends a new token budget, and that is the user's
-      decision. An earlier `--auto-continues` batch flag was removed. The turn input is a fixed nudge; the shared task list
-      carries the state.
-      Verify: real deepseek runs on the twenty-module case — with three model
-      calls per turn it needed three turns, printed `auto-continue 1/2` and
-      `2/2`, then stopped with `19 task(s) remain`; with ten calls per turn it
-      finished in three turns and the verifier passed.
+      decision. An earlier `--auto-continues` batch flag was removed.
+      Verify: `continuation_hint` unit test.
 
 ## Boundaries
 

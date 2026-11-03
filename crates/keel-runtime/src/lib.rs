@@ -17,6 +17,7 @@ pub mod mock_model;
 pub mod permission;
 pub mod profile;
 pub mod registry;
+pub mod subagent;
 pub mod summarizer;
 pub mod summary;
 pub mod tools;
@@ -40,6 +41,7 @@ pub use mock_model::{MockModel, MockStep};
 pub use permission::{PermissionEngine, RootScope};
 pub use profile::{from_profile_str, load_profile, validate_config};
 pub use registry::ToolRegistry;
+pub use subagent::{SpawnAgentTool, SubAgentOutcome, SubAgentRunner, SubAgentSpec};
 pub use summarizer::{
     clip_to_tokens, memo_budget, transcript_text, ProviderSummarizer, Summarized, Summarizer,
     MEMO_BUDGET_CEILING, MEMO_BUDGET_FLOOR, SUMMARY_INPUT_MARGIN,

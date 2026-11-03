@@ -1948,3 +1948,17 @@
   miss the last call wait for the next turn.
 - Tests: background output/exit, the four-command limit, the shell flag with
   and without a registry, and delivery before the next model call.
+
+### Sub-agents (ADR 0017)
+
+- `SpawnAgentTool` + `SubAgentRunner` in the runtime; `HostAgentRunner` in the
+  reference host builds a child driver with a fresh context, the same registry,
+  permissions and interactions, its own event log and lowered limits.
+- Only a bounded report with state and usage returns; nesting is refused at
+  depth one; a failed child reports its error text.
+- Real deepseek run: parent wrote notes.txt, the child rewrote it as alpha.txt
+  (`ALPHA BETA`) and reported, the parent verified; 5 model calls, 54 events,
+  10.9 s. The first run exposed a child-context bug (stage mismatch) that the
+  new error reporting made visible.
+- Serialized because the tool is `Mutating`; parallel spawns need a
+  concurrency class.

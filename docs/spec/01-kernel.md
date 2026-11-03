@@ -221,6 +221,21 @@ interjection stay distinct. See ADR 0010.
 - `BackgroundResult` is the audit event. The port is `BackgroundTasks`; a host
   that cannot run processes returns the error the tool surfaces.
 
+## Sub-agents
+
+- `spawn_agent { task, role? }` delegates one self-contained task. The kernel
+  provides the tool and the `SubAgentRunner` port; the host provides the child
+  driver, model choice, limits and result shaping (ADR 0017).
+- The child gets a fresh context and never the parent's messages. Only the
+  final answer, state and usage return, bounded; the child transcript stays in
+  the child event log.
+- The child shares the permission gate, the interaction broker and the parent
+  cancellation token; it cannot widen permissions. A child that calls
+  `spawn_agent` again is refused (depth one).
+- The tool is `Mutating`, so one spawn runs at a time. The result is audited
+  through the normal tool events; the usage is reported in the result and is
+  not yet part of the parent's token budget.
+
 ## Secrets
 
 - Hosts read credentials from `.env` or the OS keyring. Profiles reference env

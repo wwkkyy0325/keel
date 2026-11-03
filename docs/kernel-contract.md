@@ -108,6 +108,13 @@ Stable within a major version:
   `KernelOptions`, `ContextBuilder` and the standard stages, `ToolDispatcher`,
   `ToolRegistry`, `PermissionEngine`, `AcceptanceVerifier`, `EventLog`,
   `ProviderSummarizer`, `TrashStore`.
+- Sub-agents: `SpawnAgentTool`, `SubAgentRunner`, `SubAgentSpec` and
+  `SubAgentOutcome`. The tool takes `{ task, role? }` and returns one bounded
+  report with state and usage. The host runner builds a child driver with a
+  fresh context, shared permissions/interactions and the parent cancellation
+  token; nesting is refused at depth one and a spawn is serialized because the
+  tool is `Mutating`. Child usage is reported but not added to the parent's
+  token budget yet.
 - Background commands: `BackgroundTasks`, `BackgroundResult`,
   `LocalBackgroundTasks` and the `shell` `background = "true"` argument. The
   host registry runs at most four at once, kills a tree on drop and caps a
