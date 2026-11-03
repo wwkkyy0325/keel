@@ -2,9 +2,15 @@
 
 ## Status
 
-Proposed. Not implemented. The activity-based timeouts in
-`docs/llmwiki/tasks/activity-budget.md` are the prerequisite: without them a
+Accepted and implemented. The activity-based timeouts in
+`docs/llmwiki/tasks/activity-budget.md` were the prerequisite: without them a
 long command is still killed by a clock.
+
+Implementation notes: the tool passes `background = "true"` because the kernel
+tool parameter model has no boolean kind yet. `LocalBackgroundTasks` holds at
+most four commands, kills them on drop, and caps a command at two hours. The
+result enters as a user-facing `[background <id> finished]` message at the top
+of the model loop, and `BackgroundResult` records the audit event.
 
 ## Context
 

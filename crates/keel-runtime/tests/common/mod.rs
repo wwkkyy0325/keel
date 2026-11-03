@@ -142,6 +142,7 @@ pub fn build_driver_with_todos<M: ModelProvider>(
         limits,
         Arc::new(DeferAllInteractionPort),
         Some(todos),
+        None,
     )
 }
 
@@ -153,9 +154,30 @@ pub fn build_driver_with_port<M: ModelProvider>(
     limits: TurnLimits,
     port: Arc<dyn InteractionPort>,
 ) -> TurnDriver<M> {
-    build_driver_full(model, config, events, root, limits, port, None)
+    build_driver_full(model, config, events, root, limits, port, None, None)
 }
 
+pub fn build_driver_with_background<M: ModelProvider>(
+    model: M,
+    config: RuntimeConfig,
+    events: Arc<EventLog>,
+    root: &Path,
+    limits: TurnLimits,
+    background: Arc<dyn keel_runtime::BackgroundTasks>,
+) -> TurnDriver<M> {
+    build_driver_full(
+        model,
+        config,
+        events,
+        root,
+        limits,
+        Arc::new(DeferAllInteractionPort),
+        None,
+        Some(background),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
 fn build_driver_full<M: ModelProvider>(
     model: M,
     config: RuntimeConfig,
@@ -164,6 +186,7 @@ fn build_driver_full<M: ModelProvider>(
     limits: TurnLimits,
     port: Arc<dyn InteractionPort>,
     todos: Option<Arc<Mutex<keel_core::TodoList>>>,
+    background: Option<Arc<dyn keel_runtime::BackgroundTasks>>,
 ) -> TurnDriver<M> {
     let tools = standard_registry(root);
     let context = standard_context();
@@ -195,6 +218,7 @@ fn build_driver_full<M: ModelProvider>(
             context_window,
             limits,
             todos,
+            background,
             options: keel_runtime::KernelOptions::default(),
         },
     )

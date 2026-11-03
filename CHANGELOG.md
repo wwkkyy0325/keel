@@ -23,6 +23,12 @@ First complete kernel and reference host.
   six continuations bound a model that never closes the list, and a wrap-up or
   the reserved final call is never overridden. `TurnEvent::Continued` keeps the
   FSM explicit.
+- Background commands (ADR 0016): `shell` with `background = "true"` starts a
+  process, writes its output under the outputs directory and returns a handle
+  immediately. `BackgroundTasks` drains finished commands at the model-loop
+  safe point and injects the result; `BackgroundResult` audits it. The local
+  registry runs at most four, kills the tree on drop and caps a command at two
+  hours. A result that misses the last call waits for the next turn.
 - A per-turn input-token budget (`max_turn_input_tokens`, one hundred times
   the working set, one-million floor) bounds cost. Reaching it records
   `TurnBudgetExhausted` and forces the answer call. The model never sees the

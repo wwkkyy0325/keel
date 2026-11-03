@@ -94,6 +94,7 @@ async fn run(
             context_window: config.context_window,
             limits: config.limits(),
             todos: None,
+            background: None,
             options: KernelOptions::default(),
         },
     );

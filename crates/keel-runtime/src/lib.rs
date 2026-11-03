@@ -2,6 +2,7 @@
 //! dispatch, context assembly, policy resolution, minimal permissions and the
 //! mock model used by M1.
 
+pub mod background;
 mod calculator;
 pub mod command;
 pub mod context;
@@ -22,6 +23,7 @@ pub mod tools;
 pub mod trash;
 pub mod verification;
 
+pub use background::{BackgroundResult, BackgroundTasks, LocalBackgroundTasks};
 pub use context::{
     BuiltContext, ContextBuilder, HistoryStage, LatestStage, MemoryStage, SystemStage,
     TaskStateStage,

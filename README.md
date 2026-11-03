@@ -90,6 +90,9 @@ completes without user input.
   fixed deadline, a silent one is stopped after five minutes, and a model
   stream resets its window on every chunk. Read-only calls run in parallel,
   eight at a time.
+- Background commands: `shell` with `background = "true"` returns a handle
+  immediately, and the result enters before the next model call. Up to four
+  run at once per session; the tree is killed on exit.
 - Windows `.cmd`/`.bat` shims (`npm`, `npx`, `pnpm`, `yarn`) resolve through
   PATH, so allowlisted names start without a shell.
 - Explicit undo: `list_trash` lists recoverable versions and `restore_file`

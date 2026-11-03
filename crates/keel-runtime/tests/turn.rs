@@ -463,6 +463,7 @@ async fn non_commit_decision_ends_in_error() {
             context_window: config.context_window,
             limits: common::test_limits(),
             todos: None,
+            background: None,
             options: keel_runtime::KernelOptions::default(),
         },
     );
@@ -1172,6 +1173,7 @@ async fn the_turn_start_context_is_captured_when_requested() {
             context_window: config.context_window,
             limits: common::test_limits(),
             todos: None,
+            background: None,
             options: keel_runtime::KernelOptions {
                 capture_context: true,
                 ..Default::default()
@@ -1449,4 +1451,68 @@ async fn the_turn_budget_forces_the_final_call_without_telling_the_model() {
         .1
         .iter()
         .any(|message| message.content.to_lowercase().contains("token")));
+}
+
+/// Delivers one finished background command on every drain.
+struct StaticBackground;
+
+impl keel_runtime::BackgroundTasks for StaticBackground {
+    fn start(
+        &self,
+        _spec: &keel_runtime::command::CommandSpec<'_>,
+    ) -> Result<String, keel_core::ToolError> {
+        Err(keel_core::ToolError::invalid_arguments("not used"))
+    }
+
+    fn drain(&self) -> Vec<keel_runtime::BackgroundResult> {
+        vec![keel_runtime::BackgroundResult {
+            id: "bg-9".to_owned(),
+            program: "cargo".to_owned(),
+            exit_code: Some(0),
+            duration_ms: 1200,
+            output_path: std::path::PathBuf::from("bg-9.log"),
+            tail: "all tests passed".to_owned(),
+        }]
+    }
+}
+
+#[tokio::test]
+async fn a_background_result_enters_before_the_next_model_call() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&["echo"], 4, PermissionLevel::WorkspaceAuto);
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let model = ToolRecordingModel {
+        inner: MockModel::new(vec![MockStep::Text("done".to_owned())]),
+        seen: seen.clone(),
+    };
+    let driver = common::build_driver_with_background(
+        model,
+        config,
+        events.clone(),
+        dir.path(),
+        common::test_limits(),
+        Arc::new(StaticBackground),
+    );
+
+    let outcome = driver.run("go", CancelToken::new()).await;
+
+    assert!(outcome.is_done(), "{outcome:?}");
+    let requests = seen.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    assert!(
+        requests[0]
+            .1
+            .iter()
+            .any(|message| message.content.contains("[background bg-9 finished]")),
+        "{:?}",
+        requests[0]
+            .1
+            .iter()
+            .map(|message| message.content.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(events
+        .for_turn(outcome.turn_id)
+        .iter()
+        .any(|record| matches!(record.event, Event::BackgroundResult { .. })));
 }

@@ -208,6 +208,19 @@ interjection stay distinct. See ADR 0010.
   confinement of commands and plugins is a host option, not a kernel claim.
 - Audit is always on; it is not sampled and not optional.
 
+## Background commands
+
+- `shell` accepts `background = "true"`. The host starts the process, writes
+  its output under the outputs directory and returns a handle immediately; the
+  command does not hold the turn. A host may run at most four at once and kills
+  the process tree when the session ends.
+- At the top of the model loop the driver drains finished commands and adds
+  `[background <id> finished] <program> exit code <n> after <ms>; output:
+  <path>` plus the last forty lines. A result that arrives after the last call
+  waits for the next turn; it is never injected into a stream.
+- `BackgroundResult` is the audit event. The port is `BackgroundTasks`; a host
+  that cannot run processes returns the error the tool surfaces.
+
 ## Secrets
 
 - Hosts read credentials from `.env` or the OS keyring. Profiles reference env

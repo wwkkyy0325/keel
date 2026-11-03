@@ -124,6 +124,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             context_window: config.context_window,
             limits: config.limits(),
             todos: Some(todos),
+            background: None,
             options: KernelOptions::default(),
         },
     );

@@ -14,6 +14,7 @@ use keel_core::{
     VerificationMode, VerificationReport,
 };
 
+use crate::background::BackgroundTasks;
 use crate::context::ContextBuilder;
 use crate::dispatch::ToolDispatcher;
 use crate::event_log::EventLog;
@@ -77,6 +78,8 @@ pub struct TurnDriverConfig {
     pub limits: TurnLimits,
     /// Kernel-owned task list. The host seeds it and the `todo` tool edits it.
     pub todos: Option<Arc<Mutex<TodoList>>>,
+    /// Host-owned background commands; their results enter at a safe point.
+    pub background: Option<Arc<dyn BackgroundTasks>>,
     pub options: KernelOptions,
 }
 
@@ -184,6 +187,7 @@ pub struct TurnDriver<M> {
     /// `<workspace>/.keel/outputs`.
     outputs_dir: Option<PathBuf>,
     todos: Option<Arc<Mutex<TodoList>>>,
+    background: Option<Arc<dyn BackgroundTasks>>,
     options: KernelOptions,
     /// Pressure read on the previous turn; the summary update happens before
     /// this turn's context is assembled, so this is the freshest signal.
@@ -232,6 +236,7 @@ impl<M: ModelProvider> TurnDriver<M> {
             summarizer: None,
             outputs_dir: None,
             todos: config.todos,
+            background: config.background,
             options: config.options,
             last_level: Mutex::new(PressureLevel::Green),
             next_turn: AtomicU64::new(1),
@@ -855,6 +860,29 @@ impl<M: ModelProvider> TurnDriver<M> {
             // before the reserved final call, so a late constraint can still
             // shape the answer. Never inside a stream or a tool round.
             self.deliver_interjections(turn_id, &mut messages);
+            if let Some(tasks) = &self.background {
+                for result in tasks.drain() {
+                    self.events.append(Event::BackgroundResult {
+                        turn_id,
+                        id: result.id.clone(),
+                        exit_code: result.exit_code,
+                        duration_ms: result.duration_ms,
+                    });
+                    let exit = result
+                        .exit_code
+                        .map(|code| code.to_string())
+                        .unwrap_or_else(|| "terminated".to_owned());
+                    messages.push(Arc::new(Message::user(format!(
+                        "[background {} finished] {} exit code {exit} after {} ms; output: {}
+{}",
+                        result.id,
+                        result.program,
+                        result.duration_ms,
+                        result.output_path.display(),
+                        result.tail
+                    ))));
+                }
+            }
 
             let mut estimated_tokens = messages.iter().fold(0u32, |total, message| {
                 total.saturating_add(message.estimated_tokens())

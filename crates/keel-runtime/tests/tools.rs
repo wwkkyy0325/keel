@@ -6,8 +6,8 @@ use keel_core::{
     AccessKind, ArgValue, CancelToken, ErrorCode, Tool, ToolArgs, ToolCallId, ToolCtx, TurnId,
 };
 use keel_runtime::{
-    CodeSearchTool, ListDirTool, ListTrashTool, LocalTrashStore, ReadFileTool, RestoreFileTool,
-    ShellTool, TrashStore, WriteFileTool,
+    CodeSearchTool, ListDirTool, ListTrashTool, LocalBackgroundTasks, LocalTrashStore,
+    ReadFileTool, RestoreFileTool, ShellTool, TrashStore, WriteFileTool,
 };
 
 fn ctx(root: &Path) -> ToolCtx {
@@ -379,4 +379,43 @@ async fn writing_creates_missing_parent_directories() {
         std::fs::read_to_string(dir.path().join("tests").join("test_calc.py")).unwrap(),
         "print('ok')\n"
     );
+}
+
+#[tokio::test]
+async fn shell_background_starts_a_command_and_returns_immediately() {
+    let dir = tempfile::tempdir().unwrap();
+    let tasks = Arc::new(LocalBackgroundTasks::new(dir.path().join("outputs")));
+    let tool = ShellTool::new(vec!["python".to_owned()]).with_background(tasks);
+    let mut args = ToolArgs::new();
+    args.insert("program", ArgValue::String("python".to_owned()));
+    args.insert(
+        "args",
+        ArgValue::StringList(vec![
+            "-c".to_owned(),
+            "import time; time.sleep(0.2)".to_owned(),
+        ]),
+    );
+    args.insert("background", ArgValue::String("true".to_owned()));
+
+    let result = tool.call(args, &ctx(dir.path())).await;
+
+    let content = result.content().unwrap_or_default();
+    assert!(content.contains("started bg-1"), "{content}");
+    assert!(content.contains("continues in the background"), "{content}");
+}
+
+#[tokio::test]
+async fn shell_background_without_a_registry_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let tool = ShellTool::new(vec!["python".to_owned()]);
+    let mut args = ToolArgs::new();
+    args.insert("program", ArgValue::String("python".to_owned()));
+    args.insert("background", ArgValue::String("true".to_owned()));
+
+    let result = tool.call(args, &ctx(dir.path())).await;
+
+    assert!(!result.is_success());
+    assert!(result
+        .error()
+        .is_some_and(|error| error.message.contains("background execution")));
 }

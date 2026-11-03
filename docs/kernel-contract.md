@@ -108,6 +108,12 @@ Stable within a major version:
   `KernelOptions`, `ContextBuilder` and the standard stages, `ToolDispatcher`,
   `ToolRegistry`, `PermissionEngine`, `AcceptanceVerifier`, `EventLog`,
   `ProviderSummarizer`, `TrashStore`.
+- Background commands: `BackgroundTasks`, `BackgroundResult`,
+  `LocalBackgroundTasks` and the `shell` `background = "true"` argument. The
+  host registry runs at most four at once, kills a tree on drop and caps a
+  command at two hours. Results enter at the model-loop safe point as a
+  `[background <id> finished]` message and are audited with `BackgroundResult`;
+  a result that misses the last call waits for the next turn.
 - Interjections: `InterjectionQueue`, `InterjectionPush` and
   `TurnDriver::interject`. The queue is bounded and deduplicated; delivery
   happens only at model-call safe points, and late items are reported in

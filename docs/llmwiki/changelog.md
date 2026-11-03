@@ -1936,3 +1936,15 @@
   `Continue the task list`.
 - `run_case.py` accepts `max_model_calls` in `meta.toml` so a case can force
   the multi-turn path.
+
+### Background commands (ADR 0016)
+
+- `LocalBackgroundTasks`: up to four processes, output under the outputs
+  directory, kill on drop, two-hour cap, `bg-N` handles.
+- `shell` takes `background = "true"` (string, the parameter model has no
+  boolean kind) and returns immediately.
+- The driver drains finished commands at the model-loop safe point and injects
+  `[background bg-N finished] ...`; `BackgroundResult` audits it. Results that
+  miss the last call wait for the next turn.
+- Tests: background output/exit, the four-command limit, the shell flag with
+  and without a registry, and delivery before the next model call.

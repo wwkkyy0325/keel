@@ -205,6 +205,57 @@ fn spawn(spec: &CommandSpec<'_>) -> Result<Child, ToolError> {
     }
 }
 
+/// Starts a command whose output goes to `output` and whose lifetime belongs
+/// to the caller. Same environment scrub as the foreground path, no shell.
+pub fn spawn_background(
+    spec: &CommandSpec<'_>,
+    output: &Path,
+) -> Result<std::process::Child, ToolError> {
+    fn build(
+        program: &OsStr,
+        spec: &CommandSpec<'_>,
+        output: &Path,
+    ) -> std::io::Result<std::process::Command> {
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(output)?;
+        let stderr = file.try_clone()?;
+        let mut command = std::process::Command::new(program);
+        command
+            .args(spec.args)
+            .current_dir(spec.cwd)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::from(file))
+            .stderr(std::process::Stdio::from(stderr));
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
+        for (name, _) in std::env::vars() {
+            if is_sensitive_env(&name) {
+                command.env_remove(&name);
+            }
+        }
+        Ok(command)
+    }
+
+    let spawn =
+        |program: &OsStr| build(program, spec, output).and_then(|mut command| command.spawn());
+    match spawn(OsStr::new(spec.program)) {
+        Ok(child) => Ok(child),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            #[cfg(windows)]
+            if let Some(shim) = windows_shim(spec.program) {
+                return spawn(shim.as_os_str()).map_err(|error| io_error(&error));
+            }
+            Err(io_error(&error))
+        }
+        Err(error) => Err(io_error(&error)),
+    }
+}
+
 #[cfg(windows)]
 fn windows_shim(program: &str) -> Option<PathBuf> {
     if program.contains('/') || program.contains('\\') || Path::new(program).extension().is_some() {

@@ -23,12 +23,13 @@ use keel_core::{
 use keel_model_anthropic::{AnthropicConfig, AnthropicProvider};
 use keel_model_openai::{OpenAiConfig, OpenAiProvider};
 use keel_runtime::{
-    load_profile, validate_config, AcceptanceVerifier, CodeSearchTool, ContextBuilder,
-    DeleteFileTool, EchoTool, EventLog, HistoryStage, InteractionBroker, KernelOptions,
-    LatestStage, ListDirTool, ListTrashTool, LocalTrashStore, MakeDirTool, MemoryStage, MockModel,
-    MockStep, MoveFileTool, PermissionEngine, ProviderSummarizer, ReadFileTool, RestoreFileTool,
-    RuntimeConfig, ShellTool, Summarizer, SystemStage, TaskStateStage, TodoTool, ToolRegistry,
-    TrashStore, TurnDriver, TurnDriverConfig, TurnOutcome, WriteFileTool,
+    load_profile, validate_config, AcceptanceVerifier, BackgroundTasks, CodeSearchTool,
+    ContextBuilder, DeleteFileTool, EchoTool, EventLog, HistoryStage, InteractionBroker,
+    KernelOptions, LatestStage, ListDirTool, ListTrashTool, LocalBackgroundTasks, LocalTrashStore,
+    MakeDirTool, MemoryStage, MockModel, MockStep, MoveFileTool, PermissionEngine,
+    ProviderSummarizer, ReadFileTool, RestoreFileTool, RuntimeConfig, ShellTool, Summarizer,
+    SystemStage, TaskStateStage, TodoTool, ToolRegistry, TrashStore, TurnDriver, TurnDriverConfig,
+    TurnOutcome, WriteFileTool,
 };
 use terminal::TerminalInteractionPort;
 
@@ -431,6 +432,8 @@ async fn run() -> Result<ExitCode, KernelError> {
         None => Arc::new(LocalTrashStore::new(permissions.root().to_path_buf())),
     };
 
+    let background: Arc<dyn BackgroundTasks> =
+        Arc::new(LocalBackgroundTasks::new(outputs_dir.clone()));
     let mut registry = ToolRegistry::new();
     registry.register(Arc::new(EchoTool::new()))?;
     registry.register(Arc::new(ReadFileTool::new()))?;
@@ -438,7 +441,9 @@ async fn run() -> Result<ExitCode, KernelError> {
     registry.register(Arc::new(MakeDirTool::new()))?;
     registry.register(Arc::new(CodeSearchTool::new()))?;
     registry.register(Arc::new(
-        ShellTool::coding_defaults().with_timeout(limits.tool_timeout),
+        ShellTool::coding_defaults()
+            .with_timeout(limits.tool_timeout)
+            .with_background(background.clone()),
     ))?;
     registry.register(Arc::new(WriteFileTool::new(trash.clone())))?;
     registry.register(Arc::new(MoveFileTool::new(trash.clone())))?;
@@ -527,6 +532,7 @@ async fn run() -> Result<ExitCode, KernelError> {
             context_window: config.context_window,
             limits,
             todos: todos.clone(),
+            background: Some(background),
             options,
         },
     )

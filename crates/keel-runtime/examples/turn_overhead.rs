@@ -88,6 +88,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 max_turn_input_tokens: u64::MAX,
             },
             todos: None,
+            background: None,
             options: keel_runtime::KernelOptions::default(),
         },
     );

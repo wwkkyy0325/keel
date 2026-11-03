@@ -105,6 +105,7 @@ fn harness_options(
         context,
         policy,
         TurnDriverConfig {
+            background: None,
             events: events.clone(),
             permissions,
             interactions,

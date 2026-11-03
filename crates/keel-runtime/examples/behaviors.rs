@@ -521,6 +521,7 @@ fn build<M: ModelProvider>(
             context_window: config.context_window,
             limits,
             todos,
+            background: None,
             options: KernelOptions::default(),
         },
     ))

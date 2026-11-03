@@ -10,6 +10,7 @@ use keel_core::{
 };
 use tokio::io::AsyncReadExt;
 
+use crate::background::BackgroundTasks;
 use crate::command::{self, CommandSpec};
 use crate::trash::TrashStore;
 
@@ -815,6 +816,7 @@ fn display_relative(path: &Path) -> String {
 pub struct ShellTool {
     allowlist: Vec<String>,
     timeout: Duration,
+    background: Option<Arc<dyn BackgroundTasks>>,
 }
 
 impl ShellTool {
@@ -822,6 +824,7 @@ impl ShellTool {
         Self {
             allowlist,
             timeout: Duration::from_secs(60),
+            background: None,
         }
     }
 
@@ -835,6 +838,12 @@ impl ShellTool {
     /// build can be given more time without editing the profile.
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    /// Enables `background: true`; the host owns the process registry.
+    pub fn with_background(mut self, tasks: Arc<dyn BackgroundTasks>) -> Self {
+        self.background = Some(tasks);
         self
     }
 }
@@ -862,6 +871,11 @@ impl Tool for ShellTool {
                 },
                 ParamSpec {
                     name: "cwd".to_owned(),
+                    kind: ParamKind::String,
+                    required: false,
+                },
+                ParamSpec {
+                    name: "background".to_owned(),
                     kind: ParamKind::String,
                     required: false,
                 },
@@ -937,6 +951,30 @@ impl Tool for ShellTool {
             cwd: &cwd,
             timeout: self.timeout,
         };
+        let background = matches!(
+            args.get("background"),
+            Some(keel_core::ArgValue::String(value)) if value.eq_ignore_ascii_case("true")
+        );
+        if background {
+            let Some(tasks) = &self.background else {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "shell",
+                    ToolError::invalid_arguments("background execution is not available here"),
+                );
+            };
+            return match tasks.start(&spec) {
+                Ok(message) => ToolResult::success(
+                    ctx.call_id,
+                    "shell",
+                    format!(
+                        "{message}
+the command continues in the background; its result arrives before the next model call"
+                    ),
+                ),
+                Err(error) => ToolResult::failure(ctx.call_id, "shell", error),
+            };
+        }
         match command::run(spec, &ctx.cancel).await {
             Ok(output) => ToolResult::success(ctx.call_id, "shell", output.output),
             Err(error) => ToolResult::failure(ctx.call_id, "shell", error),
