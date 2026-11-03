@@ -81,9 +81,11 @@ completes without user input.
 - One turn finishes a multi-step task. The limits (500 model calls, a 24-hour
   backstop, a 1,000-call tool budget in the coding profiles) are runaway
   protection, not a per-task allowance, and an unfinished `todo` list keeps the
-  turn going instead of asking the user to type "continue". A per-turn
-  input-token budget bounds cost; it is derived from the working set and the
-  model never sees the number.
+  turn going instead of asking the user to type "continue". When a turn still
+  ends with open task items, the host starts another turn (`--auto-continues`,
+  default 3) and reports the remaining count when the limit is reached. A
+  per-turn input-token budget bounds cost; it is derived from the working set
+  and the model never sees the number.
 - Timeouts measure activity: a command that keeps printing is not cut at a
   fixed deadline, a silent one is stopped after five minutes, and a model
   stream resets its window on every chunk. Read-only calls run in parallel,

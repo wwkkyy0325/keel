@@ -1914,3 +1914,14 @@
   25 model calls, 43 tool calls, 71 s, 94.5% cache hit. The first attempt
   stopped and asked for permissions; the second wrote outside the workspace
   because the task gave absolute paths; workspace-relative wording passed.
+
+### Auto-continue across turns
+
+- Host policy: when a turn ends `Done`/`Converge` with open task items, start
+  another turn with a fixed nudge, up to `--auto-continues` (default 3, 0
+  off). At the limit, print the remaining count and return control.
+- `--input` and `--session` both honor it; `--todo-file` seeds a deterministic
+  list for a test.
+- Real deepseek verification on the twenty-module case: 3 calls/turn needed
+  three turns (`auto-continue 1/2`, `2/2`, then `19 task(s) remain`); 10
+  calls/turn finished in three turns and the case verifier passed.

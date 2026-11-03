@@ -53,6 +53,17 @@ the mechanism.
       Verify: `redact_secrets` tests plus the dispatcher test that a `.env`
       write asks first.
 
+- [x] **5. Continue across turns while the task list is open.**
+      The host (`--input` and `--session`) starts another turn when a finished
+      turn still has pending items, up to `--auto-continues` (default 3,
+      `0` disables). At the limit it prints the remaining count instead of
+      looping forever. The turn input is a fixed nudge; the shared task list
+      carries the state.
+      Verify: real deepseek runs on the twenty-module case — with three model
+      calls per turn it needed three turns, printed `auto-continue 1/2` and
+      `2/2`, then stopped with `19 task(s) remain`; with ten calls per turn it
+      finished in three turns and the verifier passed.
+
 ## Boundaries
 
 - The continuation is not a new turn: no new user input, no new session
@@ -64,3 +75,6 @@ the mechanism.
   audit; the README says so instead of implying otherwise.
 - The tool budget is still a profile field. The default in the profiles is
   larger; a batch or eval run can set it smaller.
+- Auto-continue is a host policy, not a kernel state: the kernel still ends
+  one turn; the host decides to start the next. A cancelled or failed turn is
+  never continued.
