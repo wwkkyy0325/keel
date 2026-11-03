@@ -30,11 +30,14 @@ permissions, cancellation or audit.
 3. **Isolation by default.** Only the final answer, the state and the usage
    return. The child transcript stays in the child event log and is discarded;
    the parent records the call in its own `ToolStarted`/`ToolFinished` events.
-4. **No nesting.** A per-runner depth counter refuses a child that calls
-   `spawn_agent` again. A future host may raise this deliberately.
-5. **Serialized for now.** The tool is `Mutating`, so the dispatcher runs one
-   spawn at a time. Parallel spawns need a concurrency class the dispatcher
-   does not have yet.
+4. **No nesting.** A child registry binds `spawn_agent` to a runner one level
+   deeper; that runner refuses to run, so a grandchild is rejected while
+   siblings are free. A future host may raise the depth deliberately.
+5. **Siblings may overlap; nesting may not.** The tool declares itself
+   concurrent (`Tool::concurrent`), so the dispatcher runs sibling spawns in
+   the same round in parallel even though the tool mutates. Each child gets a
+   registry whose spawn tool is bound to a runner one level deeper, and that
+   runner refuses to run: a grandchild is rejected while siblings are free.
 6. **Permissions are shared, never widened.** The child's tool calls pass the
    same gate and the same interaction broker; a prompt goes to the same user.
    Cancellation is the parent's `CancelToken`, so cancelling the parent cancels
@@ -52,8 +55,9 @@ permissions, cancellation or audit.
   follow-up or continue its own work.
 - The child pays for its own context: its tokens are outside the parent's
   budget until the counter is extended.
-- Parallel sub-agents are not available; the dispatcher's risk classes decide
-  that. A `Concurrent` class (side effects, safe to overlap) is the next step.
+- Parallel siblings share the read batch; a child that spawns again gets a
+  clear error. The concurrency hint is a tool capability, not a risk class, so
+  the UI and audit still see the tool as mutating.
 - The TUI does not render sub-agent progress; the tool line shows the call and
   the report. A host may add a per-agent view.
 - A model can waste tokens delegating a trivial task; the tool description

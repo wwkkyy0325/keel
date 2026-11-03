@@ -1962,3 +1962,12 @@
   new error reporting made visible.
 - Serialized because the tool is `Mutating`; parallel spawns need a
   concurrency class.
+
+### Parallel sub-agent spawns
+
+- `Tool::concurrent()` lets a mutating tool join the parallel batch; the risk
+  class stays as declared for the UI and audit.
+- Each child registry binds `spawn_agent` to a deeper runner that refuses, so
+  siblings are free and a grandchild is rejected.
+- Real deepseek run: two spawns in one round wrote a.txt and b.txt; the parent
+  read both and reported each child's usage (3 model calls, 2 tool calls).

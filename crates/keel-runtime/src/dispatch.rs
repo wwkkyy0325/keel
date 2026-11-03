@@ -138,7 +138,7 @@ impl ToolDispatcher {
                 args: call.args,
                 risk: schema.risk,
             };
-            if schema.risk == RiskLevel::ReadOnly {
+            if schema.risk == RiskLevel::ReadOnly || prepared.tool.concurrent() {
                 reads.push(prepared);
             } else {
                 writes.push(prepared);

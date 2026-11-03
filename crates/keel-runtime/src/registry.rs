@@ -5,7 +5,7 @@ use keel_core::{KernelError, Tool, ToolSchema};
 
 /// Registered tools, keyed by stable name. `BTreeMap` keeps schema order
 /// deterministic.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ToolRegistry {
     tools: BTreeMap<String, Arc<dyn Tool>>,
 }

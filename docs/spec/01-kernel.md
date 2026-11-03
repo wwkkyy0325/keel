@@ -232,9 +232,11 @@ interjection stay distinct. See ADR 0010.
 - The child shares the permission gate, the interaction broker and the parent
   cancellation token; it cannot widen permissions. A child that calls
   `spawn_agent` again is refused (depth one).
-- The tool is `Mutating`, so one spawn runs at a time. The result is audited
-  through the normal tool events; the usage is reported in the result and is
-  not yet part of the parent's token budget.
+- Sibling spawns may overlap: the tool declares itself concurrent even though
+  it is `Mutating`. A child's registry binds `spawn_agent` to a deeper runner
+  that refuses, so nesting is rejected while siblings are free. The result is
+  audited through the normal tool events; the usage is reported in the result
+  and is not yet part of the parent's token budget.
 
 ## Secrets
 

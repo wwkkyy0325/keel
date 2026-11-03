@@ -25,9 +25,9 @@ First complete kernel and reference host.
   FSM explicit.
 - Sub-agents (ADR 0017): `spawn_agent { task, role? }` delegates one task to a
   child turn with its own context, shared permissions and the parent's cancel
-  token. Only a bounded report with state and usage returns; nesting is
-  refused and a spawn is serialized. The host runner reports a failed child
-  with its error text instead of a silent success.
+  token. Only a bounded report with state and usage returns; sibling spawns
+  run in parallel and a nested spawn is refused. The host runner reports a
+  failed child with its error text instead of a silent success.
 - Background commands (ADR 0016): `shell` with `background = "true"` starts a
   process, writes its output under the outputs directory and returns a handle
   immediately. `BackgroundTasks` drains finished commands at the model-loop

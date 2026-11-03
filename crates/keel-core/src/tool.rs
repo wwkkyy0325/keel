@@ -255,5 +255,12 @@ pub trait Tool: Send + Sync {
 
     fn permission_requests(&self, args: &ToolArgs) -> Result<Vec<PermissionRequest>, ToolError>;
 
+    /// May overlap with other calls in the same round even though it is not
+    /// read-only. The dispatcher uses this for batching; risk stays as
+    /// declared for the UI and the audit.
+    fn concurrent(&self) -> bool {
+        false
+    }
+
     async fn call(&self, args: ToolArgs, ctx: &ToolCtx) -> ToolResult;
 }

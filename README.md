@@ -95,8 +95,8 @@ completes without user input.
   run at once per session; the tree is killed on exit.
 - Sub-agents: `spawn_agent { task, role? }` delegates one task to a child turn
   with its own context, the same permissions and the parent's cancel token;
-  only a bounded report comes back, nesting is refused, and a failed child
-  reports its error. Serialized for now.
+  only a bounded report comes back, sibling spawns run in parallel, nesting is
+  refused, and a failed child reports its error.
 - Windows `.cmd`/`.bat` shims (`npm`, `npx`, `pnpm`, `yarn`) resolve through
   PATH, so allowlisted names start without a shell.
 - Explicit undo: `list_trash` lists recoverable versions and `restore_file`

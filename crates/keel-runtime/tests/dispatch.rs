@@ -832,3 +832,67 @@ async fn a_large_read_round_is_bounded_and_complete() {
         probe.max()
     );
 }
+
+/// Mutating, but declares that it may overlap: the sub-agent spawn shape.
+struct ConcurrentWriterTool {
+    probe: Arc<Probe>,
+    delay: Duration,
+}
+
+#[async_trait]
+impl Tool for ConcurrentWriterTool {
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "concurrent_write".to_owned(),
+            description: "mutating but safe to overlap".to_owned(),
+            risk: RiskLevel::Mutating,
+            params: Vec::new(),
+        }
+    }
+
+    fn concurrent(&self) -> bool {
+        true
+    }
+
+    fn permission_requests(&self, _args: &ToolArgs) -> Result<Vec<PermissionRequest>, ToolError> {
+        Ok(Vec::new())
+    }
+
+    async fn call(&self, _args: ToolArgs, ctx: &ToolCtx) -> ToolResult {
+        self.probe.enter();
+        tokio::time::sleep(self.delay).await;
+        self.probe.leave();
+        ToolResult::success(ctx.call_id, "concurrent_write", "ok")
+    }
+}
+
+#[tokio::test]
+async fn a_tool_that_declares_concurrency_overlaps_its_siblings() {
+    let dir = tempfile::tempdir().unwrap();
+    let probe = Arc::new(Probe::default());
+    let registry = registry(vec![Arc::new(ConcurrentWriterTool {
+        probe: probe.clone(),
+        delay: Duration::from_millis(60),
+    })]);
+    let (dispatcher, _events) = dispatcher(
+        registry,
+        dir.path(),
+        Duration::from_secs(1),
+        PermissionLevel::FullAuto,
+    );
+
+    let results = dispatcher
+        .dispatch(
+            TurnId::new(1),
+            vec![
+                call(1, "concurrent_write", ToolArgs::new()),
+                call(2, "concurrent_write", ToolArgs::new()),
+            ],
+            &visible(&["concurrent_write"]),
+            &CancelToken::new(),
+        )
+        .await;
+
+    assert!(results.iter().all(ToolResult::is_success));
+    assert_eq!(probe.max(), 2);
+}

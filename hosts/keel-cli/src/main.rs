@@ -10,7 +10,7 @@ mod view;
 use std::io::{IsTerminal, Read};
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -478,19 +478,17 @@ async fn run() -> Result<ExitCode, KernelError> {
         let names = mcp::load(path, &mcp_roots, &mut registry).await?;
         config.visible_tool_names.extend(names);
     }
-    let agent_slot: Arc<Mutex<Option<Arc<ToolRegistry>>>> = Arc::new(Mutex::new(None));
-    registry.register(Arc::new(SpawnAgentTool::new(Arc::new(HostAgentRunner {
+    let base_registry = Arc::new(registry);
+    let mut parent_registry = (*base_registry).clone();
+    parent_registry.register(Arc::new(SpawnAgentTool::new(Arc::new(HostAgentRunner {
         config: Arc::new(config.clone()),
         permissions: permissions.clone(),
         interactions: interactions.clone(),
         outputs_dir: outputs_dir.clone(),
-        registry: agent_slot.clone(),
-        depth: AtomicUsize::new(0),
+        base_registry: base_registry.clone(),
+        depth: 0,
     }))))?;
-    let registry = Arc::new(registry);
-    *agent_slot
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(registry.clone());
+    let registry = Arc::new(parent_registry);
 
     let context = ContextBuilder::new(vec![
         Arc::new(SystemStage::new()),
@@ -1110,8 +1108,10 @@ struct HostAgentRunner {
     permissions: Arc<PermissionEngine>,
     interactions: Arc<InteractionBroker>,
     outputs_dir: PathBuf,
-    registry: Arc<Mutex<Option<Arc<ToolRegistry>>>>,
-    depth: AtomicUsize,
+    /// Tools without a spawn tool; each child gets a clone plus one bound to
+    /// a deeper runner.
+    base_registry: Arc<ToolRegistry>,
+    depth: usize,
 }
 
 #[async_trait]
@@ -1121,19 +1121,34 @@ impl SubAgentRunner for HostAgentRunner {
         spec: SubAgentSpec,
         cancel: &CancelToken,
     ) -> Result<SubAgentOutcome, keel_core::ToolError> {
-        if self.depth.fetch_add(1, Ordering::SeqCst) > 0 {
-            self.depth.fetch_sub(1, Ordering::SeqCst);
+        if self.depth > 0 {
             return Err(keel_core::ToolError::permission_denied(
                 "nested sub-agents are not allowed",
             ));
         }
-        let result = self.run_inner(spec, cancel).await;
-        self.depth.fetch_sub(1, Ordering::SeqCst);
-        result
+        self.run_inner(spec, cancel).await
     }
 }
 
 impl HostAgentRunner {
+    /// The child registry: every tool, plus a spawn tool that refuses to
+    /// delegate further.
+    fn child_registry(&self) -> Result<Arc<ToolRegistry>, keel_core::ToolError> {
+        let mut registry = (*self.base_registry).clone();
+        let child: Arc<dyn SubAgentRunner> = Arc::new(HostAgentRunner {
+            config: self.config.clone(),
+            permissions: self.permissions.clone(),
+            interactions: self.interactions.clone(),
+            outputs_dir: self.outputs_dir.clone(),
+            base_registry: self.base_registry.clone(),
+            depth: self.depth + 1,
+        });
+        registry
+            .register(Arc::new(SpawnAgentTool::new(child)))
+            .map_err(|error| keel_core::ToolError::io(error.to_string()))?;
+        Ok(Arc::new(registry))
+    }
+
     async fn run_inner(
         &self,
         spec: SubAgentSpec,
@@ -1141,12 +1156,7 @@ impl HostAgentRunner {
     ) -> Result<SubAgentOutcome, keel_core::ToolError> {
         let model = build_model(&self.config, "", false, false)
             .map_err(|error| keel_core::ToolError::io(error.to_string()))?;
-        let registry = self
-            .registry
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-            .ok_or_else(|| keel_core::ToolError::io("sub-agent registry is not ready"))?;
+        let registry = self.child_registry()?;
         let context = ContextBuilder::new(vec![
             Arc::new(SystemStage::new()),
             Arc::new(TaskStateStage::new()),
