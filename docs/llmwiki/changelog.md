@@ -1971,3 +1971,11 @@
   siblings are free and a grandchild is rejected.
 - Real deepseek run: two spawns in one round wrote a.txt and b.txt; the parent
   read both and reported each child's usage (3 model calls, 2 tool calls).
+
+### Delegated usage is counted
+
+- `ToolResult` gains an optional `usage`; `spawn_agent` attaches the child's
+  tokens and the driver adds them to the turn usage, so the token budget sees
+  delegated work.
+- Real deepseek check: the same two-spawn task now reports the parent's input
+  as 14,458 tokens (own ~6k plus the children's), where it was 6,082 before.

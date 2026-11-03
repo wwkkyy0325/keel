@@ -1313,6 +1313,21 @@ impl<M: ModelProvider> TurnDriver<M> {
                     });
                 }
 
+                for result in &results {
+                    if let Some(usage) = result.usage {
+                        stats.usage.input_tokens =
+                            stats.usage.input_tokens.saturating_add(usage.input_tokens);
+                        stats.usage.output_tokens = stats
+                            .usage
+                            .output_tokens
+                            .saturating_add(usage.output_tokens);
+                        stats.usage.cached_input_tokens = stats
+                            .usage
+                            .cached_input_tokens
+                            .saturating_add(usage.cached_input_tokens);
+                    }
+                }
+
                 let mut failures = 0u32;
                 let mut repeated = false;
                 for (call, result) in calls_for_audit.iter().zip(results.iter()) {

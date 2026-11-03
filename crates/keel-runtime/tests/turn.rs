@@ -1516,3 +1516,32 @@ async fn a_background_result_enters_before_the_next_model_call() {
         .iter()
         .any(|record| matches!(record.event, Event::BackgroundResult { .. })));
 }
+
+#[tokio::test]
+async fn delegated_usage_counts_toward_the_turn() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&["usage_tool"], 4, PermissionLevel::WorkspaceAuto);
+    let model = MockModel::new(vec![
+        MockStep::ToolCall {
+            name: "usage_tool".to_owned(),
+            args: ToolArgs::new(),
+        },
+        MockStep::Text("done".to_owned()),
+    ]);
+    let driver = common::build_driver(model, config, events, dir.path(), common::test_limits());
+
+    let outcome = driver.run("go", CancelToken::new()).await;
+
+    assert!(outcome.is_done(), "{outcome:?}");
+    assert!(
+        outcome.usage.input_tokens >= 500,
+        "delegated input tokens are missing: {:?}",
+        outcome.usage
+    );
+    assert!(
+        outcome.usage.output_tokens >= 40,
+        "delegated output tokens are missing: {:?}",
+        outcome.usage
+    );
+}

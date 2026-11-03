@@ -9,7 +9,8 @@ use async_trait::async_trait;
 use keel_core::{
     CancelToken, CompactionStep, ContextRecipe, Event, InteractionPolicy, InteractionPort,
     InteractionRequest, InteractionResponse, MemoryMode, MemoryPolicy, ModelProvider, ModelRoute,
-    PermissionLevel, Policy, PromotionMode, TurnId, TurnState, VerificationMode,
+    PermissionLevel, Policy, PromotionMode, RiskLevel, TokenUsage, Tool, ToolArgs, ToolCtx,
+    ToolResult, ToolSchema, TurnId, TurnState, VerificationMode,
 };
 use keel_runtime::{
     validate_config, CodeSearchTool, ContextBuilder, DeferAllInteractionPort, DeleteFileTool,
@@ -87,6 +88,7 @@ pub fn standard_registry(root: &Path) -> Arc<ToolRegistry> {
     registry
         .register(Arc::new(keel_runtime::TodoTool::new(todos)))
         .unwrap();
+    registry.register(Arc::new(UsageTool)).unwrap();
     Arc::new(registry)
 }
 
@@ -276,4 +278,34 @@ pub fn states(events: &EventLog, turn_id: TurnId) -> Vec<TurnState> {
             _ => None,
         })
         .collect()
+}
+
+/// A tool that reports delegated token usage, the sub-agent shape.
+pub struct UsageTool;
+
+#[async_trait]
+impl Tool for UsageTool {
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "usage_tool".to_owned(),
+            description: "reports delegated usage".to_owned(),
+            risk: RiskLevel::ReadOnly,
+            params: Vec::new(),
+        }
+    }
+
+    fn permission_requests(
+        &self,
+        _args: &ToolArgs,
+    ) -> Result<Vec<keel_core::PermissionRequest>, keel_core::ToolError> {
+        Ok(Vec::new())
+    }
+
+    async fn call(&self, _args: ToolArgs, ctx: &ToolCtx) -> ToolResult {
+        ToolResult::success(ctx.call_id, "usage_tool", "ok").with_usage(TokenUsage {
+            input_tokens: 500,
+            output_tokens: 40,
+            cached_input_tokens: 0,
+        })
+    }
 }

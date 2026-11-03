@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use keel_core::{
-    ArgValue, CancelToken, ParamKind, ParamSpec, RiskLevel, Tool, ToolArgs, ToolCtx, ToolError,
-    ToolResult, ToolSchema, TurnState,
+    ArgValue, CancelToken, ParamKind, ParamSpec, RiskLevel, TokenUsage, Tool, ToolArgs, ToolCtx,
+    ToolError, ToolResult, ToolSchema, TurnState,
 };
 
 /// One delegation.
@@ -120,7 +120,11 @@ impl Tool for SpawnAgentTool {
                     outcome.input_tokens,
                     outcome.output_tokens
                 );
-                ToolResult::success(ctx.call_id, "spawn_agent", text)
+                ToolResult::success(ctx.call_id, "spawn_agent", text).with_usage(TokenUsage {
+                    input_tokens: outcome.input_tokens,
+                    output_tokens: outcome.output_tokens,
+                    cached_input_tokens: 0,
+                })
             }
             Err(error) => ToolResult::failure(ctx.call_id, "spawn_agent", error),
         }
@@ -194,6 +198,14 @@ mod tests {
         assert!(text.contains("model calls: 2"), "{text}");
         assert!(text.contains("tool calls: 3"), "{text}");
         assert!(text.contains("the child report"), "{text}");
+        assert!(matches!(
+            result.usage,
+            Some(TokenUsage {
+                input_tokens: 10,
+                output_tokens: 5,
+                ..
+            })
+        ));
     }
 
     #[tokio::test]

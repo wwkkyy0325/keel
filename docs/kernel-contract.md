@@ -114,8 +114,8 @@ Stable within a major version:
   fresh context, shared permissions/interactions and the parent cancellation
   token; sibling spawns overlap (the tool declares `concurrent`) while a
   child's spawn tool is bound to a deeper runner that refuses, so nesting is
-  rejected. Child usage is reported but not added to the parent's token budget
-  yet.
+  rejected. `ToolResult::with_usage` carries the child's tokens and the driver
+  adds them to the turn usage, so the budget sees the delegation.
 - Background commands: `BackgroundTasks`, `BackgroundResult`,
   `LocalBackgroundTasks` and the `shell` `background = "true"` argument. The
   host registry runs at most four at once, kills a tree on drop and caps a

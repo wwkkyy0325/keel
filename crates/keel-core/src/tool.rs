@@ -8,6 +8,7 @@ use crate::cancel::CancelToken;
 use crate::context::estimate_tokens;
 use crate::error::ToolError;
 use crate::ids::{ToolCallId, TurnId};
+use crate::model::TokenUsage;
 use crate::permission::PermissionRequest;
 
 /// How risky a tool call is.
@@ -191,6 +192,9 @@ pub struct ToolResult {
     pub call_id: ToolCallId,
     pub tool: String,
     pub outcome: ToolOutcome,
+    /// Tokens spent on behalf of this call outside the main model loop (a
+    /// sub-agent). The driver adds them to the turn usage.
+    pub usage: Option<TokenUsage>,
 }
 
 impl ToolResult {
@@ -205,6 +209,7 @@ impl ToolResult {
             outcome: ToolOutcome::Success {
                 content: content.into(),
             },
+            usage: None,
         }
     }
 
@@ -213,7 +218,14 @@ impl ToolResult {
             call_id,
             tool: tool.into(),
             outcome: ToolOutcome::Failure { error },
+            usage: None,
         }
+    }
+
+    /// Records tokens spent by a delegated run so the turn budget sees them.
+    pub fn with_usage(mut self, usage: TokenUsage) -> Self {
+        self.usage = Some(usage);
+        self
     }
 
     pub fn is_success(&self) -> bool {

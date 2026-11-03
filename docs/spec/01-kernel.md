@@ -236,7 +236,7 @@ interjection stay distinct. See ADR 0010.
   it is `Mutating`. A child's registry binds `spawn_agent` to a deeper runner
   that refuses, so nesting is rejected while siblings are free. The result is
   audited through the normal tool events; the usage is reported in the result
-  and is not yet part of the parent's token budget.
+  and the driver adds it to the turn usage, so the token budget sees it.
 
 ## Secrets
 

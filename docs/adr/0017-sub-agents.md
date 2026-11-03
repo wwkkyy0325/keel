@@ -42,10 +42,9 @@ permissions, cancellation or audit.
    same gate and the same interaction broker; a prompt goes to the same user.
    Cancellation is the parent's `CancelToken`, so cancelling the parent cancels
    the child's model call.
-7. **Usage is reported, not hidden.** The tool result carries model calls,
-   tool calls and input/output tokens. The parent's turn budget does not yet
-   include them; the report is the accounting, and a later change may add the
-   child usage to the parent's counter.
+7. **Delegated usage is part of the turn.** The tool result carries the
+   child's usage and the driver adds it to the turn usage, so the token budget
+   sees what the children spent. The report still lists the per-child numbers.
 8. **Errors are surfaced.** A failed child reports its state and the error
    text; the tool does not pretend success.
 
@@ -53,8 +52,8 @@ permissions, cancellation or audit.
 
 - The parent sees one compact report instead of a transcript, and can ask a
   follow-up or continue its own work.
-- The child pays for its own context: its tokens are outside the parent's
-  budget until the counter is extended.
+- The child pays for its own context, and that spend counts against the
+  parent's turn budget; a delegation can therefore bring the wrap-up closer.
 - Parallel siblings share the read batch; a child that spawns again gets a
   clear error. The concurrency hint is a tool capability, not a risk class, so
   the UI and audit still see the tool as mutating.
