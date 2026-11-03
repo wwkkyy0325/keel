@@ -2031,3 +2031,20 @@
   duration). Real run payload: role=proofreader, state=done, 5 model calls,
   7 tool calls, steps = list_dir, read_file, shell x3, read_file, shell.
 - Verified by reading `--view events` after a real delegation.
+
+### Background lifecycle fixes (2026-11-05)
+
+- Background tasks now kill the whole process tree on drop and at the
+  two-hour cap, matching the foreground path (`kill_tree`: process group on
+  Unix, `taskkill /T /F` on Windows). The old `child.kill()` left grandchildren
+  alive.
+- `BackgroundStarted` records the handle, program, pid and turn at start.
+  Previously a persisted log showed a `background_result` for a handle that
+  was never introduced.
+- `BackgroundTasks::start` takes the turn id; the host wires the event log
+  into `LocalBackgroundTasks`.
+- Tests: `a_background_start_is_audited`, and
+  `dropping_the_registry_kills_the_process_tree` (a Python grandchild that
+  would write a marker after the registry is dropped). Real eval run
+  `background-command` PASSes; `--view events` shows `background_started`
+  then `background_result` for `bg-1`.

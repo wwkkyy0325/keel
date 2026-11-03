@@ -386,7 +386,7 @@ impl Drop for TreeGuard {
     }
 }
 
-fn kill_tree(pid: u32) {
+pub(crate) fn kill_tree(pid: u32) {
     #[cfg(windows)]
     {
         let _ = std::process::Command::new("taskkill")

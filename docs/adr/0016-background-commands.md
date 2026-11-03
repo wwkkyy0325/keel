@@ -8,9 +8,10 @@ long command is still killed by a clock.
 
 Implementation notes: the tool passes `background = "true"` because the kernel
 tool parameter model has no boolean kind yet. `LocalBackgroundTasks` holds at
-most four commands, kills them on drop, and caps a command at two hours. The
-result enters as a user-facing `[background <id> finished]` message at the top
-of the model loop, and `BackgroundResult` records the audit event.
+most four commands, kills the process tree on drop and at the two-hour cap,
+and caps a command at two hours. The result enters as a user-facing
+`[background <id> finished]` message at the top of the model loop;
+`BackgroundStarted` and `BackgroundResult` record the audit events.
 
 ## Context
 

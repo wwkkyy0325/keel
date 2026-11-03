@@ -1459,6 +1459,7 @@ struct StaticBackground;
 impl keel_runtime::BackgroundTasks for StaticBackground {
     fn start(
         &self,
+        _turn_id: keel_core::TurnId,
         _spec: &keel_runtime::command::CommandSpec<'_>,
     ) -> Result<String, keel_core::ToolError> {
         Err(keel_core::ToolError::invalid_arguments("not used"))

@@ -237,6 +237,13 @@ pub enum Event {
         /// Bounded trace of the child's tool calls.
         steps: Vec<SubAgentStep>,
     },
+    /// A background command started; the handle matches its completion.
+    BackgroundStarted {
+        turn_id: TurnId,
+        id: String,
+        program: String,
+        pid: u32,
+    },
     /// A background command finished and its result entered the turn.
     BackgroundResult {
         turn_id: TurnId,
@@ -321,6 +328,7 @@ impl Event {
             | Self::TurnFinished { turn_id, .. }
             | Self::TurnContinued { turn_id, .. }
             | Self::TurnBudgetExhausted { turn_id, .. }
+            | Self::BackgroundStarted { turn_id, .. }
             | Self::BackgroundResult { turn_id, .. }
             | Self::SubAgentFinished { turn_id, .. }
             | Self::TurnCancelled { turn_id, .. }
@@ -366,6 +374,7 @@ impl Event {
             Self::TurnFinished { .. } => "turn_finished",
             Self::TurnContinued { .. } => "turn_continued",
             Self::TurnBudgetExhausted { .. } => "turn_budget_exhausted",
+            Self::BackgroundStarted { .. } => "background_started",
             Self::BackgroundResult { .. } => "background_result",
             Self::SubAgentFinished { .. } => "sub_agent_finished",
             Self::TurnCancelled { .. } => "turn_cancelled",

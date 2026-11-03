@@ -49,7 +49,8 @@ Stable within a major version:
 - The event enum is the live UI/audit feed: turn and state changes, context
   builds, tool starts/finishes, `PermissionDecided` for every gate decision,
   interactions, memory and summary events, `SubAgentFinished` for a delegated
-  run and `BackgroundResult` for a finished background command. `Event` serializes with snake_case
+  run, and `BackgroundStarted`/`BackgroundResult` for a background command.
+  `Event` serializes with snake_case
   keys so a host can persist the stream without a second schema. A host may
   call `EventLog::clear` between turns after persisting the stream; sequence
   numbers stay monotonic within the process. `ToolFinished` carries a bounded,
@@ -126,10 +127,12 @@ Stable within a major version:
   log by the host runner.
 - Background commands: `BackgroundTasks`, `BackgroundResult`,
   `LocalBackgroundTasks` and the `shell` `background = "true"` argument. The
-  host registry runs at most four at once, kills a tree on drop and caps a
-  command at two hours. Results enter at the model-loop safe point as a
-  `[background <id> finished]` message and are audited with `BackgroundResult`;
-  a result that misses the last call waits for the next turn.
+  host registry runs at most four at once, records each start with
+  `BackgroundStarted`, kills the process tree on drop and at the two-hour cap,
+  and caps a command at two hours. Results enter at the model-loop safe point
+  as a `[background <id> finished]` message and are audited with
+  `BackgroundResult`; a result that misses the last call waits for the next
+  turn.
 - Interjections: `InterjectionQueue`, `InterjectionPush` and
   `TurnDriver::interject`. The queue is bounded and deduplicated; delivery
   happens only at model-call safe points, and late items are reported in
@@ -229,7 +232,7 @@ with its UI, and does not need the reference CLI.
 | Tool output spill | `reading_a_spilled_output_is_allowed`, `the_rest_of_keel_stays_denied` |
 | `Summarizer` | `crates/keel-runtime` summarizer unit tests |
 | `TrashStore` | `crates/keel-runtime` trash unit tests |
-| Background commands | `a_background_command_reports_its_output_and_exit`, `the_background_limit_is_enforced`, `a_background_result_enters_before_the_next_model_call` |
+| Background commands | `a_background_command_reports_its_output_and_exit`, `the_background_limit_is_enforced`, `a_background_start_is_audited`, `dropping_the_registry_kills_the_process_tree`, `a_background_result_enters_before_the_next_model_call` |
 | Sub-agents | `a_spawn_returns_the_child_report_and_usage`, `a_failed_child_is_a_tool_failure`, `a_tool_that_declares_concurrency_overlaps_its_siblings` |
 | Turn continuation and budget | `a_turn_continues_while_the_task_list_has_unfinished_items`, `the_turn_budget_forces_the_final_call_without_telling_the_model` |
 | Session snapshot | `a_snapshot_restores_the_derived_state`, `a_snapshot_from_a_newer_format_is_rejected` |

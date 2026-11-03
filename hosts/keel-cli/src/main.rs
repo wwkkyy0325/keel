@@ -435,9 +435,9 @@ async fn run() -> Result<ExitCode, KernelError> {
         None => Arc::new(LocalTrashStore::new(permissions.root().to_path_buf())),
     };
 
-    let background: Arc<dyn BackgroundTasks> =
-        Arc::new(LocalBackgroundTasks::new(outputs_dir.clone()));
     let events = Arc::new(EventLog::new());
+    let background: Arc<dyn BackgroundTasks> =
+        Arc::new(LocalBackgroundTasks::new(outputs_dir.clone()).with_events(events.clone()));
     let (ui_tx, ui_rx) = tokio::sync::mpsc::channel(256);
     let (interaction_port, tui_interactions): (
         Arc<dyn InteractionPort>,

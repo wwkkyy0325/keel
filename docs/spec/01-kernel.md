@@ -219,8 +219,9 @@ interjection stay distinct. See ADR 0010.
   `[background <id> finished] <program> exit code <n> after <ms>; output:
   <path>` plus the last forty lines. A result that arrives after the last call
   waits for the next turn; it is never injected into a stream.
-- `BackgroundResult` is the audit event. The port is `BackgroundTasks`; a host
-  that cannot run processes returns the error the tool surfaces.
+- `BackgroundStarted` records the handle, program and pid; `BackgroundResult`
+  records the outcome. The port is `BackgroundTasks`; a host that cannot run
+  processes returns the error the tool surfaces.
 
 ## Sub-agents
 

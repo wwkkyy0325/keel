@@ -3,12 +3,13 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Child;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use keel_core::ToolError;
+use keel_core::{Event, ToolError, TurnId};
 
 use crate::command::{self, CommandSpec};
+use crate::event_log::EventLog;
 
 /// Commands that may run at once per registry.
 const LIMIT: usize = 4;
@@ -31,12 +32,14 @@ pub struct BackgroundResult {
 
 /// The kernel's view: start a command and drain the ones that finished.
 pub trait BackgroundTasks: Send + Sync {
-    fn start(&self, spec: &CommandSpec<'_>) -> Result<String, ToolError>;
+    /// Starts a command and returns the handle line shown to the model.
+    fn start(&self, turn_id: TurnId, spec: &CommandSpec<'_>) -> Result<String, ToolError>;
     fn drain(&self) -> Vec<BackgroundResult>;
 }
 
 struct Running {
     id: u32,
+    pid: u32,
     program: String,
     child: Child,
     started: Instant,
@@ -53,6 +56,7 @@ struct State {
 pub struct LocalBackgroundTasks {
     state: Mutex<State>,
     outputs: PathBuf,
+    events: Option<Arc<EventLog>>,
 }
 
 impl LocalBackgroundTasks {
@@ -60,7 +64,15 @@ impl LocalBackgroundTasks {
         Self {
             state: Mutex::new(State::default()),
             outputs: outputs.into(),
+            events: None,
         }
+    }
+
+    /// Records every start in the turn's event log. A start is otherwise only
+    /// visible in a tool preview, which is not persisted.
+    pub fn with_events(mut self, events: Arc<EventLog>) -> Self {
+        self.events = Some(events);
+        self
     }
 
     /// How many commands are running right now.
@@ -74,7 +86,7 @@ impl LocalBackgroundTasks {
 }
 
 impl BackgroundTasks for LocalBackgroundTasks {
-    fn start(&self, spec: &CommandSpec<'_>) -> Result<String, ToolError> {
+    fn start(&self, turn_id: TurnId, spec: &CommandSpec<'_>) -> Result<String, ToolError> {
         let mut state = self
             .state
             .lock()
@@ -93,11 +105,20 @@ impl BackgroundTasks for LocalBackgroundTasks {
         let pid = child.id();
         state.tasks.push(Running {
             id: next_id,
+            pid,
             program: spec.program.to_owned(),
             child,
             started: Instant::now(),
             output: output.clone(),
         });
+        if let Some(events) = &self.events {
+            events.append(Event::BackgroundStarted {
+                turn_id,
+                id: id.clone(),
+                program: spec.program.to_owned(),
+                pid,
+            });
+        }
         Ok(format!(
             "started {id} (pid {pid}); output: {}",
             output.display()
@@ -116,11 +137,12 @@ impl BackgroundTasks for LocalBackgroundTasks {
             let done = match &status {
                 Ok(Some(_)) => true,
                 Err(_) => {
-                    let _ = task.child.kill();
+                    command::kill_tree(task.pid);
+                    let _ = task.child.wait();
                     true
                 }
                 Ok(None) if task.started.elapsed() >= HARD_TIMEOUT => {
-                    let _ = task.child.kill();
+                    command::kill_tree(task.pid);
                     let _ = task.child.wait();
                     true
                 }
@@ -151,8 +173,12 @@ impl BackgroundTasks for LocalBackgroundTasks {
 impl Drop for LocalBackgroundTasks {
     fn drop(&mut self) {
         if let Ok(state) = self.state.get_mut() {
+            // A shell command spawns children; killing only the leader leaves
+            // the grandchildren running. `kill_tree` matches the foreground
+            // path: a process group on Unix, `taskkill /T` on Windows.
+            // No `wait()`: shutdown must not block on an unkillable process.
             for task in &mut state.tasks {
-                let _ = task.child.kill();
+                command::kill_tree(task.pid);
             }
         }
     }
@@ -198,7 +224,7 @@ mod tests {
             cwd: dir.path(),
             timeout: Duration::from_secs(5),
         };
-        let started = tasks.start(&spec).unwrap();
+        let started = tasks.start(TurnId::new(1), &spec).unwrap();
         assert!(started.contains("bg-1"), "{started}");
 
         let mut results = Vec::new();
@@ -230,14 +256,88 @@ mod tests {
             timeout: Duration::from_secs(5),
         };
         for _ in 0..LIMIT {
-            tasks.start(&spec).unwrap();
+            tasks.start(TurnId::new(1), &spec).unwrap();
         }
-        let error = tasks.start(&spec).unwrap_err();
+        let error = tasks.start(TurnId::new(1), &spec).unwrap_err();
         assert!(
             error.message.contains("background limit"),
             "{}",
             error.message
         );
         assert_eq!(tasks.running(), LIMIT);
+    }
+
+    #[test]
+    fn dropping_the_registry_kills_the_process_tree() {
+        if !python_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("marker.txt");
+        let tasks = LocalBackgroundTasks::new(dir.path().join("outputs"));
+        // The leader spawns a grandchild that would write the marker after
+        // two seconds. Killing only the leader leaves the grandchild alive.
+        let inner =
+            "import time; time.sleep(2); open(__import__('sys').argv[1], 'w').write('alive')";
+        let leader = format!(
+            "import subprocess, sys; subprocess.run([sys.executable, '-c', {inner:?}, sys.argv[1]])"
+        );
+        let args = vec![
+            "-c".to_owned(),
+            leader,
+            marker.to_string_lossy().into_owned(),
+        ];
+        let spec = CommandSpec {
+            program: "python",
+            args: &args,
+            cwd: dir.path(),
+            timeout: Duration::from_secs(5),
+        };
+        tasks.start(TurnId::new(1), &spec).unwrap();
+        // Let the leader spawn its child before the registry goes away.
+        std::thread::sleep(Duration::from_millis(300));
+        drop(tasks);
+        std::thread::sleep(Duration::from_secs(3));
+        assert!(
+            !marker.exists(),
+            "the grandchild survived the registry drop"
+        );
+    }
+
+    #[test]
+    fn a_background_start_is_audited() {
+        if !python_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let events = Arc::new(EventLog::new());
+        let tasks =
+            LocalBackgroundTasks::new(dir.path().join("outputs")).with_events(events.clone());
+        let args = vec!["-c".to_owned(), "import time; time.sleep(5)".to_owned()];
+        let spec = CommandSpec {
+            program: "python",
+            args: &args,
+            cwd: dir.path(),
+            timeout: Duration::from_secs(5),
+        };
+        tasks.start(TurnId::new(7), &spec).unwrap();
+
+        let started = events
+            .snapshot()
+            .into_iter()
+            .find_map(|record| match record.event {
+                Event::BackgroundStarted {
+                    turn_id,
+                    id,
+                    program,
+                    pid,
+                } => Some((turn_id, id, program, pid)),
+                _ => None,
+            })
+            .expect("background_started");
+        assert_eq!(started.0, TurnId::new(7));
+        assert_eq!(started.1, "bg-1");
+        assert_eq!(started.2, "python");
+        assert!(started.3 > 0);
     }
 }

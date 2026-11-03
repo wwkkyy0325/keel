@@ -963,7 +963,7 @@ impl Tool for ShellTool {
                     ToolError::invalid_arguments("background execution is not available here"),
                 );
             };
-            return match tasks.start(&spec) {
+            return match tasks.start(ctx.turn_id, &spec) {
                 Ok(message) => ToolResult::success(
                     ctx.call_id,
                     "shell",
