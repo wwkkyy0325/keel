@@ -1427,7 +1427,7 @@ Run:
   --session              read one input per line until EOF
   --turn-timeout-ms N    turn deadline override (backstop)
   --tool-timeout-ms N    per-tool inactivity window
-  --auto-continues N     start another turn while todos remain (default 3, 0 off)
+  --auto-continues N     batch only: restart a finished turn while tasks remain (default 0)
 
 Views:
   --view sessions|session|turn|memory|events
@@ -1467,7 +1467,7 @@ fn parse_args() -> Result<Args, KernelError> {
     let mut acceptance = None;
     let mut session = false;
     let mut max_model_calls = None;
-    let mut auto_continues = 3u32;
+    let mut auto_continues = 0u32;
     let mut todo_file = None;
     let mut no_todo = false;
     let mut no_recall = false;

@@ -82,8 +82,9 @@ completes without user input.
   backstop, a 1,000-call tool budget in the coding profiles) are runaway
   protection, not a per-task allowance, and an unfinished `todo` list keeps the
   turn going instead of asking the user to type "continue". When a turn still
-  ends with open task items, the host starts another turn (`--auto-continues`,
-  default 3) and reports the remaining count when the limit is reached. A
+  ends with open task items, the host offers to continue: the TUI shows the
+  remaining count and pre-fills the prompt, and the batch flag
+  `--auto-continues N` (default 0) starts the next turn by itself. A
   per-turn input-token budget bounds cost; it is derived from the working set
   and the model never sees the number.
 - Timeouts measure activity: a command that keeps printing is not cut at a

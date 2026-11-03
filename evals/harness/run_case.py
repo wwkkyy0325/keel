@@ -160,6 +160,9 @@ def run_case(case_dir: Path, profile: str | None = None, keep: bool = False) -> 
     acceptance = meta.get("case", {}).get("acceptance")
     if acceptance:
         command.extend(["--acceptance", str(case_dir / acceptance)])
+    max_calls = meta.get("case", {}).get("max_model_calls")
+    if max_calls:
+        command.extend(["--max-model-calls", str(max_calls)])
 
     started = dt.datetime.now(dt.timezone.utc)
     timed_out = False

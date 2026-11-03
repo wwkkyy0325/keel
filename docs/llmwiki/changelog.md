@@ -1925,3 +1925,14 @@
 - Real deepseek verification on the twenty-module case: 3 calls/turn needed
   three turns (`auto-continue 1/2`, `2/2`, then `19 task(s) remain`); 10
   calls/turn finished in three turns and the case verifier passed.
+
+### Cross-turn continuation is opt-in
+
+- `--auto-continues` now defaults to 0. A new turn spends a new token
+  budget; restarting one silently would spend money without consent, so batch
+  runs opt in and see `auto-continue k/N`.
+- The TUI never restarts a turn by itself: when a finished turn leaves tasks
+  open it prints `N task(s) remain; press Enter to continue` and pre-fills
+  `Continue the task list`.
+- `run_case.py` accepts `max_model_calls` in `meta.toml` so a case can force
+  the multi-turn path.

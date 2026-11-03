@@ -23,7 +23,8 @@ use crossterm::terminal::{
 };
 use keel_core::{
     CancelToken, Event, GrantScope, InteractionKind, InteractionPort, InteractionRequest,
-    InteractionResponse, KernelError, PermissionLevel, TodoList, TokenUsage,
+    InteractionResponse, KernelError, PermissionLevel, TodoList, TodoState, TodoStatus, TokenUsage,
+    TurnState,
 };
 use keel_runtime::{EventLog, InterjectionPush, RuntimeConfig, TurnDriver, TurnOutcome};
 use ratatui::backend::CrosstermBackend;
@@ -115,6 +116,8 @@ pub struct TuiHost {
 struct TurnDone {
     input: String,
     outcome: TurnOutcome,
+    /// Task items still open when the turn ended.
+    remaining: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -302,6 +305,12 @@ impl App {
         );
         for text in &done.outcome.late_interjections {
             self.notice(format!("interjection not delivered: {text}"));
+        }
+        if let Some(hint) = continuation_hint(done.outcome.state, done.remaining) {
+            self.notice(hint);
+            if self.input.is_empty() {
+                self.prefill("Continue the task list");
+            }
         }
         if let Some(kind) = done.outcome.secret_warning {
             self.notice(format!(
@@ -906,6 +915,7 @@ pub async fn run(host: TuiHost) -> Result<ExitCode, KernelError> {
     let mut interactions = host.interactions;
     let mut ui = host.ui;
     let mut store = host.store;
+    let todos = host.todos.clone();
     let mut ticks = tokio::time::interval(Duration::from_millis(80));
 
     while !app.should_quit {
@@ -915,7 +925,13 @@ pub async fn run(host: TuiHost) -> Result<ExitCode, KernelError> {
                 let CrosstermEvent::Key(key) = key else { continue };
                 match app.handle_key(key) {
 
-                    Some(Command::Submit(input)) => start_turn(&mut app, driver.clone(), turn_tx.clone(), input),
+                    Some(Command::Submit(input)) => start_turn(
+                        &mut app,
+                        driver.clone(),
+                        turn_tx.clone(),
+                        todos.clone(),
+                        input,
+                    ),
                     Some(Command::Slash(command)) => run_slash(&mut app, &command, store.as_ref()),
                     Some(Command::Interject(text)) => match driver.interject(&text) {
                         InterjectionPush::Queued(_) => {
@@ -990,6 +1006,7 @@ fn start_turn(
     app: &mut App,
     driver: Arc<TurnDriver<HostModel>>,
     tx: mpsc::Sender<TurnDone>,
+    todos: Option<Arc<Mutex<TodoList>>>,
     input: String,
 ) {
     let cancel = CancelToken::new();
@@ -997,8 +1014,39 @@ fn start_turn(
     app.start_turn(input.clone());
     tokio::spawn(async move {
         let outcome = driver.run(&input, cancel).await;
-        let _ = tx.send(TurnDone { input, outcome }).await;
+        let remaining = open_tasks(todos.as_ref());
+        let _ = tx
+            .send(TurnDone {
+                input,
+                outcome,
+                remaining,
+            })
+            .await;
     });
+}
+
+/// Task items the model has not closed, used only to offer the next turn.
+fn open_tasks(todos: Option<&Arc<Mutex<TodoList>>>) -> usize {
+    let Some(handle) = todos else { return 0 };
+    let list = handle
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if list.state != TodoState::Active {
+        return 0;
+    }
+    list.items
+        .iter()
+        .filter(|item| matches!(item.status, TodoStatus::Pending | TodoStatus::InProgress))
+        .count()
+}
+
+/// The hint shown when a finished turn left work on the list.
+fn continuation_hint(state: TurnState, remaining: usize) -> Option<String> {
+    if remaining == 0 {
+        return None;
+    }
+    matches!(state, TurnState::Done | TurnState::Converge)
+        .then(|| format!("{remaining} task(s) remain; press Enter to continue"))
 }
 
 fn run_slash(app: &mut App, command: &str, store: Option<&Store>) {
@@ -1685,5 +1733,16 @@ mod tests {
         assert!(rendered.contains("› Allow once"), "the default is marked");
         assert!(rendered.contains("Full auto"));
         assert!(rendered.contains("↑↓ select"));
+    }
+
+    #[test]
+    fn a_finished_turn_offers_the_next_one_when_tasks_remain() {
+        assert_eq!(
+            continuation_hint(TurnState::Done, 2),
+            Some("2 task(s) remain; press Enter to continue".to_owned())
+        );
+        assert!(continuation_hint(TurnState::Done, 0).is_none());
+        assert!(continuation_hint(TurnState::Error, 2).is_none());
+        assert!(continuation_hint(TurnState::Cancelled, 2).is_none());
     }
 }

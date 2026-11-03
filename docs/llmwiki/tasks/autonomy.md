@@ -55,9 +55,10 @@ the mechanism.
 
 - [x] **5. Continue across turns while the task list is open.**
       The host (`--input` and `--session`) starts another turn when a finished
-      turn still has pending items, up to `--auto-continues` (default 3,
-      `0` disables). At the limit it prints the remaining count instead of
-      looping forever. The turn input is a fixed nudge; the shared task list
+      turn still has pending items, up to `--auto-continues` (default 0:
+      batch only). At the limit it prints the remaining count instead of
+      looping forever. The TUI never restarts a turn alone; it shows the
+      remaining count and pre-fills the prompt, so one Enter continues. The turn input is a fixed nudge; the shared task list
       carries the state.
       Verify: real deepseek runs on the twenty-module case — with three model
       calls per turn it needed three turns, printed `auto-continue 1/2` and
