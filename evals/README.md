@@ -69,6 +69,11 @@ happened and the turn did not burn its cost budget.
 workspace root, all raised from `LIMIT = 10` to `LIMIT = 25` in one turn,
 checked by two hidden tests.
 
+`subagent-delegation` proves the delegation path: the parent must call
+`spawn_agent`, the child writes `alpha.txt`, and the verifier checks the
+artifact and rejects the setup. The run also reports the parent's tool calls
+and the delegated tokens.
+
 ## Long-horizon cases
 
 Two cases exercise a long run rather than a single fix:

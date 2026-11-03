@@ -1979,3 +1979,11 @@
   delegated work.
 - Real deepseek check: the same two-spawn task now reports the parent's input
   as 14,458 tokens (own ~6k plus the children's), where it was 6,082 before.
+
+### Sub-agent eval case
+
+- `evals/cases/coding/subagent-delegation`: the parent must delegate to
+  `spawn_agent`, the child writes `alpha.txt`, and the verifier checks the
+  artifact (setup rejected, reference accepted).
+- Real deepseek run through the harness: PASS, 5 model calls, 6 tool calls,
+  21,627 input tokens (including the child), 17.5 s.
