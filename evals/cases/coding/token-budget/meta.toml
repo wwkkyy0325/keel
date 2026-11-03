@@ -1,0 +1,14 @@
+[case]
+id = "token-budget"
+kind = "coding"
+timeout_seconds = 300
+profile = "variants/coding/profile.deepseek.consumer.toml"
+model = "deepseek-flash"
+seeds = [1]
+max_turn_tokens = 1000
+
+[mechanisms]
+min_tool_calls = 1
+min_model_calls = 1
+max_permission_deny = 0
+require_budget_exhaustion = true

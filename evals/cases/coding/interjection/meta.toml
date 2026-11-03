@@ -1,0 +1,15 @@
+[case]
+id = "interjection"
+kind = "coding"
+timeout_seconds = 300
+profile = "variants/coding/profile.deepseek.consumer.toml"
+model = "deepseek-flash"
+seeds = [1]
+interject = "额外要求：用 write_file 写 injected.txt，内容一行 injected，然后回答。"
+interject_after_ms = 800
+
+[mechanisms]
+min_tool_calls = 2
+min_model_calls = 2
+max_permission_deny = 0
+forbid_budget_exhaustion = true

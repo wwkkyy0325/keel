@@ -426,6 +426,9 @@ async fn run() -> Result<ExitCode, KernelError> {
     if let Some(ms) = args.tool_timeout_ms {
         limits.tool_timeout = std::time::Duration::from_millis(ms);
     }
+    if let Some(tokens) = args.max_turn_tokens {
+        limits.max_turn_input_tokens = tokens.max(1);
+    }
 
     let trash: Arc<dyn TrashStore> = match &state_dir {
         Some(dir) => Arc::new(LocalTrashStore::at(dir.join("trash"))),
@@ -606,6 +609,16 @@ async fn run() -> Result<ExitCode, KernelError> {
         .await;
     }
 
+    let driver = Arc::new(driver);
+    if let Some(text) = &args.interject {
+        let pusher = driver.clone();
+        let text = text.clone();
+        let delay = std::time::Duration::from_millis(args.interject_after_ms);
+        tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            pusher.interject(&text);
+        });
+    }
     let outcome = driver.run(&args.input, CancelToken::new()).await;
     print_outcome(&config, &events, &outcome, None);
     print_todos(todos.as_ref());
@@ -1409,6 +1422,11 @@ struct Args {
     retry_errors: u32,
     /// Host-owned turn deadline override; the policy default is a 24-hour backstop.
     turn_timeout_ms: Option<u64>,
+    /// Host-owned per-turn input-token budget override (tests only).
+    max_turn_tokens: Option<u64>,
+    /// Inject one user message while the turn runs (tests only).
+    interject: Option<String>,
+    interject_after_ms: u64,
     /// Host-owned per-tool inactivity window; the policy default is 300 s.
     tool_timeout_ms: Option<u64>,
     /// SQLite file for session persistence.
@@ -1480,6 +1498,9 @@ Run:
   --session              read one input per line until EOF
   --turn-timeout-ms N    turn deadline override (backstop)
   --tool-timeout-ms N    per-tool inactivity window
+  --max-turn-tokens N    per-turn input-token budget override (tests)
+  --interject TEXT       inject a user message while the turn runs (tests)
+  --interject-after-ms N delay before the injected message (default 1000)
 
 Views:
   --view sessions|session|turn|memory|events
@@ -1528,6 +1549,9 @@ fn parse_args() -> Result<Args, KernelError> {
     let mut stop_on_error = false;
     let mut retry_errors = 0u32;
     let mut turn_timeout_ms = None;
+    let mut max_turn_tokens = None;
+    let mut interject = None;
+    let mut interject_after_ms = 1000u64;
     let mut tool_timeout_ms = None;
     let mut store = None;
     let mut session_id = "default".to_owned();
@@ -1782,6 +1806,28 @@ fn parse_args() -> Result<Args, KernelError> {
                 }
                 turn_timeout_ms = Some(ms);
             }
+            "--max-turn-tokens" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| invalid_config("missing value for `--max-turn-tokens`"))?;
+                max_turn_tokens = Some(value.parse::<u64>().map_err(|_| {
+                    invalid_config("`--max-turn-tokens` must be a positive integer")
+                })?);
+            }
+            "--interject" => {
+                interject = Some(
+                    args.next()
+                        .ok_or_else(|| invalid_config("missing value for `--interject`"))?,
+                );
+            }
+            "--interject-after-ms" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| invalid_config("missing value for `--interject-after-ms`"))?;
+                interject_after_ms = value
+                    .parse::<u64>()
+                    .map_err(|_| invalid_config("`--interject-after-ms` must be a positive integer"))?;
+            }
             "--tool-timeout-ms" => {
                 let value = args
                     .next()
@@ -1870,6 +1916,9 @@ fn parse_args() -> Result<Args, KernelError> {
         retry_errors,
         turn_timeout_ms,
         tool_timeout_ms,
+        max_turn_tokens,
+        interject,
+        interject_after_ms,
         store,
         session_id,
         keyring_set,

@@ -169,6 +169,15 @@ def run_case(case_dir: Path, profile: str | None = None, keep: bool = False) -> 
     todo_file = meta.get("case", {}).get("todo_file")
     if todo_file:
         command.extend(["--todo-file", str(case_dir / todo_file)])
+    max_tokens = meta.get("case", {}).get("max_turn_tokens")
+    if max_tokens:
+        command.extend(["--max-turn-tokens", str(max_tokens)])
+    interject = meta.get("case", {}).get("interject")
+    if interject:
+        command.extend(["--interject", interject])
+        delay = meta.get("case", {}).get("interject_after_ms")
+        if delay:
+            command.extend(["--interject-after-ms", str(delay)])
 
     started = dt.datetime.now(dt.timezone.utc)
     timed_out = False
@@ -211,6 +220,8 @@ def run_case(case_dir: Path, profile: str | None = None, keep: bool = False) -> 
         )
     if rules.get("require_continuation") and mechanisms.get("continuations", 0) < 1:
         failures.append("no turn continuation")
+    if rules.get("require_budget_exhaustion") and not mechanisms.get("budget_exhausted"):
+        failures.append("the turn budget was not reached")
     if rules.get("forbid_budget_exhaustion") and mechanisms.get("budget_exhausted"):
         failures.append("the turn budget was exhausted")
     if mechanisms.get("permission_deny", 0) > int(rules.get("max_permission_deny", 10**9)):

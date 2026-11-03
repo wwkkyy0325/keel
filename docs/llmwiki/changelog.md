@@ -2007,3 +2007,13 @@
   the driver continues the same turn (`continuations: 1`); both files exist.
   PASS in 5.7 s.
 - `run_case.py` passes `tool_timeout_ms` and `todo_file` from `meta.toml`.
+
+### Real budget and interjection triggers
+
+- `--max-turn-tokens N` overrides the derived per-turn budget for a test; the
+  `token-budget` case uses 1,000 and the harness requires
+  `budget_exhausted: true`. PASS: 2 model calls, the artifact written, the
+  forced final call.
+- `--interject TEXT --interject-after-ms N` injects a user message while the
+  turn runs; the `interjection` case delivers it during a three-second shell
+  call, and the model writes `injected.txt`. PASS: 3 model calls.
