@@ -25,7 +25,7 @@ the mechanism.
 ## Steps
 
 - [x] **1. Limits are runaway protection, not a budget.**
-      `RuntimeConfig::limits` defaults to 200 model calls, a one-hour turn
+      `RuntimeConfig::limits` defaults to 500 model calls, a 24-hour backstop,
       deadline and a five-minute tool timeout; the profile's `tools.budget`
       still narrows tool calls. Coding profiles go from 12 to 120 tool calls.
       Verify: `the_default_limits_fit_a_long_task`; the profile tests still

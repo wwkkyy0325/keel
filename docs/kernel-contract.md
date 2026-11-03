@@ -48,13 +48,14 @@ Stable within a major version:
   point.
 - The event enum is the live UI/audit feed: turn and state changes, context
   builds, tool starts/finishes, `PermissionDecided` for every gate decision,
-  interactions, memory and summary events. `Event` serializes with snake_case
+  interactions, memory and summary events, `SubAgentFinished` for a delegated
+  run and `BackgroundResult` for a finished background command. `Event` serializes with snake_case
   keys so a host can persist the stream without a second schema. A host may
   call `EventLog::clear` between turns after persisting the stream; sequence
   numbers stay monotonic within the process. `ToolFinished` carries a bounded,
   redacted `output_preview` for a live UI; the field is skipped during
   serialization, so tool output never reaches the persisted stream.
-- Turn limits are runaway protection, not a task budget: 200 model calls, the
+- Turn limits are runaway protection, not a task budget: 500 model calls, the
   profile's `tools.budget` and a 24-hour backstop. The timeouts are
   *inactivity* windows: a command with five minutes of silence is stopped, a
   command that keeps producing output is not, and a model stream is stopped
@@ -68,6 +69,10 @@ Stable within a major version:
   instruction or the reserved final call. Read-only calls in one round run in
   parallel, capped at eight at a time; mutating calls stay serialized.
 - The tool protocol: names, parameter kinds, risk levels and result envelopes.
+  `Tool::concurrent()` lets a mutating tool join the parallel batch; the
+  declared risk stays for the UI and audit. `ToolResult::with_usage` attaches
+  tokens spent outside the main model loop (a sub-agent), and the driver adds
+  them to the turn usage.
   A tool declared `read_only` may only declare read access; the dispatcher
   rejects a write or execute request before the permission gate runs, so the
   concurrent read batch cannot hide a mutation.
@@ -223,6 +228,9 @@ with its UI, and does not need the reference CLI.
 | Tool output spill | `reading_a_spilled_output_is_allowed`, `the_rest_of_keel_stays_denied` |
 | `Summarizer` | `crates/keel-runtime` summarizer unit tests |
 | `TrashStore` | `crates/keel-runtime` trash unit tests |
+| Background commands | `a_background_command_reports_its_output_and_exit`, `the_background_limit_is_enforced`, `a_background_result_enters_before_the_next_model_call` |
+| Sub-agents | `a_spawn_returns_the_child_report_and_usage`, `a_failed_child_is_a_tool_failure`, `a_tool_that_declares_concurrency_overlaps_its_siblings` |
+| Turn continuation and budget | `a_turn_continues_while_the_task_list_has_unfinished_items`, `the_turn_budget_forces_the_final_call_without_telling_the_model` |
 | Session snapshot | `a_snapshot_restores_the_derived_state`, `a_snapshot_from_a_newer_format_is_rejected` |
 | Snapshot persistence (host) | `hosts/keel-cli/src/store.rs` tests — host contract, not kernel |
 

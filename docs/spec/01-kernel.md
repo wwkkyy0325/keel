@@ -130,7 +130,8 @@ interjection stay distinct. See ADR 0010.
 - Arguments and results are typed at the kernel boundary.
 - Assistant tool-call messages carry structured calls; tool-result messages
   carry the originating call id.
-- Read-only tool calls may run concurrently; mutating calls are serialized.
+- Read-only tool calls run concurrently, and a mutating tool may declare
+  `concurrent()` to overlap with them; other mutating calls are serialized.
 - A tool failure returns a typed error envelope; it never aborts the turn by
   itself.
 - Every call is audited with name, duration, status and error code.
