@@ -121,8 +121,9 @@ Stable within a major version:
   child's spawn tool is bound to a deeper runner that refuses, so nesting is
   rejected. `ToolResult::with_usage` carries the child's tokens and the driver
   adds them to the turn usage, so the budget sees the delegation.
-  `SubAgentFinished` (parent turn, role, state, usage, error) is appended to the
-  parent event log by the host runner.
+  `SubAgentFinished` (parent turn, role, state, usage, error and up to 64
+  `SubAgentStep` entries: tool, ok, duration) is appended to the parent event
+  log by the host runner.
 - Background commands: `BackgroundTasks`, `BackgroundResult`,
   `LocalBackgroundTasks` and the `shell` `background = "true"` argument. The
   host registry runs at most four at once, kills a tree on drop and caps a

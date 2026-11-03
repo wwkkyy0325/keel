@@ -2024,3 +2024,10 @@
   parent event log; a real run shows the event in `--view events`.
 - `profile.deepseek.agent.toml` folded into the consumer profile (one variant
   fewer); the sandbox ADR is marked Deferred.
+
+### Sub-agent audit trace
+
+- `SubAgentFinished` now carries up to 64 `SubAgentStep` entries (tool, ok,
+  duration). Real run payload: role=proofreader, state=done, 5 model calls,
+  7 tool calls, steps = list_dir, read_file, shell x3, read_file, shell.
+- Verified by reading `--view events` after a real delegation.

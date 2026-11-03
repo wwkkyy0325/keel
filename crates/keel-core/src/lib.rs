@@ -28,7 +28,7 @@ pub use context::{
     estimate_tokens, BuildCtx, ContextMessage, ContextSnapshot, ContextStage, Fragment,
 };
 pub use error::{ErrorCode, KernelError, ToolError};
-pub use event::{Event, EventSink};
+pub use event::{Event, EventSink, SubAgentStep};
 pub use ids::{InteractionId, ToolCallId, TurnId};
 pub use interaction::{
     GrantScope, InteractionKind, InteractionOption, InteractionOutcome, InteractionPolicy,

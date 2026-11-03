@@ -15,6 +15,14 @@ use crate::tool::RiskLevel;
 /// arguments are intentionally excluded. `ToolFinished` carries a bounded
 /// output preview for a live UI, but that field is skipped during
 /// serialization, so tool output never reaches the store.
+/// One tool call a sub-agent made, kept in the parent's audit event.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SubAgentStep {
+    pub tool: String,
+    pub ok: bool,
+    pub duration_ms: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Event {
@@ -226,6 +234,8 @@ pub enum Event {
         input_tokens: u32,
         output_tokens: u32,
         error: Option<String>,
+        /// Bounded trace of the child's tool calls.
+        steps: Vec<SubAgentStep>,
     },
     /// A background command finished and its result entered the turn.
     BackgroundResult {

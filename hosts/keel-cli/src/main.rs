@@ -1212,6 +1212,24 @@ impl HostAgentRunner {
             .count() as u32;
         let error = outcome.error.as_ref().map(|error| error.to_string());
         if let Some(parent) = spec.parent_turn {
+            let steps = events
+                .for_turn(outcome.turn_id)
+                .into_iter()
+                .filter_map(|record| match record.event {
+                    Event::ToolFinished {
+                        tool,
+                        ok,
+                        duration_ms,
+                        ..
+                    } => Some(keel_core::SubAgentStep {
+                        tool,
+                        ok,
+                        duration_ms,
+                    }),
+                    _ => None,
+                })
+                .take(64)
+                .collect();
             self.events.append(Event::SubAgentFinished {
                 turn_id: parent,
                 role: spec.role.clone(),
@@ -1221,6 +1239,7 @@ impl HostAgentRunner {
                 input_tokens: outcome.usage.input_tokens,
                 output_tokens: outcome.usage.output_tokens,
                 error: error.clone(),
+                steps,
             });
         }
         Ok(SubAgentOutcome {
