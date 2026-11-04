@@ -1051,7 +1051,13 @@ fn continuation_hint(state: TurnState, remaining: usize) -> Option<String> {
 
 fn run_slash(app: &mut App, command: &str, store: Option<&Store>) {
     match command.trim() {
-        "/help" => app.notice("commands: /help /clear /cost /sessions /roots /cancel /quit"),
+        "/help" => {
+            app.notice("commands: /help /details /clear /cost /sessions /roots /cancel /quit")
+        }
+        "/details" => {
+            app.show_process = !app.show_process;
+            app.follow = true;
+        }
         "/quit" | "/exit" => app.should_quit = true,
         "/clear" => app.blocks.clear(),
         "/cost" => app.notice(format!(
@@ -1663,6 +1669,16 @@ mod tests {
         assert_eq!(app.handle_key(ctrl('o')), None);
         assert!(app.show_process);
         app.handle_key(ctrl('o'));
+        assert!(!app.show_process);
+    }
+
+    #[test]
+    fn the_details_command_toggles_process_details() {
+        let mut app = app();
+        assert!(!app.show_process);
+        run_slash(&mut app, "/details", None);
+        assert!(app.show_process);
+        run_slash(&mut app, "/details", None);
         assert!(!app.show_process);
     }
 

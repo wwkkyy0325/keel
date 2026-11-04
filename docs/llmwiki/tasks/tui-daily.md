@@ -80,6 +80,21 @@ Rules:
 
 No new panels. Everything above lands in the transcript or the status line.
 
+## Process details
+
+- While a turn runs, tool lines stream in: one line per call, plus a bounded
+  output excerpt for a failure.
+- When the turn ends, those lines collapse into one aggregate line under the
+  answer. The transcript keeps the user message, the answer and the aggregate.
+- `Ctrl-O` or `/details` toggles the process for the whole conversation. The
+  toggle only filters hidden blocks; it never re-runs, reorders or drops
+  messages.
+- A per-turn expansion would need a cursor over blocks, a selection model and
+  a second key set. A global toggle is one key, and it answers the question the
+  user actually asks ("what did it do"). If it ever proves insufficient, the
+  per-turn variant can be added on top; the block model already carries the
+  turn boundary.
+
 ## Settings
 
 Two, and both have a visible default:
@@ -121,13 +136,13 @@ Everything else (model, tools, permissions, budget) stays in the profile.
 | `Enter` | Send |
 | `Shift+Enter` | Newline (terminals that report it; `Alt+Enter` fallback) |
 | `Ctrl-C` | Cancel the running turn; when idle, clear the input; on an empty input, confirm quit |
-| `Ctrl-O` | Show or hide tool output and details |
+| `Ctrl-O` | Show or hide tool output and details (same as `/details`) |
 | `Shift+Tab` | Toggle `Confirm` / `Auto` |
 | `PageUp` / `PageDown` | Scroll the transcript |
 
-Slash commands stay local and few: `/help`, `/cost`, `/clear`, `/cancel`,
-`/quit`. Session switching stays on the command line (`--store`,
-`--session-id`).
+Slash commands stay local and few: `/help`, `/details`, `/cost`, `/clear`,
+`/cancel`, `/quit`. `/details` is the discoverable form of `Ctrl-O`. Session
+switching stays on the command line (`--store`, `--session-id`).
 
 ## States
 

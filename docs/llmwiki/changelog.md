@@ -2076,3 +2076,12 @@
   left no process. It asked the user before any registration.
 - The persona now names "Task Scheduler or the Startup folder" because the
   real run chose the Startup folder.
+
+### TUI process details (2026-11-05)
+
+- A finished turn collapses its tool lines into the aggregate line; `Ctrl-O`
+  or the new `/details` command reveals them for the whole conversation. The
+  toggle only filters hidden blocks and never re-runs or reorders.
+- `/details` is the discoverable form of the key; `/help` lists it.
+- `docs/llmwiki/tasks/tui-daily.md` records the behavior and why it is a
+  global toggle rather than a per-turn selection: no cursor model, one key.

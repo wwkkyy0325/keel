@@ -201,6 +201,9 @@ First complete kernel and reference host.
 - TUI: `Enter` while a turn runs queues an interjection instead of rejecting
   the input; `/cancel` still cancels, and a late interjection is shown as a
   notice after the turn. The line modes still read between turns.
+- TUI: a finished turn collapses its tool lines into the aggregate line;
+  `Ctrl-O` or `/details` reveals or hides the process for the whole
+  conversation. Tool output stays bounded and redacted.
 - A finished turn with open task items shows the remaining count and
   pre-fills the prompt in the TUI; the host never restarts a turn by itself.
 - `--help`/`-h` prints usage and `--version`/`-V` prints the host version

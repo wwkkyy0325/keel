@@ -82,8 +82,9 @@ the information the user acts on, two settings, Chinese and English.
 
 - The TUI is a host under `hosts/keel-cli`; the kernel crates do not depend on
   `ratatui`, `crossterm` or the UI loop.
-- Slash commands are local: `/help`, `/clear`, `/cost`, `/sessions`, `/cancel`,
-  `/quit`. Session switching happens by starting with `--store` and
-  `--session-id`; `/resume` is not implemented in the simplified UI.
+- Slash commands are local: `/help`, `/details`, `/clear`, `/cost`,
+  `/sessions`, `/roots`, `/cancel`, `/quit`. Session switching happens by
+  starting with `--store` and `--session-id`; `/resume` is not implemented in
+  the simplified UI.
 - Non-permission interactions with options are selected by number; freeform
   questions without options are deferred.
