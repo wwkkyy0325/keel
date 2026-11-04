@@ -2109,3 +2109,14 @@
   lists scopes, and the model is a profile decision. `TuiHost` no longer
   carries a workspace string.
 - Task counts refresh from the shared `TodoList` before every draw.
+
+### Correct permission mode labels (2026-11-05)
+
+- The status line said `Confirm` / `Auto`, which implied a third
+  always-confirm level. The kernel has exactly two levels (ADR 0002):
+  `Workspace` (inside the roots auto, outside asks) and `Full auto` (no
+  boundary, hard deny remains). The labels are now `工作区` / `全自动` and
+  `Workspace` / `Full auto`. There is no `manual` level; it is a host-level
+  wrapper the reference host does not implement.
+- Goldens regenerated; 433 tests pass. Built in `target/verify` because a
+  running `--tui --demo` session held the default binary.

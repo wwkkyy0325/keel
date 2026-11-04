@@ -1710,7 +1710,7 @@ mod tests {
         let rendered = frame(&app(), 80, 24);
         golden("tui-empty.txt", &rendered);
         assert!(rendered.contains("● ready"), "{rendered}");
-        assert!(rendered.contains("Confirm · Shift+Tab"), "{rendered}");
+        assert!(rendered.contains("Workspace · Shift+Tab"), "{rendered}");
         assert!(rendered.contains("> ▏"), "{rendered}");
     }
 

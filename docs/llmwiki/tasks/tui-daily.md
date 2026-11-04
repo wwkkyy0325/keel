@@ -34,7 +34,7 @@ day without turning it into a dashboard.
 │                                                            │
 │ 两个用例都通过了。                                          │
 ├────────────────────────────────────────────────────────────┤
-│ Idle · tasks 2/5                       Confirm · Shift+Tab │
+│ Idle · tasks 2/5                     Workspace · Shift+Tab │
 │ > _                                                        │
 └────────────────────────────────────────────────────────────┘
 ```
@@ -51,8 +51,8 @@ Rules:
    aggregate line: tools, files and duration, no token counts.
 3. **One status line.** Left: state (`Idle`, `Working`, `Waiting`, `Cancelled`),
    open tasks when a list exists, elapsed time while a turn runs. Right:
-   permission mode (`Confirm` / `Auto`) and the one key that applies. Nothing
-   else; tokens live in `/cost`.
+   permission mode (`Workspace` / `Full auto`) and the one key that applies.
+   Nothing else; tokens live in `/cost`.
 4. **One input line**, which grows for a pasted multi-line message.
 
 ## What is shown, and what is not
@@ -96,9 +96,11 @@ No new panels. Everything above lands in the transcript or the status line.
 
 Two, and both have a visible default:
 
-1. **Permission mode** — `Shift+Tab` toggles `Confirm` and `Auto` for the
-   session; the status line shows the current one. Never a modal, never a
-   config file.
+1. **Permission mode** — `Shift+Tab` toggles `Workspace` and `Full auto`
+   for the session; the status line shows the current one. These are the two
+   kernel levels; there is no third always-confirm level (`manual` is a
+   host-level wrapper the reference host does not implement). Never a modal,
+   never a config file.
 2. **Language** — resolved once at startup:
 
    ```
@@ -133,7 +135,7 @@ Everything else (model, tools, permissions, budget) stays in the profile.
 | `Shift+Enter` | Newline (terminals that report it; `Alt+Enter` fallback) |
 | `Ctrl-C` | Cancel the running turn; when idle, clear the input; on an empty input, confirm quit |
 | `Ctrl-O` | Show or hide tool output and details (same as `/details`) |
-| `Shift+Tab` | Toggle `Confirm` / `Auto` |
+| `Shift+Tab` | Toggle `Workspace` / `Full auto` |
 | `PageUp` / `PageDown` | Scroll the transcript |
 
 Slash commands stay local and few: `/help`, `/details`, `/cost`, `/clear`,
@@ -178,7 +180,7 @@ switching stays on the command line (`--store`, `--session-id`).
       the one contextual key (`Shift+Tab`, `Ctrl-O` or `Ctrl-C`). The
       workspace and model name are no longer shown; they were permanent
       chrome the user does not act on. Verify: goldens, `tui-empty.txt`
-      asserts `Confirm · Shift+Tab`; `ui_text` unit tests. Done 2026-11-05.
+      asserts `Workspace · Shift+Tab`; `ui_text` unit tests. Done 2026-11-05.
 - [ ] The input grows for a pasted multi-line message; today it is a fixed
       three-line box. Verify: a five-line paste is fully visible.
 - [ ] Tool line compaction: one line per call with target and duration;

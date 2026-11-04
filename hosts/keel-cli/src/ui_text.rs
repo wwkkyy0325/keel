@@ -110,10 +110,10 @@ impl Text {
 
     pub fn mode_label(&self, mode: &str) -> String {
         match (self.lang, mode) {
-            (Lang::Zh, "workspace_auto") => "确认",
-            (Lang::Zh, "full_auto") => "自动",
-            (Lang::En, "workspace_auto") => "Confirm",
-            (Lang::En, "full_auto") => "Auto",
+            (Lang::Zh, "workspace_auto") => "工作区",
+            (Lang::Zh, "full_auto") => "全自动",
+            (Lang::En, "workspace_auto") => "Workspace",
+            (Lang::En, "full_auto") => "Full auto",
             _ => mode,
         }
         .to_owned()
@@ -305,9 +305,13 @@ mod tests {
             Text::new(Lang::Zh).permission_title(),
             Text::new(Lang::En).permission_title()
         );
-        assert_eq!(Text::new(Lang::Zh).mode_label("workspace_auto"), "确认");
-        assert_eq!(Text::new(Lang::Zh).mode_label("full_auto"), "自动");
-        assert_eq!(Text::new(Lang::En).mode_label("full_auto"), "Auto");
+        assert_eq!(Text::new(Lang::Zh).mode_label("workspace_auto"), "工作区");
+        assert_eq!(Text::new(Lang::Zh).mode_label("full_auto"), "全自动");
+        assert_eq!(
+            Text::new(Lang::En).mode_label("workspace_auto"),
+            "Workspace"
+        );
+        assert_eq!(Text::new(Lang::En).mode_label("full_auto"), "Full auto");
         assert_eq!(Text::new(Lang::En).mode_label("custom"), "custom");
         assert_eq!(Text::new(Lang::Zh).task_status(2, 5), "任务 2/5");
         assert_eq!(Text::new(Lang::En).task_status(2, 5), "tasks 2/5");
