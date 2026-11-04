@@ -4,6 +4,9 @@ An interactive reference host: streaming transcript, tool lines, permission
 modal, slash commands, session resume and cancellation. Simplified on purpose:
 no markdown rendering, syntax highlighting, mouse or model picker.
 
+The daily-use iteration is `docs/llmwiki/tasks/tui-daily.md`: one screen, only
+the information the user acts on, two settings, Chinese and English.
+
 ## Steps
 
 - [x] `--tui` entry point with a terminal guard, raw mode and alternate screen.
