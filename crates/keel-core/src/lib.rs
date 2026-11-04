@@ -4,6 +4,16 @@
 //! crosses kernel boundaries: identifiers, messages, the tool protocol, model
 //! wire types, policy questions, events and errors.
 
+/// Kernel version, pinned by a product through the release tag.
+pub const KERNEL_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Version of the persisted event shape.
+///
+/// Adding a field keeps the version; renaming or removing one, or changing a
+/// field's meaning, bumps it. A host that stores events records this value so
+/// a later reader can tell which shape it is looking at.
+pub const EVENT_FORMAT_VERSION: u32 = 1;
+
 pub mod answer;
 pub mod cancel;
 pub mod context;
@@ -50,7 +60,7 @@ pub use secret::{detect_secret, redact_secrets, SecretKind};
 pub use session::{
     CompressionSkip, Entry, EntrySnapshot, Fact, FactScope, RecalledSegment, Segment,
     SegmentChange, SegmentRecord, SegmentSnapshot, SegmentState, Session, SessionSnapshot,
-    SessionSummary, ToolSummary, TurnRecord,
+    SessionSummary, ToolSummary, TurnRecord, SNAPSHOT_VERSION,
 };
 pub use state::{TurnEvent, TurnState};
 pub use todo::{

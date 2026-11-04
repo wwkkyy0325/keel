@@ -48,7 +48,7 @@ jobs:
           python-version: "3.12"
       # The kernel crates must build and pass their tests without the host,
       # and the minimal host example must run on every platform.
-      - run: cargo test -p keel-core -p keel-policy -p keel-runtime -p keel-model-openai -p keel-model-anthropic
+      - run: cargo test -p keel-core -p keel-policy -p keel-runtime -p keel-model-openai -p keel-model-anthropic -p keel-testkit
       - run: cargo run -p keel-runtime --example minimal_turn
 
   harness:

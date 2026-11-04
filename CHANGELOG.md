@@ -23,6 +23,10 @@ First complete kernel and reference host.
   six continuations bound a model that never closes the list, and a wrap-up or
   the reserved final call is never overridden. `TurnEvent::Continued` keeps the
   FSM explicit.
+- Upgrade support: `KERNEL_VERSION`, `EVENT_FORMAT_VERSION` and the
+  re-exported `SNAPSHOT_VERSION` are the version handshakes; the dev-only
+  `keel-testkit` crate provides a mock-model `Probe`, event assertions and the
+  event-name contract. `docs/kernel-upgrade.md` is the product-side checklist.
 - The audit stream covers session grants (`PermissionGranted`/
   `PermissionRevoked`), sub-agent starts, background results with the program
   and output path, and model failures with their code and duration;

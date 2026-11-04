@@ -6,6 +6,7 @@ members = [
   "crates/keel-model-openai",
   "crates/keel-policy",
   "crates/keel-runtime",
+  "crates/keel-testkit",
   "hosts/keel-cli",
 ]
 
@@ -23,6 +24,7 @@ keel-model-anthropic = { version = "0.1.0", path = "crates/keel-model-anthropic"
 keel-model-openai = { version = "0.1.0", path = "crates/keel-model-openai" }
 keel-policy = { version = "0.1.0", path = "crates/keel-policy" }
 keel-runtime = { version = "0.1.0", path = "crates/keel-runtime" }
+keel-testkit = { version = "0.1.0", path = "crates/keel-testkit" }
 reqwest = { version = "0.12", default-features = false, features = [
   "json",
   "stream",

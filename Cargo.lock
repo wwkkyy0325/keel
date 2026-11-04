@@ -836,6 +836,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "keel-testkit"
+version = "0.1.0"
+dependencies = [
+ "keel-core",
+ "keel-runtime",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "keyring"
 version = "3.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

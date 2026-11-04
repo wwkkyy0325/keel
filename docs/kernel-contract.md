@@ -66,6 +66,16 @@ Stable within a major version:
   redacted `output_preview` and `ToolStarted` a bounded, redacted
   `args_preview` for a live UI; both are skipped during serialization, so tool
   arguments and output never reach the persisted stream.
+- Version handshakes: `KERNEL_VERSION` is the kernel release;
+  `EVENT_FORMAT_VERSION` is the stored event shape (additive fields keep it,
+  renames or semantic changes bump it); `SNAPSHOT_VERSION` is the session
+  snapshot shape, and `Session::restore` refuses a newer one. A host records
+  all three so a later reader knows what it is looking at.
+- `keel-testkit` (`publish = false`, a dev-dependency) is the reusable
+  conformance suite: a real driver with a mock model exercises a text turn, a
+  tool turn, a model failure, cancellation and the snapshot version. A derived
+  host runs it after every kernel upgrade; `docs/kernel-upgrade.md` is the
+  checklist. The crate is not part of the published artifacts.
 - Turn limits are runaway protection, not a task budget: 500 model calls, the
   profile's `tools.budget` and a 24-hour backstop. The timeouts are
   *inactivity* windows: a command with five minutes of silence is stopped, a

@@ -2204,3 +2204,14 @@
 - `ModelFinished` carries `duration_ms`; `ModelFailed` records code, message
   and duration at every failure exit (setup error, timeout, cut stream).
 - Tests: model failure event, host grant audit, background result fields.
+
+### Kernel upgrade support (2026-11-05)
+
+- `keel_core::KERNEL_VERSION` and `EVENT_FORMAT_VERSION`; `SNAPSHOT_VERSION`
+  re-exported from `keel-core`.
+- New dev-only crate `keel-testkit`: a mock-model `Probe` plus assertions and
+  the event-name contract; six conformance tests (text turn, tool turn, model
+  failure, cancellation, snapshot refusal, version constants).
+- `docs/kernel-upgrade.md`: pinning, the upgrade checklist, what is breaking,
+  the event policy and the `cargo-semver-checks` command.
+- Kernel-only CI includes `keel-testkit`.
