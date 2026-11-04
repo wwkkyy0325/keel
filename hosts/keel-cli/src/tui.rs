@@ -849,10 +849,10 @@ impl App {
                         Some(true) => format!("⏺ {name} ok {duration_ms} ms"),
                         Some(false) => format!("⏺ {name} failed {duration_ms} ms"),
                     };
-                    let color = if matches!(ok, Some(false)) {
-                        Color::Red
-                    } else {
-                        Color::DarkGray
+                    let color = match ok {
+                        None => Color::Yellow,
+                        Some(false) => Color::Red,
+                        Some(true) => Color::DarkGray,
                     };
                     ("  ", text, Style::default().fg(color))
                 }
@@ -865,8 +865,23 @@ impl App {
                 BlockKind::Notice => ("· ", block.text.clone(), Style::default().fg(Color::Yellow)),
                 BlockKind::Error => ("! ", block.text.clone(), Style::default().fg(Color::Red)),
             };
-            for line in wrap_text(&format!("{prefix}{text}"), width) {
-                lines.push(Line::from(Span::styled(line, style)));
+            let wrapped = wrap_text(&format!("{prefix}{text}"), width);
+            if matches!(&block.kind, BlockKind::User)
+                && !self.show_process
+                && wrapped.len() > USER_EXCERPT_LINES
+            {
+                for line in wrapped.iter().take(USER_EXCERPT_HEAD) {
+                    lines.push(Line::from(Span::styled(line.clone(), style)));
+                }
+                let hidden = wrapped.len() - USER_EXCERPT_HEAD;
+                lines.push(Line::from(Span::styled(
+                    format!("  … +{hidden} lines (Ctrl-O)"),
+                    Style::default().fg(Color::DarkGray),
+                )));
+            } else {
+                for line in wrapped {
+                    lines.push(Line::from(Span::styled(line, style)));
+                }
             }
             if matches!(&block.kind, BlockKind::Tool { .. }) && !block.text.is_empty() {
                 let output: Vec<&str> = block.text.lines().collect();
@@ -909,6 +924,24 @@ impl App {
 const EXCERPT_HEAD: usize = 2;
 const EXCERPT_TAIL: usize = 2;
 const EXCERPT_LINES: usize = EXCERPT_HEAD + EXCERPT_TAIL + 1;
+
+/// A sent user message longer than this collapses to its head after the turn;
+/// `Ctrl-O` shows the whole message.
+const USER_EXCERPT_HEAD: usize = 6;
+const USER_EXCERPT_LINES: usize = USER_EXCERPT_HEAD + 2;
+
+/// Wrapped input lines and the line the cursor sits on.
+fn input_view(app: &App, width: usize) -> (Vec<String>, usize) {
+    let cursor = app.cursor.min(app.input.len());
+    let before: String = app.input[..cursor].iter().collect();
+    let after: String = app.input[cursor..].iter().collect();
+    let lines = wrap_text(&format!("> {before}▏{after}"), width);
+    let cursor_line = wrap_text(&format!("> {before}▏"), width)
+        .len()
+        .saturating_sub(1)
+        .min(lines.len().saturating_sub(1));
+    (lines, cursor_line)
+}
 
 fn wrap_text(text: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
@@ -1238,6 +1271,9 @@ fn run_slash(
     }
 }
 
+/// Content lines shown in the input box before it starts scrolling.
+const INPUT_MAX_LINES: usize = 6;
+
 fn draw(app: &App, frame: &mut Frame) {
     let area = frame.area();
     let prompt_height = app.pending.as_ref().map_or(0, |job| {
@@ -1245,10 +1281,23 @@ fn draw(app: &App, frame: &mut Frame) {
         let prompt_lines = wrap_text(&job.request.prompt, text_width).len().max(1);
         (prompt_lines + job.request.options.len() + 3).min(14) as u16
     });
+    let input_width = area.width.saturating_sub(2).max(1) as usize;
+    let (input_lines, cursor_line) = input_view(app, input_width);
+    let visible_input = input_lines.len().min(INPUT_MAX_LINES);
+    let input_start = if input_lines.len() > visible_input {
+        cursor_line
+            .saturating_sub(visible_input.saturating_sub(1))
+            .min(input_lines.len() - visible_input)
+    } else {
+        0
+    };
+    let input_height = ((visible_input + 2) as u16)
+        .min(area.height.saturating_sub(prompt_height).saturating_sub(4))
+        .max(3);
     let chunks = Layout::vertical([
         Constraint::Min(3),
         Constraint::Length(prompt_height),
-        Constraint::Length(3),
+        Constraint::Length(input_height),
         Constraint::Length(1),
     ])
     .split(area);
@@ -1278,17 +1327,9 @@ fn draw(app: &App, frame: &mut Frame) {
         draw_prompt(job, app.pending_choice, frame, chunks[1], app.text);
     }
 
-    let before: String = app.input[..app.cursor.min(app.input.len())]
-        .iter()
-        .collect();
-    let after: String = app.input[app.cursor.min(app.input.len())..]
-        .iter()
-        .collect();
-    let input = format!("> {before}▏{after}");
+    let input_text = input_lines[input_start..input_start + visible_input].join("\n");
     frame.render_widget(
-        Paragraph::new(input)
-            .wrap(Wrap { trim: false })
-            .block(FrameBlock::bordered().border_type(BorderType::Rounded)),
+        Paragraph::new(input_text).block(FrameBlock::bordered().border_type(BorderType::Rounded)),
         chunks[2],
     );
 
@@ -1323,7 +1364,7 @@ fn draw(app: &App, frame: &mut Frame) {
     let status_style = Style::default().fg(if app.running {
         Color::Yellow
     } else {
-        Color::DarkGray
+        Color::Green
     });
     frame.render_widget(Paragraph::new(left).style(status_style), footer[0]);
     frame.render_widget(
@@ -1819,6 +1860,34 @@ mod tests {
         assert!(app.show_process);
         app.handle_key(ctrl('o'));
         assert!(!app.show_process);
+    }
+
+    #[test]
+    fn the_input_box_grows_with_a_pasted_message() {
+        let mut app = app();
+        app.input = "line1\nline2\nline3\nline4".chars().collect();
+        app.cursor = app.input.len();
+        let rendered = frame(&app, 60, 20);
+        for line in ["line1", "line2", "line3", "line4"] {
+            assert!(rendered.contains(line), "{rendered}");
+        }
+    }
+
+    #[test]
+    fn a_long_sent_message_collapses_until_details_are_shown() {
+        let mut app = app();
+        let long: String = (1..=12).map(|n| format!("line{n}\n")).collect();
+        app.start_turn(long);
+        app.collapse("done", None, &TokenUsage::default(), 10, 0);
+
+        let hidden = frame(&app, 80, 30);
+        assert!(hidden.contains("line1"), "{hidden}");
+        assert!(!hidden.contains("line12"), "{hidden}");
+        assert!(hidden.contains("Ctrl-O"), "{hidden}");
+
+        app.handle_key(ctrl('o'));
+        let shown = frame(&app, 80, 30);
+        assert!(shown.contains("line12"), "{shown}");
     }
 
     #[test]

@@ -54,7 +54,9 @@ Rules:
    list exists, elapsed time while a turn runs. Right: permission mode
    (`Workspace` / `Full auto`) and the one key that applies. The full paths
    stay in `/roots`; tokens live in `/cost`.
-4. **One input line**, which grows for a pasted multi-line message.
+4. **One input box**, which grows with the message up to six content lines
+   and then scrolls around the cursor. A sent message longer than eight lines
+   collapses to its first six after the turn; `Ctrl-O` shows it in full.
 
 ## What is shown, and what is not
 
@@ -156,6 +158,23 @@ Session switching stays on the command line (`--store`, `--session-id`).
   host there; that keeps the context, the permission root and the session
   store consistent.
 
+## Style
+
+One palette, no per-theme setting:
+
+| Element | Look |
+|---|---|
+| User message | Cyan, `› ` prefix |
+| Assistant text | Default foreground, no prefix |
+| Tool running | Yellow, `⏺ <name> …` |
+| Tool done | Dim gray, `⏺ <name> ok <ms>` |
+| Tool failed | Red, `⏺ <name> failed <ms>` plus the error excerpt |
+| Final answer marker | Green `⏺ ` |
+| Summary | Dim gray `⎿ tools · files · duration` |
+| Notice | Yellow `· ` |
+| Error | Red `! ` |
+| Status dot | Green when idle, yellow while working |
+
 ## States
 
 - **Idle, empty**: one hint line, `> _`.
@@ -212,8 +231,12 @@ Session switching stays on the command line (`--store`, `--session-id`).
       `a_recorded_root_updates_the_status_line`, and the runtime tests
       `a_root_added_after_construction_survives_grant_revocation`,
       `adding_the_same_root_twice_keeps_the_first_scope`. Done 2026-11-05.
-- [ ] The input grows for a pasted multi-line message; today it is a fixed
-      three-line box. Verify: a five-line paste is fully visible.
+- [x] The input grows up to six content lines and scrolls around the cursor;
+      a sent user message longer than eight lines collapses to its head and
+      `Ctrl-O` expands it. Styles follow the palette above. Verify:
+      `the_input_box_grows_with_a_pasted_message`,
+      `a_long_sent_message_collapses_until_details_are_shown`. Done
+      2026-11-05.
 - [ ] Tool line compaction: one line per call with target and duration;
       failure keeps the error; `Ctrl-O` expands. The finished-turn aggregate
       drops the token count. Verify: a running turn renders N lines; a

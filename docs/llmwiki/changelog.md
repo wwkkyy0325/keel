@@ -2156,3 +2156,15 @@
   the workspace, `/roots` and the status line's `+N` update on success.
 - Tests: parse/defaults, recorded root updates the status, runtime root
   survives revocation, duplicate add keeps the first scope.
+
+### Input growth and display styles (2026-11-05)
+
+- The input box wraps the message itself, grows to six content lines and
+  scrolls around the cursor; the layout caps it on short terminals.
+- A sent user message longer than eight wrapped lines collapses to its first
+  six plus `… +N lines (Ctrl-O)`; the same toggle reveals the turn process.
+- Palette: running tool yellow, completed gray, failed red; idle status dot
+  green, working yellow; answer marker green, summary/notice unchanged.
+  Documented in `tui-daily.md`.
+- Tests: `the_input_box_grows_with_a_pasted_message`,
+  `a_long_sent_message_collapses_until_details_are_shown`. 443 pass.

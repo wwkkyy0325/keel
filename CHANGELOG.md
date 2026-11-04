@@ -215,6 +215,9 @@ First complete kernel and reference host.
 - TUI: `/add-dir <path> [ro|rw]` adds a session scope through
   `TurnDriver::add_root`; relative paths resolve against the workspace and a
   scope survives a full-auto toggle, unlike a grant.
+- TUI: the input box grows up to six content lines and scrolls around the
+  cursor; a sent message longer than eight lines collapses to its head until
+  `Ctrl-O`. Running tools are yellow, the status dot is green when idle.
 - A finished turn with open task items shows the remaining count and
   pre-fills the prompt in the TUI; the host never restarts a turn by itself.
 - `--help`/`-h` prints usage and `--version`/`-V` prints the host version
