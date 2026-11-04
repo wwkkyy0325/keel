@@ -57,7 +57,8 @@ next turn.
 8. **Persistence is an explicit OS-level act.** A background command is
    session-scoped and is killed with the session. A service that must survive
    the session or start at boot is installed through the platform service
-   manager (Task Scheduler, a `systemctl --user` unit, a LaunchAgent) with the
+   manager (Task Scheduler or the Startup folder, a `systemctl --user` unit, a
+   LaunchAgent) with the
    user's confirmation. The shell tool does not detach processes into the
    background with `nohup`, `setsid` or `start /b`: an implicit survivor is
    invisible to the audit and cannot be stopped by the user.

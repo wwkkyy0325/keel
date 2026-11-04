@@ -2060,3 +2060,19 @@
 - This is guidance, not enforcement: the foreground tree guard still disarms
   after the direct child exits, so the kernel does not physically stop a
   detached descendant.
+
+### Real persistence-guidance runs (2026-11-05)
+
+- Session scenario: "start a local HTTP server and confirm it responds".
+  `deepseek-flash` used `shell background="true"` (`background_started` bg-1,
+  pid 25952), verified with a real request (200). After the CLI exited the pid
+  was gone and nothing was listening on 8765 — the session-scoped kill works.
+  The answer volunteered the Task Scheduler option and said it needs
+  confirmation.
+- Autostart scenario: "prepare login autostart, do not install or run it".
+  The model wrote `heartbeat.py`, `run_heartbeat.vbs` and a README, proposed
+  the Startup folder as plan A and `schtasks /Create ... /SC ONLOGON` as plan
+  B, both with uninstall steps. It installed nothing, created no task, and
+  left no process. It asked the user before any registration.
+- The persona now names "Task Scheduler or the Startup folder" because the
+  real run chose the Startup folder.
