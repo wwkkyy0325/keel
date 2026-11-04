@@ -23,7 +23,8 @@ pub struct RootScope {
 /// redirect the check outside it.
 pub struct PermissionEngine {
     root: PathBuf,
-    extra_roots: Vec<RootScope>,
+    /// Extra scopes; runtime-mutable so a host can add one mid-session.
+    extra_roots: Mutex<Vec<RootScope>>,
     /// Directory whose files are readable so the model can follow a spill
     /// marker. Defaults to `<workspace>/.keel/outputs`.
     outputs: PathBuf,
@@ -63,7 +64,7 @@ impl PermissionEngine {
         let outputs = root.join(".keel").join("outputs");
         Ok(Self {
             root,
-            extra_roots: Vec::new(),
+            extra_roots: Mutex::new(Vec::new()),
             outputs,
             base_level: level,
             grants: Mutex::new(Vec::new()),
@@ -83,10 +84,22 @@ impl PermissionEngine {
     /// directories are refused: a job should name the smallest directory it
     /// needs, not a whole volume.
     pub fn with_root(
-        mut self,
+        self,
         path: impl AsRef<Path>,
         access: AccessKind,
     ) -> Result<Self, KernelError> {
+        self.add_root(path, access)?;
+        Ok(self)
+    }
+
+    /// Adds a scope after construction, for a host command such as
+    /// `/add-dir`. Returns the canonical scope; adding an existing path
+    /// returns the first entry unchanged.
+    pub fn add_root(
+        &self,
+        path: impl AsRef<Path>,
+        access: AccessKind,
+    ) -> Result<RootScope, KernelError> {
         let source = path.as_ref();
         let path = std::fs::canonicalize(source)
             .map(keel_core::simplify_path)
@@ -114,22 +127,31 @@ impl PermissionEngine {
                 message: format!("root `{}` is a system directory", path.display()),
             });
         }
-        if path == self.root || self.extra_roots.iter().any(|scope| scope.path == path) {
-            return Ok(self);
+        let mut extra = self
+            .extra_roots
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(existing) = extra.iter().find(|scope| scope.path == path) {
+            return Ok(existing.clone());
         }
-        self.extra_roots.push(RootScope { path, access });
-        Ok(self)
+        let scope = RootScope { path, access };
+        extra.push(scope.clone());
+        Ok(scope)
     }
 
     /// Every scope the agent may use: the primary workspace first, then the
     /// extra roots in the order they were added.
     pub fn roots(&self) -> Vec<RootScope> {
-        let mut scopes = Vec::with_capacity(self.extra_roots.len() + 1);
+        let extra = self
+            .extra_roots
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut scopes = Vec::with_capacity(extra.len() + 1);
         scopes.push(RootScope {
             path: self.root.clone(),
             access: AccessKind::Write,
         });
-        scopes.extend(self.extra_roots.iter().cloned());
+        scopes.extend(extra.iter().cloned());
         scopes
     }
 
@@ -224,11 +246,12 @@ impl PermissionGate for PermissionEngine {
             };
         }
 
+        let extra = self
+            .extra_roots
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let inside = resolved.starts_with(&self.root)
-            || self
-                .extra_roots
-                .iter()
-                .any(|scope| resolved.starts_with(&scope.path));
+            || extra.iter().any(|scope| resolved.starts_with(&scope.path));
 
         let grants = self.active_grants();
         let full_auto_granted = grants.iter().any(is_full_auto_grant);
@@ -266,12 +289,13 @@ impl PermissionGate for PermissionEngine {
         let scope_access = if resolved.starts_with(&self.root) {
             Some(AccessKind::Write)
         } else {
-            self.extra_roots
+            extra
                 .iter()
                 .filter(|scope| resolved.starts_with(&scope.path))
                 .max_by_key(|scope| scope.path.components().count())
                 .map(|scope| scope.access)
         };
+        drop(extra);
 
         if full_auto_granted {
             return PermissionDecision::Allow;
@@ -741,6 +765,40 @@ mod root_scope_tests {
             path: Some(path.to_path_buf()),
             detail: None,
         }
+    }
+
+    #[test]
+    fn a_root_added_after_construction_survives_grant_revocation() {
+        let workspace = tempfile::tempdir().unwrap();
+        let extra = tempfile::tempdir().unwrap();
+        let engine =
+            PermissionEngine::new(workspace.path(), PermissionLevel::WorkspaceAuto).unwrap();
+        let scope = engine.add_root(extra.path(), AccessKind::Write).unwrap();
+        assert_eq!(scope.access, AccessKind::Write);
+        let path = extra.path().join("note.txt");
+        assert_eq!(
+            engine.check(&request(AccessKind::Write, &path)),
+            PermissionDecision::Allow
+        );
+
+        engine.revoke_all();
+        assert_eq!(
+            engine.check(&request(AccessKind::Write, &path)),
+            PermissionDecision::Allow
+        );
+        assert_eq!(engine.roots().len(), 2);
+    }
+
+    #[test]
+    fn adding_the_same_root_twice_keeps_the_first_scope() {
+        let workspace = tempfile::tempdir().unwrap();
+        let extra = tempfile::tempdir().unwrap();
+        let engine =
+            PermissionEngine::new(workspace.path(), PermissionLevel::WorkspaceAuto).unwrap();
+        let first = engine.add_root(extra.path(), AccessKind::Read).unwrap();
+        let second = engine.add_root(extra.path(), AccessKind::Write).unwrap();
+        assert_eq!(first, second);
+        assert_eq!(engine.roots().len(), 2);
     }
 
     #[test]

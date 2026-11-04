@@ -212,6 +212,9 @@ First complete kernel and reference host.
   leaving it off-screen.
 - TUI: the status line keeps the workspace base name and `+N` for extra
   scopes; `/roots` still prints the full paths and access levels.
+- TUI: `/add-dir <path> [ro|rw]` adds a session scope through
+  `TurnDriver::add_root`; relative paths resolve against the workspace and a
+  scope survives a full-auto toggle, unlike a grant.
 - A finished turn with open task items shows the remaining count and
   pre-fills the prompt in the TUI; the host never restarts a turn by itself.
 - `--help`/`-h` prints usage and `--version`/`-V` prints the host version

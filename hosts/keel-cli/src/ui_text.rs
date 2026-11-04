@@ -217,8 +217,8 @@ impl Text {
 
     pub fn help(&self) -> &'static str {
         self.pick(
-            "命令：/help /details /clear /cost /sessions /roots /cancel /quit",
-            "commands: /help /details /clear /cost /sessions /roots /cancel /quit",
+            "命令：/help /details /add-dir /clear /cost /sessions /roots /cancel /quit",
+            "commands: /help /details /add-dir /clear /cost /sessions /roots /cancel /quit",
         )
     }
 
@@ -248,6 +248,34 @@ impl Text {
         match self.lang {
             Lang::Zh => format!("{id}  {turns} 轮  {state}"),
             Lang::En => format!("{id}  {turns} turns  {state}"),
+        }
+    }
+
+    pub fn add_dir_usage(&self) -> &'static str {
+        self.pick(
+            "用法：/add-dir <路径> [ro|rw]（默认 rw）",
+            "usage: /add-dir <path> [ro|rw] (default rw)",
+        )
+    }
+
+    pub fn add_dir_unavailable(&self) -> &'static str {
+        self.pick(
+            "当前上下文不能添加目录",
+            "adding directories is not available here",
+        )
+    }
+
+    pub fn add_dir_failed(&self, error: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("无法添加目录：{error}"),
+            Lang::En => format!("cannot add root: {error}"),
+        }
+    }
+
+    pub fn root_added(&self, path: &str, access: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("已添加作用域：{path} [{access}]"),
+            Lang::En => format!("added root: {path} [{access}]"),
         }
     }
 

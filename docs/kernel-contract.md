@@ -30,8 +30,13 @@ Stable within a major version:
   versioned), `Tool`, `ToolSchema`, `ToolArgs`, `ToolResult`, `ModelProvider`,
   `ContextStage`, `Policy`, `PermissionGate`, `InteractionPort`, `Event`,
   `EventSink`, `KernelError`, `ErrorCode`.
-- `keel-runtime` permission surface: `PermissionEngine`, `RootScope` and
-  `PermissionEngine::with_root(path, access)`. Extra roots are read-only or
+- `keel-runtime` permission surface: `PermissionEngine`, `RootScope`,
+  `PermissionEngine::with_root(path, access)` and
+  `PermissionEngine::add_root(path, access)` (also
+  `TurnDriver::add_root`), which returns the canonical scope for a host
+  command such as `/add-dir`. A root added at runtime is a session scope: it
+  survives `revoke_all` (which drops grants) and lives until the process
+  exits. Extra roots are read-only or
   read-write; execution is always confirm-only; the most specific root wins;
   drive roots and system directories are refused. `PermissionEngine::with_outputs`
   names the readable spill directory and `TurnDriver::with_outputs_dir` writes
@@ -228,7 +233,7 @@ with its UI, and does not need the reference CLI.
 | `InteractionPort` | `crates/keel-runtime/tests/interactions.rs` |
 | `PermissionGate` | `crates/keel-runtime` permission unit tests; `permission_decisions_are_recorded_as_events` |
 | Path confinement | `a_symlink_cannot_read_outside_the_workspace`, `a_symlink_cannot_write_outside_the_workspace`, `parent_components_do_not_pop_the_filesystem_root` |
-| Extra roots | `an_extra_read_root_allows_reads_and_confirms_writes`, `an_extra_write_root_allows_reads_and_writes`, `the_most_specific_root_wins`, `a_filesystem_root_is_rejected` |
+| Extra roots | `an_extra_read_root_allows_reads_and_confirms_writes`, `an_extra_write_root_allows_reads_and_writes`, `the_most_specific_root_wins`, `a_filesystem_root_is_rejected`, `a_root_added_after_construction_survives_grant_revocation`, `adding_the_same_root_twice_keeps_the_first_scope` |
 | Tool output spill | `reading_a_spilled_output_is_allowed`, `the_rest_of_keel_stays_denied` |
 | `Summarizer` | `crates/keel-runtime` summarizer unit tests |
 | `TrashStore` | `crates/keel-runtime` trash unit tests |

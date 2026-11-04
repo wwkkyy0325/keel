@@ -70,6 +70,15 @@ impl ToolDispatcher {
         self.permission.revoke_all();
     }
 
+    /// Adds a session scope for the rest of the session (host `/add-dir`).
+    pub fn add_root(
+        &self,
+        path: impl AsRef<std::path::Path>,
+        access: AccessKind,
+    ) -> Result<crate::permission::RootScope, keel_core::KernelError> {
+        self.permission.add_root(path, access)
+    }
+
     pub async fn dispatch(
         &self,
         turn_id: TurnId,

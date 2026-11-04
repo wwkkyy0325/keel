@@ -22,11 +22,11 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use keel_core::{
-    CancelToken, Event, GrantScope, InteractionKind, InteractionPort, InteractionRequest,
-    InteractionResponse, KernelError, PermissionLevel, TodoList, TodoState, TodoStatus, TokenUsage,
-    TurnState,
+    AccessKind, CancelToken, Event, GrantScope, InteractionKind, InteractionPort,
+    InteractionRequest, InteractionResponse, KernelError, PermissionLevel, TodoList, TodoState,
+    TodoStatus, TokenUsage, TurnState,
 };
-use keel_runtime::{EventLog, InterjectionPush, RuntimeConfig, TurnDriver, TurnOutcome};
+use keel_runtime::{EventLog, InterjectionPush, RootScope, RuntimeConfig, TurnDriver, TurnOutcome};
 
 use crate::ui_text::Text;
 use ratatui::backend::CrosstermBackend;
@@ -176,6 +176,8 @@ impl UsageTotal {
 
 struct App {
     text: Text,
+    /// Primary workspace, used to resolve a relative `/add-dir`.
+    root: PathBuf,
     /// Base name of the primary workspace, shown in the status line.
     workspace: String,
     /// Scopes beyond the primary one.
@@ -222,9 +224,15 @@ struct App {
 }
 
 impl App {
-    fn new(text: Text, workspace: String, permission: String, roots: Vec<String>) -> Self {
+    fn new(text: Text, root: PathBuf, permission: String, roots: Vec<String>) -> Self {
+        let workspace = root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(str::to_owned)
+            .unwrap_or_else(|| root.display().to_string());
         Self {
             text,
+            root,
             extra_roots: roots.len().saturating_sub(1),
             workspace,
             permission,
@@ -268,6 +276,18 @@ impl App {
     fn prefill(&mut self, text: &str) {
         self.input = text.chars().collect();
         self.cursor = self.input.len();
+    }
+
+    /// Records a session scope returned by the permission engine and keeps the
+    /// status line's `+N` in sync.
+    fn record_root(&mut self, scope: RootScope) {
+        let label = format!("{} [{}]", scope.path.display(), scope.access.as_str());
+        if !self.roots.contains(&label) {
+            self.roots.push(label);
+        }
+        self.extra_roots = self.roots.len().saturating_sub(1);
+        let path = scope.path.display().to_string();
+        self.notice(self.text.root_added(&path, scope.access.as_str()));
     }
 
     fn notice(&mut self, text: impl Into<String>) {
@@ -965,15 +985,9 @@ pub async fn run(host: TuiHost) -> Result<ExitCode, KernelError> {
     }
     let _guard = TerminalGuard::enter()?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout())).map_err(io_error)?;
-    let workspace = host
-        .workspace
-        .file_name()
-        .and_then(|name| name.to_str())
-        .map(str::to_owned)
-        .unwrap_or_else(|| host.workspace.display().to_string());
     let mut app = App::new(
         host.text,
-        workspace,
+        host.workspace.clone(),
         host.config.permission_level.as_str().to_owned(),
         host.roots.clone(),
     );
@@ -1010,7 +1024,9 @@ pub async fn run(host: TuiHost) -> Result<ExitCode, KernelError> {
                         todos.clone(),
                         input,
                     ),
-                    Some(Command::Slash(command)) => run_slash(&mut app, &command, store.as_ref()),
+                    Some(Command::Slash(command)) => {
+                        run_slash(&mut app, &command, store.as_ref(), Some(&driver))
+                    }
                     Some(Command::Interject(text)) => match driver.interject(&text) {
                         InterjectionPush::Queued(_) => app.notice(app.text.interjection_queued()),
                         InterjectionPush::Duplicate => {
@@ -1140,10 +1156,51 @@ fn continuation_hint(text: Text, state: TurnState, remaining: usize) -> Option<S
         .then(|| text.continuation_hint(remaining))
 }
 
-fn run_slash(app: &mut App, command: &str, store: Option<&Store>) {
+/// `/add-dir <path> [ro|rw]`; a relative path is resolved against the
+/// workspace, not the process working directory.
+fn parse_add_dir(command: &str) -> Option<(String, AccessKind)> {
+    let rest = command.trim().strip_prefix("/add-dir")?.trim();
+    if rest.is_empty() {
+        return None;
+    }
+    let (path, access) = match rest.rsplit_once(' ') {
+        Some((path, "ro")) => (path.trim(), AccessKind::Read),
+        Some((path, "rw")) => (path.trim(), AccessKind::Write),
+        _ => (rest, AccessKind::Write),
+    };
+    (!path.is_empty()).then(|| (path.to_owned(), access))
+}
+
+fn add_dir(app: &mut App, driver: &TurnDriver<HostModel>, command: &str) {
+    let Some((path, access)) = parse_add_dir(command) else {
+        app.notice(app.text.add_dir_usage());
+        return;
+    };
+    let requested = PathBuf::from(&path);
+    let resolved = if requested.is_absolute() {
+        requested
+    } else {
+        app.root.join(requested)
+    };
+    match driver.add_root(&resolved, access) {
+        Ok(scope) => app.record_root(scope),
+        Err(error) => app.error(app.text.add_dir_failed(&error.to_string())),
+    }
+}
+
+fn run_slash(
+    app: &mut App,
+    command: &str,
+    store: Option<&Store>,
+    driver: Option<&TurnDriver<HostModel>>,
+) {
     match command.trim() {
         "/help" => app.notice(app.text.help()),
         "/details" => app.toggle_details(),
+        cmd if cmd == "/add-dir" || cmd.starts_with("/add-dir ") => match driver {
+            Some(driver) => add_dir(app, driver, cmd),
+            None => app.notice(app.text.add_dir_unavailable()),
+        },
         "/quit" | "/exit" => app.should_quit = true,
         "/clear" => app.blocks.clear(),
         "/cost" => app.notice(
@@ -1332,7 +1389,7 @@ mod tests {
     fn app() -> App {
         App::new(
             Text::new(crate::ui_text::Lang::En),
-            "keel".to_owned(),
+            PathBuf::from("C:/keel"),
             "workspace_auto".to_owned(),
             Vec::new(),
         )
@@ -1408,12 +1465,12 @@ mod tests {
     fn slash_roots_lists_every_scope() {
         let mut app = App::new(
             Text::new(crate::ui_text::Lang::En),
-            "ws".to_owned(),
+            PathBuf::from("C:/ws"),
             "workspace_auto".to_owned(),
             vec!["C:/ws [write]".to_owned(), "D:/Archive [read]".to_owned()],
         );
 
-        run_slash(&mut app, "/roots", None);
+        run_slash(&mut app, "/roots", None, None);
 
         let notices: Vec<String> = app
             .blocks
@@ -1765,10 +1822,49 @@ mod tests {
     }
 
     #[test]
+    fn add_dir_parses_access_and_defaults_to_write() {
+        assert_eq!(
+            parse_add_dir("/add-dir C:/notes"),
+            Some(("C:/notes".to_owned(), AccessKind::Write))
+        );
+        assert_eq!(
+            parse_add_dir("/add-dir C:/notes ro"),
+            Some(("C:/notes".to_owned(), AccessKind::Read))
+        );
+        assert_eq!(
+            parse_add_dir("/add-dir C:/my notes ro"),
+            Some(("C:/my notes".to_owned(), AccessKind::Read))
+        );
+        assert!(parse_add_dir("/add-dir").is_none());
+        assert!(parse_add_dir("/add-dir   ").is_none());
+    }
+
+    #[test]
+    fn a_recorded_root_updates_the_status_line() {
+        let mut app = App::new(
+            Text::new(crate::ui_text::Lang::En),
+            PathBuf::from("C:/keel"),
+            "workspace_auto".to_owned(),
+            vec!["C:/keel [write]".to_owned()],
+        );
+        app.record_root(RootScope {
+            path: PathBuf::from("D:/notes"),
+            access: AccessKind::Read,
+        });
+        assert_eq!(app.extra_roots, 1);
+        assert!(app
+            .roots
+            .iter()
+            .any(|line| line.contains("D:/notes") && line.contains("read")));
+        let rendered = frame(&app, 80, 12);
+        assert!(rendered.contains("keel +1"), "{rendered}");
+    }
+
+    #[test]
     fn the_status_line_names_the_workspace_and_extra_roots() {
         let app = App::new(
             Text::new(crate::ui_text::Lang::En),
-            "keel".to_owned(),
+            PathBuf::from("C:/keel"),
             "workspace_auto".to_owned(),
             vec!["C:/keel".to_owned(), "D:/notes".to_owned()],
         );
@@ -1780,7 +1876,7 @@ mod tests {
     fn the_chinese_screen_renders_translated_chrome() {
         let app = App::new(
             Text::new(crate::ui_text::Lang::Zh),
-            "keel".to_owned(),
+            PathBuf::from("C:/keel"),
             "workspace_auto".to_owned(),
             Vec::new(),
         );
@@ -1833,9 +1929,9 @@ mod tests {
     fn the_details_command_toggles_process_details() {
         let mut app = app();
         assert!(!app.show_process);
-        run_slash(&mut app, "/details", None);
+        run_slash(&mut app, "/details", None, None);
         assert!(app.show_process);
-        run_slash(&mut app, "/details", None);
+        run_slash(&mut app, "/details", None, None);
         assert!(!app.show_process);
     }
 

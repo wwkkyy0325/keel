@@ -288,6 +288,16 @@ impl<M: ModelProvider> TurnDriver<M> {
         self.dispatcher.revoke_grants();
     }
 
+    /// Adds a scope for the rest of the session. Unlike a grant, it survives a
+    /// full-auto toggle and lives until the process exits.
+    pub fn add_root(
+        &self,
+        path: impl AsRef<std::path::Path>,
+        access: keel_core::AccessKind,
+    ) -> Result<crate::permission::RootScope, keel_core::KernelError> {
+        self.dispatcher.add_root(path, access)
+    }
+
     /// Continues a stored session instead of starting an empty one.
     pub fn with_session(mut self, session: Session) -> Self {
         self.session = Mutex::new(session);

@@ -140,9 +140,21 @@ Everything else (model, tools, permissions, budget) stays in the profile.
 | `Shift+Tab` | Toggle `Workspace` / `Full auto` |
 | `PageUp` / `PageDown` | Scroll the transcript |
 
-Slash commands stay local and few: `/help`, `/details`, `/cost`, `/clear`,
-`/cancel`, `/quit`. `/details` is the discoverable form of `Ctrl-O`. Session
-switching stays on the command line (`--store`, `--session-id`).
+Slash commands stay local and few: `/help`, `/details`, `/add-dir`, `/cost`,
+`/clear`, `/cancel`, `/quit`. `/details` is the discoverable form of `Ctrl-O`.
+Session switching stays on the command line (`--store`, `--session-id`).
+
+## Workspace
+
+- The status line shows the workspace base name and `+N` for extra scopes;
+  `/roots` prints every scope with its full path and access.
+- `/add-dir <path> [ro|rw]` adds a session scope, the same kind `--root`
+  creates at startup. A relative path resolves against the workspace. The
+  scope is not a grant: toggling `Full auto` off does not remove it, and it
+  ends with the process.
+- There is no `/cd`. Moving the agent to another project means starting the
+  host there; that keeps the context, the permission root and the session
+  store consistent.
 
 ## States
 
@@ -193,6 +205,13 @@ switching stays on the command line (`--store`, `--session-id`).
       process. Verify: `ctrl_o_reveals_the_last_turn_process`,
       `a_cancelled_turn_says_so`, `a_missing_answer_is_explained`. Done
       2026-11-05.
+- [x] `/add-dir <path> [ro|rw]` adds a session scope through
+      `TurnDriver::add_root`, updates `/roots` and the status line's `+N`.
+      Relative paths resolve against the workspace. Verify:
+      `add_dir_parses_access_and_defaults_to_write`,
+      `a_recorded_root_updates_the_status_line`, and the runtime tests
+      `a_root_added_after_construction_survives_grant_revocation`,
+      `adding_the_same_root_twice_keeps_the_first_scope`. Done 2026-11-05.
 - [ ] The input grows for a pasted multi-line message; today it is a fixed
       three-line box. Verify: a five-line paste is fully visible.
 - [ ] Tool line compaction: one line per call with target and duration;

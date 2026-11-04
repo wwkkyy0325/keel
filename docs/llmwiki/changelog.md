@@ -2143,3 +2143,16 @@
 - `TuiHost` carries the workspace path again; `App` stores the base name and
   the extra-root count.
 - Test: `the_status_line_names_the_workspace_and_extra_roots`.
+
+### Session scopes and /add-dir (2026-11-05)
+
+- `PermissionEngine::add_root(path, access)` and `TurnDriver::add_root` add a
+  canonical scope after construction. `extra_roots` is now behind a mutex;
+  `check`, `roots` and `with_root` take the lock.
+- A runtime root is a session scope, not a grant: `revoke_all` (the full-auto
+  toggle) does not remove it. Adding the same path twice returns the first
+  scope.
+- TUI `/add-dir <path> [ro|rw]`: default rw, relative paths resolve against
+  the workspace, `/roots` and the status line's `+N` update on success.
+- Tests: parse/defaults, recorded root updates the status, runtime root
+  survives revocation, duplicate add keeps the first scope.
