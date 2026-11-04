@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+description = "Turn driver, tool dispatch, permissions and context for the Keel agent kernel."
 
 [dependencies]
 async-trait.workspace = true
