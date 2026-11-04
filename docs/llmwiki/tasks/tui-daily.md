@@ -175,7 +175,10 @@ One palette, no per-theme setting:
 | Notice | Yellow `  · ` |
 | Error | Red `  ! ` |
 | Status dot | Green when idle, yellow while working |
-| Code block | `  │ ` dim bar, code on the default foreground |
+| Code block | Rounded box, language on the top border, dim borders |
+| Table | Aligned columns with a dim rule under the header; pipes removed |
+| Quote | Dim vertical bar, `  │ ` |
+| Rule | Dim horizontal line |
 | Inline code | Cyan, backticks removed |
 | Bold | Bold, `**` removed |
 | List item | `• `, nested indentation kept |
@@ -249,10 +252,12 @@ column 0, with the summary underneath.
       2026-11-05.
 - [x] Tool calls read as `in`/`out` blocks under one glyph gutter; the
       kernel's `ToolStarted` carries a bounded, redacted `args_preview`
-      (skipped by serialization). Assistant text renders fenced code blocks,
-      inline code, bold and bullets. Verify:
+      (skipped by serialization). Assistant text renders a rounded code box
+      with the language on the border, aligned tables, quotes, rules, inline
+      code, bold and bullets. Verify:
       `tool_lines_separate_input_and_output`,
       `a_code_block_is_rendered_with_a_bar_and_no_fences`,
+      `a_table_becomes_aligned_columns`,
       `inline_code_markers_are_removed`. Done 2026-11-05.
 - [ ] Tool line compaction: one line per call with target and duration;
       failure keeps the error; `Ctrl-O` expands. The finished-turn aggregate

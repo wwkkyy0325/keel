@@ -2183,3 +2183,12 @@
 - Blank lines only around user messages and the answer, not between every
   block.
 - Tests: input/output separation, code block, inline code. 446 pass.
+
+### Code boxes and more Markdown (2026-11-05)
+
+- Fenced code blocks render as a rounded box with the language on the top
+  border; long lines wrap inside the box.
+- Markdown tables render as aligned columns with a rule under the header;
+  quotes use a dim bar, rules become a horizontal line, headings are bold.
+- Inline code stays cyan; bold, bullets and fences are removed from the text.
+- Tests: code box borders/language, aligned table. 447 pass.

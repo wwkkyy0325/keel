@@ -39,7 +39,7 @@ use ratatui::widgets::{
 };
 use ratatui::{Frame, Terminal};
 use tokio::sync::{mpsc, oneshot};
-use unicode_width::UnicodeWidthChar;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::store::Store;
 use crate::terminal::parse_response;
@@ -991,29 +991,57 @@ fn push_wrapped(lines: &mut Vec<Line<'static>>, text: &str, style: Style, width:
 }
 
 /// Renders assistant text with the few markers a terminal can carry cheaply:
-/// fenced code blocks get a dim bar and an indent, `inline code` is cyan,
-/// `**bold**` is bold, headings are bold and list items get a bullet.
-/// Anything else is left as written.
+/// fenced code blocks become a box with the language on the top border,
+/// tables become aligned columns, `inline code` is cyan, `**bold**` is bold,
+/// headings are bold, quotes and rules get a rule. Anything else is left as
+/// written.
 fn push_rich(lines: &mut Vec<Line<'static>>, text: &str, base: Style, width: usize) {
-    let mut in_code = false;
-    for raw in text.lines() {
+    let all: Vec<&str> = text.lines().collect();
+    let mut index = 0;
+    let mut code_lang: Option<String> = None;
+    while index < all.len() {
+        let raw = all[index];
         let trimmed = raw.trim_start();
         if trimmed.starts_with("```") {
-            in_code = !in_code;
+            if code_lang.is_some() {
+                code_lang = None;
+                push_code_border(lines, width, "", false);
+            } else {
+                let tag = trimmed.trim_start_matches("```").trim().to_owned();
+                push_code_border(lines, width, &tag, true);
+                code_lang = Some(tag);
+            }
+            index += 1;
             continue;
         }
-        if in_code {
-            let bar = "  │ ";
-            let available = width.saturating_sub(4).max(1);
-            for line in wrap_text(raw, available) {
-                lines.push(Line::from(vec![
-                    Span::styled(bar.to_owned(), Style::default().fg(Color::DarkGray)),
-                    Span::styled(line, Style::default().fg(Color::White)),
-                ]));
-            }
+        if code_lang.is_some() {
+            push_code_line(lines, raw, width);
+            index += 1;
+            continue;
+        }
+        if raw.contains('|') && is_table_separator(all.get(index + 1).copied().unwrap_or("")) {
+            index = push_table(lines, &all, index, base);
+            continue;
+        }
+        if is_rule(raw) {
+            lines.push(Line::from(Span::styled(
+                format!("  {}", "─".repeat(width.saturating_sub(2))),
+                Style::default().fg(Color::DarkGray),
+            )));
+            index += 1;
             continue;
         }
         let indent = raw.len() - trimmed.len();
+        if let Some(rest) = trimmed.strip_prefix("> ") {
+            push_wrapped(
+                lines,
+                &format!("{}  │ {rest}", " ".repeat(indent)),
+                Style::default().fg(Color::DarkGray),
+                width,
+            );
+            index += 1;
+            continue;
+        }
         if let Some(rest) = trimmed
             .strip_prefix("- ")
             .or_else(|| trimmed.strip_prefix("* "))
@@ -1024,6 +1052,7 @@ fn push_rich(lines: &mut Vec<Line<'static>>, text: &str, base: Style, width: usi
                 base,
                 width,
             );
+            index += 1;
             continue;
         }
         if let Some(rest) = trimmed.strip_prefix('#') {
@@ -1033,10 +1062,127 @@ fn push_rich(lines: &mut Vec<Line<'static>>, text: &str, base: Style, width: usi
                 base.add_modifier(Modifier::BOLD),
                 width,
             );
+            index += 1;
             continue;
         }
         push_styled(lines, raw, base, width);
+        index += 1;
     }
+}
+
+fn push_code_border(lines: &mut Vec<Line<'static>>, width: usize, lang: &str, top: bool) {
+    let inner = width.saturating_sub(2).max(1);
+    let style = Style::default().fg(Color::DarkGray);
+    let text = if top {
+        if lang.is_empty() {
+            format!("╭{}╮", "─".repeat(inner))
+        } else {
+            let label = format!("─ {lang} ");
+            let pad = inner.saturating_sub(label.chars().count());
+            format!("╭{label}{}╮", "─".repeat(pad))
+        }
+    } else {
+        format!("╰{}╯", "─".repeat(inner))
+    };
+    lines.push(Line::from(Span::styled(text, style)));
+}
+
+fn push_code_line(lines: &mut Vec<Line<'static>>, raw: &str, width: usize) {
+    let content_width = width.saturating_sub(4).max(1);
+    let border = Style::default().fg(Color::DarkGray);
+    let code = Style::default().fg(Color::White);
+    for line in wrap_text(raw, content_width) {
+        let pad = content_width.saturating_sub(line.width());
+        lines.push(Line::from(vec![
+            Span::styled("│ ".to_owned(), border),
+            Span::styled(line, code),
+            Span::styled(format!("{} │", " ".repeat(pad)), border),
+        ]));
+    }
+}
+
+fn is_table_separator(line: &str) -> bool {
+    let trimmed = line.trim();
+    if !trimmed.starts_with('|') || !trimmed.ends_with('|') {
+        return false;
+    }
+    let cells: Vec<&str> = trimmed.trim_matches('|').split('|').collect();
+    !cells.is_empty()
+        && cells.iter().all(|cell| {
+            let cell = cell.trim();
+            !cell.is_empty() && cell.chars().all(|character| matches!(character, '-' | ':'))
+        })
+}
+
+fn table_cells(line: &str) -> Vec<String> {
+    line.trim()
+        .trim_matches('|')
+        .split('|')
+        .map(|cell| cell.trim().to_owned())
+        .collect()
+}
+
+fn push_table(lines: &mut Vec<Line<'static>>, all: &[&str], start: usize, base: Style) -> usize {
+    let header = table_cells(all[start]);
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    let mut index = start + 2;
+    while index < all.len() {
+        let line = all[index];
+        if !line.contains('|') || line.trim().is_empty() {
+            break;
+        }
+        rows.push(table_cells(line));
+        index += 1;
+    }
+    let columns = header
+        .len()
+        .max(rows.iter().map(Vec::len).max().unwrap_or(0));
+    let mut widths = vec![0usize; columns];
+    for row in std::iter::once(&header).chain(rows.iter()) {
+        for (column, cell) in row.iter().enumerate() {
+            let measured = inline_spans(cell, base)
+                .iter()
+                .map(|span| span.content.width())
+                .sum::<usize>();
+            widths[column] = widths[column].max(measured);
+        }
+    }
+    push_table_row(lines, &header, &widths, base.add_modifier(Modifier::BOLD));
+    let rule: Vec<String> = widths.iter().map(|width| "─".repeat(*width)).collect();
+    lines.push(Line::from(Span::styled(
+        format!("  {}", rule.join("  ")),
+        Style::default().fg(Color::DarkGray),
+    )));
+    for row in &rows {
+        push_table_row(lines, row, &widths, base);
+    }
+    index
+}
+
+fn push_table_row(lines: &mut Vec<Line<'static>>, row: &[String], widths: &[usize], style: Style) {
+    let mut spans = vec![Span::raw("  ")];
+    for (column, width) in widths.iter().enumerate() {
+        if column > 0 {
+            spans.push(Span::raw("  "));
+        }
+        let cell = row.get(column).map(String::as_str).unwrap_or("");
+        let mut cell_spans = inline_spans(cell, style);
+        let measured: usize = cell_spans.iter().map(|span| span.content.width()).sum();
+        cell_spans.push(Span::raw(" ".repeat(width.saturating_sub(measured))));
+        spans.extend(cell_spans);
+    }
+    lines.push(Line::from(spans));
+}
+
+fn is_rule(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.chars().count() < 3 {
+        return false;
+    }
+    let Some(first) = trimmed.chars().next() else {
+        return false;
+    };
+    matches!(first, '-' | '*' | '_') && trimmed.chars().all(|character| character == first)
 }
 
 fn push_styled(lines: &mut Vec<Line<'static>>, text: &str, style: Style, width: usize) {
@@ -2028,9 +2174,26 @@ mod tests {
             text: "before\n```rust\nlet x = 1;\n```\nafter".to_owned(),
         });
         let rendered = frame(&app, 80, 20);
+        assert!(rendered.contains("╭─ rust "), "{rendered}");
         assert!(rendered.contains("│ let x = 1;"), "{rendered}");
+        assert!(rendered.contains("╰"), "{rendered}");
         assert!(!rendered.contains("```"), "{rendered}");
         assert!(rendered.contains("before"), "{rendered}");
+    }
+
+    #[test]
+    fn a_table_becomes_aligned_columns() {
+        let mut app = app();
+        app.blocks.push(Block {
+            kind: BlockKind::Result,
+            text: "| method | path |\n| --- | --- |\n| GET | /health |\n| POST | /items |"
+                .to_owned(),
+        });
+        let rendered = frame(&app, 80, 20);
+        assert!(rendered.contains("method"), "{rendered}");
+        assert!(rendered.contains("POST"), "{rendered}");
+        assert!(rendered.contains("────"), "{rendered}");
+        assert!(!rendered.contains('|'), "{rendered}");
     }
 
     #[test]
