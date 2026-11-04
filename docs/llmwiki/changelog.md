@@ -2134,3 +2134,12 @@
   `a_cancelled_turn_says_so`, `a_missing_answer_is_explained`.
 - Verified in `target/verify` because a running `--tui --demo` holds the
   default binary.
+
+### Workspace identity in the TUI (2026-11-05)
+
+- The status line shows the workspace base name and `+N` when extra scopes
+  exist (`--root`), matching the mainstream pattern of keeping the project
+  identity visible. Full paths stay in `/roots`.
+- `TuiHost` carries the workspace path again; `App` stores the base name and
+  the extra-root count.
+- Test: `the_status_line_names_the_workspace_and_extra_roots`.

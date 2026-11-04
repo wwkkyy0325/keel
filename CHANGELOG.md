@@ -210,6 +210,8 @@ First complete kernel and reference host.
 - TUI: a cancelled, failed or empty turn ends with one explicit line, and
   revealing details moves the viewport to the last turn's process instead of
   leaving it off-screen.
+- TUI: the status line keeps the workspace base name and `+N` for extra
+  scopes; `/roots` still prints the full paths and access levels.
 - A finished turn with open task items shows the remaining count and
   pre-fills the prompt in the TUI; the host never restarts a turn by itself.
 - `--help`/`-h` prints usage and `--version`/`-V` prints the host version

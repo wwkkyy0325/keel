@@ -34,7 +34,7 @@ day without turning it into a dashboard.
 │                                                            │
 │ 两个用例都通过了。                                          │
 ├────────────────────────────────────────────────────────────┤
-│ Idle · tasks 2/5                     Workspace · Shift+Tab │
+│ Idle · keel · tasks 2/5              Workspace · Shift+Tab │
 │ > _                                                        │
 └────────────────────────────────────────────────────────────┘
 ```
@@ -50,9 +50,10 @@ Rules:
    While a turn runs, tool lines appear; when it ends, they collapse into one
    aggregate line: tools, files and duration, no token counts.
 3. **One status line.** Left: state (`Idle`, `Working`, `Waiting`, `Cancelled`),
-   open tasks when a list exists, elapsed time while a turn runs. Right:
-   permission mode (`Workspace` / `Full auto`) and the one key that applies.
-   Nothing else; tokens live in `/cost`.
+   the workspace base name plus `+N` when extra scopes exist, open tasks when a
+   list exists, elapsed time while a turn runs. Right: permission mode
+   (`Workspace` / `Full auto`) and the one key that applies. The full paths
+   stay in `/roots`; tokens live in `/cost`.
 4. **One input line**, which grows for a pasted multi-line message.
 
 ## What is shown, and what is not

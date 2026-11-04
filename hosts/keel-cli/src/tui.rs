@@ -9,6 +9,7 @@ use std::cell::Cell;
 use std::collections::HashSet;
 use std::io;
 use std::io::IsTerminal;
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -107,6 +108,8 @@ pub struct TuiHost {
     pub todos: Option<Arc<Mutex<TodoList>>>,
     pub store: Option<Store>,
     pub session_id: String,
+    /// Primary workspace; the status line shows its base name.
+    pub workspace: PathBuf,
     /// Every scope, primary first, labeled with its access.
     pub roots: Vec<String>,
     /// Job or `--input` text placed in the prompt; never submitted.
@@ -173,6 +176,10 @@ impl UsageTotal {
 
 struct App {
     text: Text,
+    /// Base name of the primary workspace, shown in the status line.
+    workspace: String,
+    /// Scopes beyond the primary one.
+    extra_roots: usize,
     permission: String,
     /// Every scope, primary first, labeled with its access.
     roots: Vec<String>,
@@ -215,9 +222,11 @@ struct App {
 }
 
 impl App {
-    fn new(text: Text, permission: String, roots: Vec<String>) -> Self {
+    fn new(text: Text, workspace: String, permission: String, roots: Vec<String>) -> Self {
         Self {
             text,
+            extra_roots: roots.len().saturating_sub(1),
+            workspace,
             permission,
             roots,
             blocks: vec![Block {
@@ -956,8 +965,15 @@ pub async fn run(host: TuiHost) -> Result<ExitCode, KernelError> {
     }
     let _guard = TerminalGuard::enter()?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout())).map_err(io_error)?;
+    let workspace = host
+        .workspace
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_owned)
+        .unwrap_or_else(|| host.workspace.display().to_string());
     let mut app = App::new(
         host.text,
+        workspace,
         host.config.permission_level.as_str().to_owned(),
         host.roots.clone(),
     );
@@ -1225,6 +1241,11 @@ fn draw(app: &App, frame: &mut Frame) {
         app.text.status_ready()
     };
     let mut left = format!(" ● {state}");
+    left.push_str(" · ");
+    left.push_str(&app.workspace);
+    if app.extra_roots > 0 {
+        left.push_str(&format!(" +{}", app.extra_roots));
+    }
     if app.remaining > 0 && app.total_tasks > 0 {
         left.push_str(" · ");
         left.push_str(&app.text.task_status(app.remaining, app.total_tasks));
@@ -1311,6 +1332,7 @@ mod tests {
     fn app() -> App {
         App::new(
             Text::new(crate::ui_text::Lang::En),
+            "keel".to_owned(),
             "workspace_auto".to_owned(),
             Vec::new(),
         )
@@ -1386,6 +1408,7 @@ mod tests {
     fn slash_roots_lists_every_scope() {
         let mut app = App::new(
             Text::new(crate::ui_text::Lang::En),
+            "ws".to_owned(),
             "workspace_auto".to_owned(),
             vec!["C:/ws [write]".to_owned(), "D:/Archive [read]".to_owned()],
         );
@@ -1742,9 +1765,22 @@ mod tests {
     }
 
     #[test]
+    fn the_status_line_names_the_workspace_and_extra_roots() {
+        let app = App::new(
+            Text::new(crate::ui_text::Lang::En),
+            "keel".to_owned(),
+            "workspace_auto".to_owned(),
+            vec!["C:/keel".to_owned(), "D:/notes".to_owned()],
+        );
+        let rendered = frame(&app, 80, 12);
+        assert!(rendered.contains("keel +1"), "{rendered}");
+    }
+
+    #[test]
     fn the_chinese_screen_renders_translated_chrome() {
         let app = App::new(
             Text::new(crate::ui_text::Lang::Zh),
+            "keel".to_owned(),
             "workspace_auto".to_owned(),
             Vec::new(),
         );
