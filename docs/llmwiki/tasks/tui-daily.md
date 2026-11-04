@@ -105,15 +105,14 @@ Two, and both have a visible default:
 2. **Language** — resolved once at startup:
 
    ```
-   profile [ui] language = "auto" | "zh" | "en"   (default auto)
-     → LC_ALL / LC_MESSAGES / LANG contains "zh"
-     → OS UI language (sys-locale)
+   LC_ALL / LC_MESSAGES / LANG contains "zh"
+     → OS UI language (GetUserDefaultUILanguage on Windows)
      → "en"
    ```
 
-   There is no `/language` command and no language row on screen. A user whose
-   shell locale disagrees with their preference sets one profile key; a user
-   with a normal locale never touches it. Tests override with `--lang`.
+   There is no profile key, no `/language` command and no language row on
+   screen. A user whose shell locale disagrees with the OS can start with
+   `--lang zh|en`; `auto` is the default and needs no flag.
 
 Everything else (model, tools, permissions, budget) stays in the profile.
 
@@ -172,9 +171,12 @@ switching stays on the command line (`--store`, `--session-id`).
 
 ## Implementation steps
 
-- [ ] Text table and language resolution (`UiText`, `Lang`, profile key,
-      env, `sys-locale`, `--lang` test flag). Verify: unit tests for the
-      resolution order and both arms of every string.
+- [x] Text table and language resolution (`ui_text::{Lang, Text}`, env, OS UI
+      language, `--lang auto|zh|en`). The permission option labels use the
+      kernel's English labels and are translated only for `zh`; the permission
+      sentence itself stays kernel-owned English for now. Verify: `ui_text`
+      unit tests; `the_chinese_screen_renders_translated_chrome`. Done
+      2026-11-05.
 - [ ] Layout simplification: drop the header, one status line, one growing
       input. Verify: goldens `tui-idle.zh.txt` and `tui-idle.en.txt`.
 - [ ] Tool line compaction: one line per call with target and duration;

@@ -5,6 +5,7 @@ mod mcp;
 mod store;
 mod terminal;
 mod tui;
+mod ui_text;
 mod view;
 
 use std::io::{IsTerminal, Read};
@@ -578,6 +579,7 @@ async fn run() -> Result<ExitCode, KernelError> {
             .ok_or_else(|| invalid_config("TUI interaction channel was not created"))?;
         let prefill = args.input_set.then(|| args.input.clone());
         return tui::run(tui::TuiHost {
+            text: ui_text::Text::new(ui_text::Lang::resolve(args.lang.as_deref())),
             driver,
             config,
             events,
@@ -1492,6 +1494,8 @@ struct Args {
     keep_checkpoints: Option<u32>,
     /// Run the interactive terminal UI.
     tui: bool,
+    /// TUI language: `auto`, `zh` or `en`.
+    lang: Option<String>,
     /// Mock-only demo: a slow tool call and a paced answer for the TUI.
     demo: bool,
     /// Machine-readable output for `--plugins-check`.
@@ -1529,6 +1533,7 @@ Scope and state:
 Run:
   --input TEXT           input for one turn; pre-filled but not sent in the TUI
   --tui                  interactive terminal UI
+  --lang auto|zh|en      TUI language (default: auto)
   --demo                 mock-only terminal demo
   --session              read one input per line until EOF
   --turn-timeout-ms N    turn deadline override (backstop)
@@ -1607,6 +1612,7 @@ fn parse_args() -> Result<Args, KernelError> {
     let mut delete_session = None;
     let mut keep_checkpoints = None;
     let mut tui = false;
+    let mut lang = None;
     let mut demo = false;
     let mut json = false;
     let mut view = None;
@@ -1708,6 +1714,15 @@ fn parse_args() -> Result<Args, KernelError> {
             }
             "--tui" => {
                 tui = true;
+            }
+            "--lang" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| invalid_config("missing value for `--lang` (auto, zh or en)"))?;
+                if !matches!(value.as_str(), "auto" | "zh" | "en") {
+                    return Err(invalid_config("`--lang` must be auto, zh or en"));
+                }
+                lang = Some(value);
             }
             "--demo" => {
                 demo = true;
@@ -1967,6 +1982,7 @@ fn parse_args() -> Result<Args, KernelError> {
         delete_session,
         keep_checkpoints,
         tui,
+        lang,
         demo,
         json,
         view,

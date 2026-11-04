@@ -2085,3 +2085,16 @@
 - `/details` is the discoverable form of the key; `/help` lists it.
 - `docs/llmwiki/tasks/tui-daily.md` records the behavior and why it is a
   global toggle rather than a per-turn selection: no cursor model, one key.
+
+### Bilingual TUI chrome (2026-11-05)
+
+- New `hosts/keel-cli/src/ui_text.rs`: `Lang` (zh/en) with resolution
+  `--lang` → `LC_ALL`/`LC_MESSAGES`/`LANG` → `GetUserDefaultUILanguage` (no
+  new dependency) → English, and a `Text` table for every chrome string.
+- The TUI renders the empty hint, status line, notices, summary fields, slash
+  replies, continuation hint and permission option labels through the table.
+  English permission labels still come from the kernel; Chinese translates the
+  known ids. The permission sentence itself is still kernel English; fixing it
+  needs structured fields on `InteractionRequest`.
+- `--lang auto|zh|en` added and listed in `--help`; `auto` detects.
+- Tests: resolution order, both arms, Chinese screen render. 433 pass.

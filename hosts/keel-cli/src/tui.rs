@@ -27,6 +27,8 @@ use keel_core::{
     TurnState,
 };
 use keel_runtime::{EventLog, InterjectionPush, RuntimeConfig, TurnDriver, TurnOutcome};
+
+use crate::ui_text::Text;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -98,6 +100,8 @@ impl InteractionPort for TuiInteractionPort {
 
 /// Everything the UI needs from the host, moved in for the session.
 pub struct TuiHost {
+    /// Resolved UI language; chrome text comes from `ui_text`.
+    pub text: Text,
     pub driver: TurnDriver<HostModel>,
     pub config: RuntimeConfig,
     pub events: Arc<EventLog>,
@@ -170,6 +174,7 @@ impl UsageTotal {
 }
 
 struct App {
+    text: Text,
     workspace: String,
     model: String,
     permission: String,
@@ -207,15 +212,22 @@ struct App {
 }
 
 impl App {
-    fn new(workspace: String, model: String, permission: String, roots: Vec<String>) -> Self {
+    fn new(
+        text: Text,
+        workspace: String,
+        model: String,
+        permission: String,
+        roots: Vec<String>,
+    ) -> Self {
         Self {
+            text,
             workspace,
             model,
             permission,
             roots,
             blocks: vec![Block {
                 kind: BlockKind::Notice,
-                text: "type a request; /help lists commands".to_owned(),
+                text: text.empty_hint().to_owned(),
             }],
             input: Vec::new(),
             cursor: 0,
@@ -304,19 +316,16 @@ impl App {
             done.outcome.answer.changes.len(),
         );
         for text in &done.outcome.late_interjections {
-            self.notice(format!("interjection not delivered: {text}"));
+            self.notice(self.text.interjection_late(text));
         }
-        if let Some(hint) = continuation_hint(done.outcome.state, done.remaining) {
+        if let Some(hint) = continuation_hint(self.text, done.outcome.state, done.remaining) {
             self.notice(hint);
             if self.input.is_empty() {
                 self.prefill("Continue the task list");
             }
         }
         if let Some(kind) = done.outcome.secret_warning {
-            self.notice(format!(
-                "credential pattern ({}) in the input; not blocked, redacted from the log",
-                kind.as_str()
-            ));
+            self.notice(self.text.secret_notice(kind.as_str()));
         }
     }
 
@@ -351,27 +360,18 @@ impl App {
             });
         }
         let mut fields = Vec::new();
-        match self.turn_tools {
-            0 => {}
-            1 => fields.push("1 tool".to_owned()),
-            count => fields.push(format!("{count} tools")),
-        }
-        match changes {
-            0 => {}
-            1 => fields.push("1 file".to_owned()),
-            count => fields.push(format!("{count} files")),
-        }
-        match self.turn_blocked {
-            0 => {}
-            1 => fields.push("1 blocked".to_owned()),
-            count => fields.push(format!("{count} blocked")),
-        }
-        fields.push(format!(
-            "{} in / {} out",
-            usage.input_tokens, usage.output_tokens
+        fields.extend(self.text.summary_tools(self.turn_tools as usize));
+        fields.extend(self.text.summary_files(changes));
+        fields.extend(self.text.summary_blocked(self.turn_blocked as usize));
+        fields.push(self.text.summary_tokens(
+            u64::from(usage.input_tokens),
+            u64::from(usage.output_tokens),
         ));
         if usage.cached_input_tokens > 0 {
-            fields.push(format!("{} cached", usage.cached_input_tokens));
+            fields.push(
+                self.text
+                    .summary_cached(u64::from(usage.cached_input_tokens)),
+            );
         }
         fields.push(format!("{duration_ms} ms"));
         self.blocks.push(Block {
@@ -475,7 +475,7 @@ impl App {
     fn cancel_turn(&mut self) {
         if let Some(cancel) = &self.cancel {
             cancel.cancel();
-            self.notice("cancelling…");
+            self.notice(self.text.cancelling());
         }
     }
 
@@ -897,6 +897,7 @@ pub async fn run(host: TuiHost) -> Result<ExitCode, KernelError> {
         .map(str::to_owned)
         .unwrap_or_else(|| host.workspace.display().to_string());
     let mut app = App::new(
+        host.text,
         workspace,
         host.config.model_route.model.clone(),
         host.config.permission_level.as_str().to_owned(),
@@ -934,13 +935,11 @@ pub async fn run(host: TuiHost) -> Result<ExitCode, KernelError> {
                     ),
                     Some(Command::Slash(command)) => run_slash(&mut app, &command, store.as_ref()),
                     Some(Command::Interject(text)) => match driver.interject(&text) {
-                        InterjectionPush::Queued(_) => {
-                            app.notice("interjection queued for the next safe point")
-                        }
+                        InterjectionPush::Queued(_) => app.notice(app.text.interjection_queued()),
                         InterjectionPush::Duplicate => {
-                            app.notice("that interjection is already queued")
+                            app.notice(app.text.interjection_duplicate())
                         }
-                        InterjectionPush::Full => app.notice("interjection queue is full"),
+                        InterjectionPush::Full => app.notice(app.text.interjection_full()),
                         InterjectionPush::Empty => {}
                     },
                     Some(Command::ToggleMode) => toggle_mode(&mut app, &driver),
@@ -1041,33 +1040,31 @@ fn open_tasks(todos: Option<&Arc<Mutex<TodoList>>>) -> usize {
 }
 
 /// The hint shown when a finished turn left work on the list.
-fn continuation_hint(state: TurnState, remaining: usize) -> Option<String> {
+fn continuation_hint(text: Text, state: TurnState, remaining: usize) -> Option<String> {
     if remaining == 0 {
         return None;
     }
     matches!(state, TurnState::Done | TurnState::Converge)
-        .then(|| format!("{remaining} task(s) remain; press Enter to continue"))
+        .then(|| text.continuation_hint(remaining))
 }
 
 fn run_slash(app: &mut App, command: &str, store: Option<&Store>) {
     match command.trim() {
-        "/help" => {
-            app.notice("commands: /help /details /clear /cost /sessions /roots /cancel /quit")
-        }
+        "/help" => app.notice(app.text.help()),
         "/details" => {
             app.show_process = !app.show_process;
             app.follow = true;
         }
         "/quit" | "/exit" => app.should_quit = true,
         "/clear" => app.blocks.clear(),
-        "/cost" => app.notice(format!(
-            "tokens: input {} output {} cached {}",
-            app.usage.input, app.usage.output, app.usage.cached
-        )),
+        "/cost" => app.notice(
+            app.text
+                .cost(app.usage.input, app.usage.output, app.usage.cached),
+        ),
         "/cancel" => app.cancel_turn(),
         "/roots" => {
             if app.roots.is_empty() {
-                app.notice("no roots recorded");
+                app.notice(app.text.no_roots());
             } else {
                 let roots = app.roots.clone();
                 for root in roots {
@@ -1077,20 +1074,19 @@ fn run_slash(app: &mut App, command: &str, store: Option<&Store>) {
         }
         "/sessions" => match store {
             Some(store) => match crate::view::sessions(store.connection()) {
-                Ok(sessions) if sessions.is_empty() => app.notice("no sessions"),
+                Ok(sessions) if sessions.is_empty() => app.notice(app.text.no_sessions()),
                 Ok(sessions) => {
                     for session in sessions {
-                        app.notice(format!(
-                            "{}  {} turns  {}",
-                            session.id,
+                        app.notice(app.text.session_line(
+                            &session.id,
                             session.turns,
-                            session.last_turn_state.unwrap_or_else(|| "-".to_owned())
+                            &session.last_turn_state.unwrap_or_else(|| "-".to_owned()),
                         ));
                     }
                 }
                 Err(error) => app.error(format!("cannot list sessions: {error}")),
             },
-            None => app.notice("no store configured; pass --store"),
+            None => app.notice(app.text.no_store()),
         },
         other => app.notice(format!("unknown command `{other}`; try /help")),
     }
@@ -1132,7 +1128,7 @@ fn draw(app: &App, frame: &mut Frame) {
     }
 
     if let Some(job) = &app.pending {
-        draw_prompt(job, app.pending_choice, frame, chunks[1]);
+        draw_prompt(job, app.pending_choice, frame, chunks[1], app.text);
     }
 
     let before: String = app.input[..app.cursor.min(app.input.len())]
@@ -1149,23 +1145,21 @@ fn draw(app: &App, frame: &mut Frame) {
         chunks[2],
     );
 
-    let left = if app.running {
-        format!(
-            " ● working · {} · {} · {}",
-            app.workspace, app.model, app.permission
-        )
+    let state = if app.running {
+        app.text.status_working()
     } else {
-        format!(
-            " ● ready · {} · {} · {}",
-            app.workspace, app.model, app.permission
-        )
+        app.text.status_ready()
     };
+    let left = format!(
+        " ● {} · {} · {} · {}",
+        state, app.workspace, app.model, app.permission
+    );
     let right = if app.running {
-        "Ctrl-C · PgUp/PgDn "
+        app.text.hint_running()
     } else if app.hidden.is_empty() {
-        "Shift+Tab · /help "
+        app.text.hint_idle()
     } else {
-        "Ctrl-O · Shift+Tab · /help "
+        app.text.hint_details()
     };
     let footer = Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)])
         .split(chunks[3]);
@@ -1185,9 +1179,9 @@ fn draw(app: &App, frame: &mut Frame) {
 
 /// Inline approval above the input, so the conversation does not disappear
 /// behind a modal.
-fn draw_prompt(job: &InteractionJob, selected: usize, frame: &mut Frame, area: Rect) {
+fn draw_prompt(job: &InteractionJob, selected: usize, frame: &mut Frame, area: Rect, text: Text) {
     let title = if job.request.kind == InteractionKind::PermissionApproval {
-        " permission ".to_owned()
+        text.permission_title().to_owned()
     } else {
         format!(" {} ", job.request.kind.as_str())
     };
@@ -1207,12 +1201,10 @@ fn draw_prompt(job: &InteractionJob, selected: usize, frame: &mut Frame, area: R
         let marker = if active { "› " } else { "  " };
         lines.push(Line::from(vec![
             Span::styled(marker.to_owned(), style),
-            Span::styled(option.label.clone(), style),
+            Span::styled(text.permission_label(&option.id, &option.label), style),
         ]));
     }
-    lines.push(Line::from(
-        " ↑↓ select · Enter confirm · Esc defer · Shift+Tab mode",
-    ));
+    lines.push(Line::from(text.permission_hint()));
     frame.render_widget(
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })
@@ -1239,6 +1231,7 @@ mod tests {
 
     fn app() -> App {
         App::new(
+            Text::new(crate::ui_text::Lang::En),
             "Keel".to_owned(),
             "mock".to_owned(),
             "workspace_auto".to_owned(),
@@ -1315,6 +1308,7 @@ mod tests {
     #[test]
     fn slash_roots_lists_every_scope() {
         let mut app = App::new(
+            Text::new(crate::ui_text::Lang::En),
             "Keel".to_owned(),
             "mock".to_owned(),
             "workspace_auto".to_owned(),
@@ -1673,6 +1667,22 @@ mod tests {
     }
 
     #[test]
+    fn the_chinese_screen_renders_translated_chrome() {
+        let app = App::new(
+            Text::new(crate::ui_text::Lang::Zh),
+            "Keel".to_owned(),
+            "mock".to_owned(),
+            "workspace_auto".to_owned(),
+            Vec::new(),
+        );
+        // The test buffer lists each wide cell separately, so compare with
+        // spaces removed.
+        let plain: String = frame(&app, 80, 12).replace(' ', "");
+        assert!(plain.contains("输入任务"), "{plain}");
+        assert!(plain.contains("就绪"), "{plain}");
+    }
+
+    #[test]
     fn the_details_command_toggles_process_details() {
         let mut app = app();
         assert!(!app.show_process);
@@ -1753,12 +1763,13 @@ mod tests {
 
     #[test]
     fn a_finished_turn_offers_the_next_one_when_tasks_remain() {
+        let text = Text::new(crate::ui_text::Lang::En);
         assert_eq!(
-            continuation_hint(TurnState::Done, 2),
+            continuation_hint(text, TurnState::Done, 2),
             Some("2 task(s) remain; press Enter to continue".to_owned())
         );
-        assert!(continuation_hint(TurnState::Done, 0).is_none());
-        assert!(continuation_hint(TurnState::Error, 2).is_none());
-        assert!(continuation_hint(TurnState::Cancelled, 2).is_none());
+        assert!(continuation_hint(text, TurnState::Done, 0).is_none());
+        assert!(continuation_hint(text, TurnState::Error, 2).is_none());
+        assert!(continuation_hint(text, TurnState::Cancelled, 2).is_none());
     }
 }
