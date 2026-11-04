@@ -222,6 +222,10 @@ interjection stay distinct. See ADR 0010.
 - `BackgroundStarted` records the handle, program and pid; `BackgroundResult`
   records the outcome. The port is `BackgroundTasks`; a host that cannot run
   processes returns the error the tool surfaces.
+- Background commands are session-scoped. A service that must survive the
+  session or start at boot is installed through the platform service manager
+  with user confirmation; the kernel never detaches a process into the
+  background on its own.
 
 ## Sub-agents
 

@@ -2048,3 +2048,15 @@
   would write a marker after the registry is dropped). Real eval run
   `background-command` PASSes; `--view events` shows `background_started`
   then `background_result` for `bg-1`.
+
+### Persistence guidance (2026-11-05)
+
+- ADR 0016 gains decision 8: background commands are session-scoped, and
+  cross-session persistence is an explicit OS service (Task Scheduler,
+  `systemctl --user`, LaunchAgent) installed with user confirmation. The shell
+  tool never detaches processes implicitly.
+- `variants/coding/prompts/coding.md` states the same for the model, including
+  the ban on `nohup`, `setsid`, `start /b` and trailing `&`.
+- This is guidance, not enforcement: the foreground tree guard still disarms
+  after the direct child exits, so the kernel does not physically stop a
+  detached descendant.

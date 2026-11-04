@@ -34,7 +34,9 @@ First complete kernel and reference host.
   safe point and injects the result; `BackgroundStarted` and `BackgroundResult`
   audit the handle and the outcome. The local registry runs at most four, kills
   the process tree on drop and on the two-hour cap, and caps a command at two
-  hours. A result that misses the last call waits for the next turn.
+  hours. A result that misses the last call waits for the next turn. Commands
+  are session-scoped: cross-session persistence is an explicit OS service
+  installed with the user's confirmation, not a detached process.
 - A per-turn input-token budget (`max_turn_input_tokens`, one hundred times
   the working set, one-million floor) bounds cost. Reaching it records
   `TurnBudgetExhausted` and forces the answer call. The model never sees the

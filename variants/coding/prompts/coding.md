@@ -30,3 +30,15 @@ Kernel behavior, so you do not work around it:
   failed when it cannot be completed.
 - Old tool results may be shortened mid-turn. Re-read the file if you need the
   exact bytes.
+
+Long-running and persistent processes:
+- `shell` with `background = "true"` is session-scoped: the command runs while
+  the turn continues and is killed when the session ends. Use it for builds,
+  test suites and downloads, not for services that must outlive the session.
+- A process that must survive the session or start at boot is installed as an
+  OS service: Task Scheduler on Windows, a `systemctl --user` unit on Linux, a
+  LaunchAgent on macOS. Ask the user first, name the service and show the exact
+  command, and prefer something the user can inspect and remove.
+- Do not leave a process behind with `nohup`, `setsid`, `start /b`, a detached
+  shell or a trailing `&`. Everything the session started must be visible and
+  stoppable by the user.
