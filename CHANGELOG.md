@@ -23,6 +23,10 @@ First complete kernel and reference host.
   six continuations bound a model that never closes the list, and a wrap-up or
   the reserved final call is never overridden. `TurnEvent::Continued` keeps the
   FSM explicit.
+- The audit stream covers session grants (`PermissionGranted`/
+  `PermissionRevoked`), sub-agent starts, background results with the program
+  and output path, and model failures with their code and duration;
+  `ModelFinished` records how long the call took.
 - Sub-agents (ADR 0017): `spawn_agent { task, role? }` delegates one task to a
   child turn with its own context, shared permissions and the parent's cancel
   token. Only a bounded report with state and usage returns; sibling spawns

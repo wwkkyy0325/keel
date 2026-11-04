@@ -53,8 +53,12 @@ Stable within a major version:
   point.
 - The event enum is the live UI/audit feed: turn and state changes, context
   builds, tool starts/finishes, `PermissionDecided` for every gate decision,
-  interactions, memory and summary events, `SubAgentFinished` for a delegated
-  run, and `BackgroundStarted`/`BackgroundResult` for a background command.
+  `PermissionGranted`/`PermissionRevoked` for session grants (turn 0 means the
+  host made it between turns), interactions, memory and summary events,
+  `SubAgentStarted`/`SubAgentFinished` for a delegated run, and
+  `BackgroundStarted`/`BackgroundResult` (program, output path, exit code) for
+  a background command. Model calls record duration on success and a
+  `ModelFailed` event on every failure exit.
   `Event` serializes with snake_case
   keys so a host can persist the stream without a second schema. A host may
   call `EventLog::clear` between turns after persisting the stream; sequence

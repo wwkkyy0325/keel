@@ -2192,3 +2192,15 @@
   quotes use a dim bar, rules become a horizontal line, headings are bold.
 - Inline code stays cyan; bold, bullets and fences are removed from the text.
 - Tests: code box borders/language, aligned table. 447 pass.
+
+### Telemetry gaps closed (2026-11-05)
+
+- `PermissionGranted`/`PermissionRevoked`: every session grant is audited
+  (path grant from a prompt, full-auto escalation, revocation). Host-level
+  actions use turn 0 and are persisted with the next turn.
+- `SubAgentStarted` with the role and cap, before the child runs.
+- `BackgroundResult` now carries the program and output path; dropping the
+  registry records a terminated result.
+- `ModelFinished` carries `duration_ms`; `ModelFailed` records code, message
+  and duration at every failure exit (setup error, timeout, cut stream).
+- Tests: model failure event, host grant audit, background result fields.

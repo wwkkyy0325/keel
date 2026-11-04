@@ -182,6 +182,10 @@ async fn text_only_turn_reaches_done() {
     assert_eq!(outcome.state, TurnState::Done);
     assert_eq!(outcome.text, "hello");
     assert_eq!(outcome.model_calls, 1);
+    assert!(events
+        .for_turn(outcome.turn_id)
+        .iter()
+        .any(|record| matches!(record.event, Event::ModelFinished { duration_ms, .. } if duration_ms < 60_000)));
 }
 
 #[tokio::test]
@@ -205,6 +209,64 @@ async fn model_error_ends_the_turn_in_error() {
         outcome.error.as_ref().map(|error| error.code()),
         Some(ErrorCode::ModelProvider)
     );
+    assert!(
+        events
+            .for_turn(outcome.turn_id)
+            .iter()
+            .any(|record| matches!(
+                &record.event,
+                Event::ModelFailed {
+                    code: ErrorCode::ModelProvider,
+                    duration_ms,
+                    ..
+                } if *duration_ms < 60_000
+            )),
+        "a failed model call is recorded"
+    );
+}
+
+#[tokio::test]
+async fn host_grants_are_audited() {
+    use keel_core::AccessKind;
+
+    let dir = tempfile::tempdir().unwrap();
+    let extra = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&[], 0, PermissionLevel::WorkspaceAuto);
+    let driver = common::build_driver(
+        MockModel::new(vec![MockStep::Text("done".to_owned())]),
+        config,
+        events.clone(),
+        dir.path(),
+        common::test_limits(),
+    );
+
+    let scope = driver
+        .add_root(extra.path(), AccessKind::Write)
+        .expect("add root");
+    driver.escalate_full_auto(Duration::from_secs(60));
+    driver.revoke_permission_grants();
+
+    let records = events.snapshot();
+    let granted_path = records.iter().any(|record| {
+        matches!(
+            &record.event,
+            Event::PermissionGranted { scope: kind, path: Some(path), access: Some(AccessKind::Write), ttl_ms: None, .. }
+                if kind == "path" && path == &scope.path.display().to_string()
+        )
+    });
+    let granted_auto = records.iter().any(|record| {
+        matches!(
+            &record.event,
+            Event::PermissionGranted { scope, ttl_ms: Some(60_000), .. } if scope == "full_auto"
+        )
+    });
+    let revoked = records.iter().any(
+        |record| matches!(&record.event, Event::PermissionRevoked { scope, .. } if scope == "all"),
+    );
+    assert!(granted_path, "the added scope is audited");
+    assert!(granted_auto, "the full-auto escalation is audited");
+    assert!(revoked, "the revocation is audited");
 }
 
 #[tokio::test]
@@ -1512,10 +1574,22 @@ async fn a_background_result_enters_before_the_next_model_call() {
             .map(|message| message.content.as_str())
             .collect::<Vec<_>>()
     );
-    assert!(events
+    let result = events
         .for_turn(outcome.turn_id)
-        .iter()
-        .any(|record| matches!(record.event, Event::BackgroundResult { .. })));
+        .into_iter()
+        .find_map(|record| match record.event {
+            Event::BackgroundResult {
+                program,
+                output_path,
+                exit_code,
+                ..
+            } => Some((program, output_path, exit_code)),
+            _ => None,
+        })
+        .expect("background result");
+    assert_eq!(result.0, "cargo");
+    assert!(result.1.ends_with("bg-9.log"), "{}", result.1);
+    assert_eq!(result.2, Some(0));
 }
 
 #[tokio::test]

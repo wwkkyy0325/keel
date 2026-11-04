@@ -120,6 +120,21 @@ fn redact_event(event: Event) -> Event {
             text: redact_secrets(&text),
             reason,
         },
+        Event::ModelFailed {
+            turn_id,
+            provider,
+            model,
+            code,
+            message,
+            duration_ms,
+        } => Event::ModelFailed {
+            turn_id,
+            provider,
+            model,
+            code,
+            message: redact_secrets(&message),
+            duration_ms,
+        },
         other => other,
     }
 }

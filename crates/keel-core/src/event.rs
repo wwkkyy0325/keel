@@ -175,6 +175,17 @@ pub enum Event {
         turn_id: TurnId,
         tool_calls: usize,
         usage: TokenUsage,
+        duration_ms: u64,
+    },
+    /// A model call ended in an error or a timeout. Emitted at every failure
+    /// exit so failure rate and latency are measurable from the stream.
+    ModelFailed {
+        turn_id: TurnId,
+        provider: String,
+        model: String,
+        code: ErrorCode,
+        message: String,
+        duration_ms: u64,
     },
     ToolStarted {
         turn_id: TurnId,
@@ -202,6 +213,21 @@ pub enum Event {
     /// One permission request and the engine's decision. A confirmation also
     /// produces `InteractionRequested`/`InteractionResolved`; the final
     /// outcome is visible in `ToolFinished`.
+    /// A session grant was created: a path scope or a full-auto escalation.
+    /// `turn_id` is 0 when the host created it outside a turn (`/add-dir`,
+    /// the mode toggle); `ttl_ms` is None for a scope that lives until exit.
+    PermissionGranted {
+        turn_id: TurnId,
+        scope: String,
+        path: Option<String>,
+        access: Option<AccessKind>,
+        ttl_ms: Option<u64>,
+    },
+    /// Session grants were dropped (the full-auto toggle was turned off).
+    PermissionRevoked {
+        turn_id: TurnId,
+        scope: String,
+    },
     PermissionDecided {
         turn_id: TurnId,
         call_id: ToolCallId,
@@ -228,6 +254,12 @@ pub enum Event {
         turn_id: TurnId,
         input_tokens: u32,
     },
+    /// A delegated sub-agent started; the parent turn, the role and its cap.
+    SubAgentStarted {
+        turn_id: TurnId,
+        role: String,
+        max_calls: u32,
+    },
     /// A delegated sub-agent finished; the parent turn and its usage.
     SubAgentFinished {
         turn_id: TurnId,
@@ -252,6 +284,8 @@ pub enum Event {
     BackgroundResult {
         turn_id: TurnId,
         id: String,
+        program: String,
+        output_path: String,
         exit_code: Option<i32>,
         duration_ms: u64,
     },
@@ -326,6 +360,10 @@ impl Event {
             | Self::FactForgotten { turn_id, .. }
             | Self::ModelStarted { turn_id, .. }
             | Self::ModelFinished { turn_id, .. }
+            | Self::ModelFailed { turn_id, .. }
+            | Self::PermissionGranted { turn_id, .. }
+            | Self::PermissionRevoked { turn_id, .. }
+            | Self::SubAgentStarted { turn_id, .. }
             | Self::ToolStarted { turn_id, .. }
             | Self::ToolFinished { turn_id, .. }
             | Self::PermissionDecided { turn_id, .. }
@@ -372,6 +410,10 @@ impl Event {
             Self::FactForgotten { .. } => "fact_forgotten",
             Self::ModelStarted { .. } => "model_started",
             Self::ModelFinished { .. } => "model_finished",
+            Self::ModelFailed { .. } => "model_failed",
+            Self::PermissionGranted { .. } => "permission_granted",
+            Self::PermissionRevoked { .. } => "permission_revoked",
+            Self::SubAgentStarted { .. } => "sub_agent_started",
             Self::ToolStarted { .. } => "tool_started",
             Self::ToolFinished { .. } => "tool_finished",
             Self::PermissionDecided { .. } => "permission_decided",

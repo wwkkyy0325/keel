@@ -382,12 +382,29 @@ impl ToolDispatcher {
                         } => {}
                         InteractionResponse::Approved {
                             scope: GrantScope::PathPrefix { prefix, ttl },
-                        } => self
-                            .permission
-                            .grant_path_prefix(&prefix, request.access, ttl),
+                        } => {
+                            self.permission
+                                .grant_path_prefix(&prefix, request.access, ttl);
+                            self.events.append(Event::PermissionGranted {
+                                turn_id,
+                                scope: "path".to_owned(),
+                                path: Some(prefix.display().to_string()),
+                                access: Some(request.access),
+                                ttl_ms: Some(ttl.as_millis().min(u128::from(u64::MAX)) as u64),
+                            });
+                        }
                         InteractionResponse::Approved {
                             scope: GrantScope::FullAutoSession { ttl },
-                        } => self.permission.escalate_full_auto(ttl),
+                        } => {
+                            self.permission.escalate_full_auto(ttl);
+                            self.events.append(Event::PermissionGranted {
+                                turn_id,
+                                scope: "full_auto".to_owned(),
+                                path: None,
+                                access: None,
+                                ttl_ms: Some(ttl.as_millis().min(u128::from(u64::MAX)) as u64),
+                            });
+                        }
                         InteractionResponse::Cancelled => {
                             return Err(ToolError::cancelled());
                         }

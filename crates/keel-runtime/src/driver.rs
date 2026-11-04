@@ -8,10 +8,10 @@ use keel_core::{
     detect_secret, estimate_tokens, redact_secrets, AcceptanceItem, Answer, ArgValue, BuildCtx,
     CancelToken, CommitCtx, CommitDecision, ContextMessage, ContextSnapshot, ErrorCode, Event,
     EventSink, InteractionId, InteractionRequest, InteractionResponse, KernelError, Message,
-    MessageRole, ModelChunk, ModelError, ModelProvider, ModelRequest, ModelRole, OnTimeout, Policy,
-    ReasoningLevel, SecretKind, SegmentRecord, Session, SessionSnapshot, TodoList, TodoState,
-    TodoStatus, ToolArgs, ToolCallId, ToolOutcome, TurnEvent, TurnRecord, TurnState,
-    VerificationMode, VerificationReport,
+    MessageRole, ModelChunk, ModelError, ModelProvider, ModelRequest, ModelRole, ModelRoute,
+    OnTimeout, Policy, ReasoningLevel, SecretKind, SegmentRecord, Session, SessionSnapshot,
+    TodoList, TodoState, TodoStatus, ToolArgs, ToolCallId, ToolOutcome, TurnEvent, TurnRecord,
+    TurnState, VerificationMode, VerificationReport,
 };
 
 use crate::background::BackgroundTasks;
@@ -281,11 +281,22 @@ impl<M: ModelProvider> TurnDriver<M> {
     /// waiting for a tool to ask; the grant still expires with `ttl`.
     pub fn escalate_full_auto(&self, ttl: Duration) {
         self.dispatcher.escalate_full_auto(ttl);
+        self.events.append(Event::PermissionGranted {
+            turn_id: keel_core::TurnId::new(0),
+            scope: "full_auto".to_owned(),
+            path: None,
+            access: None,
+            ttl_ms: Some(ttl.as_millis().min(u128::from(u64::MAX)) as u64),
+        });
     }
 
     /// Drops session grants and returns to the profile's base level.
     pub fn revoke_permission_grants(&self) {
         self.dispatcher.revoke_grants();
+        self.events.append(Event::PermissionRevoked {
+            turn_id: keel_core::TurnId::new(0),
+            scope: "all".to_owned(),
+        });
     }
 
     /// Adds a scope for the rest of the session. Unlike a grant, it survives a
@@ -295,7 +306,15 @@ impl<M: ModelProvider> TurnDriver<M> {
         path: impl AsRef<std::path::Path>,
         access: keel_core::AccessKind,
     ) -> Result<crate::permission::RootScope, keel_core::KernelError> {
-        self.dispatcher.add_root(path, access)
+        let scope = self.dispatcher.add_root(path, access)?;
+        self.events.append(Event::PermissionGranted {
+            turn_id: keel_core::TurnId::new(0),
+            scope: "path".to_owned(),
+            path: Some(scope.path.display().to_string()),
+            access: Some(scope.access),
+            ttl_ms: None,
+        });
+        Ok(scope)
     }
 
     /// Continues a stored session instead of starting an empty one.
@@ -875,6 +894,8 @@ impl<M: ModelProvider> TurnDriver<M> {
                     self.events.append(Event::BackgroundResult {
                         turn_id,
                         id: result.id.clone(),
+                        program: result.program.clone(),
+                        output_path: result.output_path.display().to_string(),
                         exit_code: result.exit_code,
                         duration_ms: result.duration_ms,
                     });
@@ -994,6 +1015,7 @@ impl<M: ModelProvider> TurnDriver<M> {
                 route: route.clone(),
                 reasoning: stats.reasoning,
             };
+            let model_started = tokio::time::Instant::now();
             self.events.append(Event::ModelStarted {
                 turn_id,
                 provider: route.provider.clone(),
@@ -1017,10 +1039,24 @@ impl<M: ModelProvider> TurnDriver<M> {
                         TurnEvent::StreamFailure
                     };
                     self.step(fsm, turn_id, event)?;
+                    self.record_model_failure(
+                        turn_id,
+                        &route,
+                        model_started,
+                        failure.code,
+                        &failure.message,
+                    );
                     return Err(KernelError::Model(failure));
                 }
                 Err(_) => {
                     if text.is_empty() {
+                        self.record_model_failure(
+                            turn_id,
+                            &route,
+                            model_started,
+                            ErrorCode::Timeout,
+                            "the model call did not start before its deadline",
+                        );
                         return Err(KernelError::Timeout {
                             stage: "model",
                             limit_ms: self.timeout_ms(),
@@ -1061,9 +1097,16 @@ impl<M: ModelProvider> TurnDriver<M> {
                     }
                     Ok(None) => {
                         self.step(fsm, turn_id, TurnEvent::StreamFailure)?;
-                        return Err(KernelError::Model(ModelError::stream_cut(
-                            "model stream ended without a finish chunk",
-                        )));
+                        let failure =
+                            ModelError::stream_cut("model stream ended without a finish chunk");
+                        self.record_model_failure(
+                            turn_id,
+                            &route,
+                            model_started,
+                            failure.code,
+                            &failure.message,
+                        );
+                        return Err(KernelError::Model(failure));
                     }
                     Ok(Some(Err(failure))) => {
                         let event = if failure.code == ErrorCode::ContextOverflow {
@@ -1072,6 +1115,13 @@ impl<M: ModelProvider> TurnDriver<M> {
                             TurnEvent::StreamFailure
                         };
                         self.step(fsm, turn_id, event)?;
+                        self.record_model_failure(
+                            turn_id,
+                            &route,
+                            model_started,
+                            failure.code,
+                            &failure.message,
+                        );
                         return Err(KernelError::Model(failure));
                     }
                     Ok(Some(Ok(ModelChunk::TextDelta(delta)))) => {
@@ -1107,6 +1157,10 @@ impl<M: ModelProvider> TurnDriver<M> {
                 turn_id,
                 tool_calls: calls.len(),
                 usage,
+                duration_ms: model_started
+                    .elapsed()
+                    .as_millis()
+                    .min(u128::from(u64::MAX)) as u64,
             });
 
             // The first text after the wrap-up instruction is the report. It
@@ -1481,6 +1535,26 @@ impl<M: ModelProvider> TurnDriver<M> {
         }
 
         Ok(())
+    }
+
+    /// Records a failed or timed-out model call. Every failure exit goes
+    /// through here so the event stream can measure failure rate and latency.
+    fn record_model_failure(
+        &self,
+        turn_id: keel_core::TurnId,
+        route: &ModelRoute,
+        started: tokio::time::Instant,
+        code: ErrorCode,
+        message: &str,
+    ) {
+        self.events.append(Event::ModelFailed {
+            turn_id,
+            provider: route.provider.clone(),
+            model: route.model.clone(),
+            code,
+            message: message.to_owned(),
+            duration_ms: started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+        });
     }
 
     fn step(

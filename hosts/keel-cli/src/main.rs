@@ -812,9 +812,17 @@ fn save_turn(
         .error
         .as_ref()
         .map(|error| format!("{} ({})", error, error.code().as_str()));
+    // Turn 0 carries host-level grants made between turns (`/add-dir`, the
+    // mode toggle); they are recorded with the next turn so they survive the
+    // process instead of being dropped with the live log.
+    let session_level = keel_core::TurnId::new(0);
     let event_payloads: Vec<(String, String)> = events
-        .for_turn(outcome.turn_id)
-        .iter()
+        .snapshot()
+        .into_iter()
+        .filter(|record| {
+            let turn = record.event.turn_id();
+            turn == outcome.turn_id || turn == session_level
+        })
         .map(|record| {
             let payload =
                 serde_json::to_string(&record.event).map_err(|error| KernelError::Internal {
@@ -1206,6 +1214,13 @@ impl HostAgentRunner {
             },
         )
         .with_outputs_dir(self.outputs_dir.clone());
+        if let Some(parent) = spec.parent_turn {
+            self.events.append(Event::SubAgentStarted {
+                turn_id: parent,
+                role: spec.role.clone(),
+                max_calls: spec.max_model_calls,
+            });
+        }
         let outcome = driver.run(&spec.task, cancel.clone()).await;
         let tool_calls = events
             .for_turn(outcome.turn_id)

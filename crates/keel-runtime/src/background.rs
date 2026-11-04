@@ -40,6 +40,7 @@ pub trait BackgroundTasks: Send + Sync {
 struct Running {
     id: u32,
     pid: u32,
+    turn_id: TurnId,
     program: String,
     child: Child,
     started: Instant,
@@ -106,6 +107,7 @@ impl BackgroundTasks for LocalBackgroundTasks {
         state.tasks.push(Running {
             id: next_id,
             pid,
+            turn_id,
             program: spec.program.to_owned(),
             child,
             started: Instant::now(),
@@ -177,8 +179,19 @@ impl Drop for LocalBackgroundTasks {
             // the grandchildren running. `kill_tree` matches the foreground
             // path: a process group on Unix, `taskkill /T` on Windows.
             // No `wait()`: shutdown must not block on an unkillable process.
+            let events = self.events.clone();
             for task in &mut state.tasks {
                 command::kill_tree(task.pid);
+                if let Some(events) = &events {
+                    events.append(Event::BackgroundResult {
+                        turn_id: task.turn_id,
+                        id: format!("bg-{}", task.id),
+                        program: task.program.clone(),
+                        output_path: task.output.display().to_string(),
+                        exit_code: None,
+                        duration_ms: task.started.elapsed().as_millis() as u64,
+                    });
+                }
             }
         }
     }
