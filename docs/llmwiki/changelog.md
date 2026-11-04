@@ -2168,3 +2168,18 @@
   Documented in `tui-daily.md`.
 - Tests: `the_input_box_grows_with_a_pasted_message`,
   `a_long_sent_message_collapses_until_details_are_shown`. 443 pass.
+
+### Transcript hierarchy and code blocks (2026-11-05)
+
+- Removed the bullet glyphs that broke the left margin. Process lines share a
+  column-2 gutter (`…` yellow, `✓` dim, `✗` red); `in` and `out` are nested at
+  column 4, so a tool call reads as one block. The answer is plain text at
+  column 0 with the summary underneath; notices and errors align at column 2.
+- `Event::ToolStarted` gained `args_preview` (bounded, redacted, skipped by
+  serialization); the dispatcher fills it, so the UI can show inputs without
+  touching the persisted stream.
+- Assistant/result text renders fenced code blocks with a dim `│` bar, inline
+  code in cyan (backticks removed), bold, headings and bullets.
+- Blank lines only around user messages and the answer, not between every
+  block.
+- Tests: input/output separation, code block, inline code. 446 pass.

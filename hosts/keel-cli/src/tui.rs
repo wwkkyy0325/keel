@@ -144,6 +144,8 @@ enum BlockKind {
         name: String,
         ok: Option<bool>,
         duration_ms: u64,
+        /// Bounded, redacted call arguments for the `in` line.
+        args: String,
     },
     /// The accumulated answer, the only content kept after a turn.
     Result,
@@ -499,13 +501,16 @@ impl App {
             }
             self.last_seq = record.seq;
             match &record.event {
-                Event::ToolStarted { tool, .. } => {
+                Event::ToolStarted {
+                    tool, args_preview, ..
+                } => {
                     self.turn_tools = self.turn_tools.saturating_add(1);
                     let block = Block {
                         kind: BlockKind::Tool {
                             name: tool.clone(),
                             ok: None,
                             duration_ms: 0,
+                            args: args_preview.clone().unwrap_or_default(),
                         },
                         text: String::new(),
                     };
@@ -544,10 +549,15 @@ impl App {
                     if let Some(block) = self.blocks.iter_mut().rev().find(|block| {
                         matches!(&block.kind, BlockKind::Tool { name, ok: None, .. } if name.as_str() == tool.as_str())
                     }) {
+                        let args = match &block.kind {
+                            BlockKind::Tool { args, .. } => args.clone(),
+                            _ => String::new(),
+                        };
                         block.kind = BlockKind::Tool {
                             name: tool.clone(),
                             ok: Some(*ok),
                             duration_ms: *duration_ms,
+                            args,
                         };
                         block.text = output_preview.clone().unwrap_or_default();
                     }
@@ -836,82 +846,126 @@ impl App {
         let mut offsets = Vec::with_capacity(visible.len());
         for (position, (index, block)) in visible.iter().enumerate() {
             offsets.push((*index, lines.len()));
-            let (prefix, text, style) = match &block.kind {
-                BlockKind::User => ("› ", block.text.clone(), Style::default().fg(Color::Cyan)),
-                BlockKind::Assistant => ("", block.text.clone(), Style::default().fg(Color::White)),
+            match &block.kind {
                 BlockKind::Tool {
                     name,
                     ok,
                     duration_ms,
+                    args,
                 } => {
-                    let text = match ok {
-                        None => format!("⏺ {name} …"),
-                        Some(true) => format!("⏺ {name} ok {duration_ms} ms"),
-                        Some(false) => format!("⏺ {name} failed {duration_ms} ms"),
+                    let (glyph, color) = match ok {
+                        None => ("…", Color::Yellow),
+                        Some(true) => ("✓", Color::DarkGray),
+                        Some(false) => ("✗", Color::Red),
                     };
-                    let color = match ok {
-                        None => Color::Yellow,
-                        Some(false) => Color::Red,
-                        Some(true) => Color::DarkGray,
+                    let timing = match ok {
+                        Some(_) => format!("  {duration_ms} ms"),
+                        None => String::new(),
                     };
-                    ("  ", text, Style::default().fg(color))
+                    push_wrapped(
+                        &mut lines,
+                        &format!("  {glyph} {name}{timing}"),
+                        Style::default().fg(color),
+                        width,
+                    );
+                    if !args.is_empty() {
+                        push_wrapped(
+                            &mut lines,
+                            &format!("    in   {args}"),
+                            Style::default().fg(Color::DarkGray),
+                            width,
+                        );
+                    }
+                    if !block.text.is_empty() {
+                        let output: Vec<&str> = block.text.lines().collect();
+                        let (head, tail) = if self.show_process || output.len() <= EXCERPT_LINES {
+                            (output.len(), 0)
+                        } else {
+                            (EXCERPT_HEAD, EXCERPT_TAIL)
+                        };
+                        let out_style = Style::default().fg(if *ok == Some(false) {
+                            Color::Red
+                        } else {
+                            Color::DarkGray
+                        });
+                        for (line_index, line) in output.iter().take(head).enumerate() {
+                            let label = if line_index == 0 {
+                                "    out  "
+                            } else {
+                                "         "
+                            };
+                            push_wrapped(&mut lines, &format!("{label}{line}"), out_style, width);
+                        }
+                        if tail > 0 {
+                            let hidden = output.len() - head - tail;
+                            push_wrapped(
+                                &mut lines,
+                                &format!("         … +{hidden} lines (Ctrl-O)"),
+                                Style::default().fg(Color::DarkGray),
+                                width,
+                            );
+                            for line in &output[output.len() - tail..] {
+                                push_wrapped(
+                                    &mut lines,
+                                    &format!("         {line}"),
+                                    out_style,
+                                    width,
+                                );
+                            }
+                        }
+                    }
                 }
-                BlockKind::Result => ("⏺ ", block.text.clone(), Style::default().fg(Color::Green)),
-                BlockKind::Summary => (
-                    "  ⎿ ",
-                    block.text.clone(),
-                    Style::default().fg(Color::DarkGray),
-                ),
-                BlockKind::Notice => ("· ", block.text.clone(), Style::default().fg(Color::Yellow)),
-                BlockKind::Error => ("! ", block.text.clone(), Style::default().fg(Color::Red)),
-            };
-            let wrapped = wrap_text(&format!("{prefix}{text}"), width);
-            if matches!(&block.kind, BlockKind::User)
-                && !self.show_process
-                && wrapped.len() > USER_EXCERPT_LINES
-            {
-                for line in wrapped.iter().take(USER_EXCERPT_HEAD) {
-                    lines.push(Line::from(Span::styled(line.clone(), style)));
-                }
-                let hidden = wrapped.len() - USER_EXCERPT_HEAD;
-                lines.push(Line::from(Span::styled(
-                    format!("  … +{hidden} lines (Ctrl-O)"),
-                    Style::default().fg(Color::DarkGray),
-                )));
-            } else {
-                for line in wrapped {
-                    lines.push(Line::from(Span::styled(line, style)));
+                _ => {
+                    let (prefix, text, style) = match &block.kind {
+                        BlockKind::User => {
+                            ("› ", block.text.clone(), Style::default().fg(Color::Cyan))
+                        }
+                        BlockKind::Assistant | BlockKind::Result => {
+                            ("", block.text.clone(), Style::default().fg(Color::White))
+                        }
+                        BlockKind::Summary => (
+                            "  ⎿ ",
+                            block.text.clone(),
+                            Style::default().fg(Color::DarkGray),
+                        ),
+                        BlockKind::Notice => (
+                            "  · ",
+                            block.text.clone(),
+                            Style::default().fg(Color::Yellow),
+                        ),
+                        BlockKind::Error => {
+                            ("  ! ", block.text.clone(), Style::default().fg(Color::Red))
+                        }
+                        BlockKind::Tool { .. } => unreachable!(),
+                    };
+                    if matches!(&block.kind, BlockKind::Assistant | BlockKind::Result) {
+                        push_rich(&mut lines, &block.text, style, width);
+                    } else {
+                        let wrapped = wrap_text(&format!("{prefix}{text}"), width);
+                        if matches!(&block.kind, BlockKind::User)
+                            && !self.show_process
+                            && wrapped.len() > USER_EXCERPT_LINES
+                        {
+                            for line in wrapped.iter().take(USER_EXCERPT_HEAD) {
+                                lines.push(Line::from(Span::styled(line.clone(), style)));
+                            }
+                            let hidden = wrapped.len() - USER_EXCERPT_HEAD;
+                            lines.push(Line::from(Span::styled(
+                                format!("  … +{hidden} lines (Ctrl-O)"),
+                                Style::default().fg(Color::DarkGray),
+                            )));
+                        } else {
+                            for line in wrapped {
+                                lines.push(Line::from(Span::styled(line, style)));
+                            }
+                        }
+                    }
                 }
             }
-            if matches!(&block.kind, BlockKind::Tool { .. }) && !block.text.is_empty() {
-                let output: Vec<&str> = block.text.lines().collect();
-                let expanded = self.show_process || self.hidden.contains(index);
-                let preview = Style::default().fg(Color::DarkGray);
-                let (head, tail) = if expanded || output.len() <= EXCERPT_LINES {
-                    (output.len(), 0)
-                } else {
-                    (EXCERPT_HEAD, EXCERPT_TAIL)
-                };
-                let mut push = |line: &str| {
-                    for wrapped in wrap_text(&format!("    {line}"), width) {
-                        lines.push(Line::from(Span::styled(wrapped, preview)));
-                    }
-                };
-                for line in output.iter().take(head) {
-                    push(line);
-                }
-                if tail > 0 {
-                    let hidden = output.len() - head - tail;
-                    push(&format!("… +{hidden} lines (Ctrl-O)"));
-                    for line in &output[output.len() - tail..] {
-                        push(line);
-                    }
-                }
-            }
-            let next_is_summary = visible
+            let next_is_user = visible
                 .get(position + 1)
-                .is_some_and(|(_, next)| matches!(&next.kind, BlockKind::Summary));
-            if !matches!(&block.kind, BlockKind::Summary) && !next_is_summary {
+                .is_some_and(|(_, next)| matches!(&next.kind, BlockKind::User));
+            if matches!(&block.kind, BlockKind::User) || next_is_user {
                 lines.push(Line::from(""));
             }
         }
@@ -929,6 +983,106 @@ const EXCERPT_LINES: usize = EXCERPT_HEAD + EXCERPT_TAIL + 1;
 /// `Ctrl-O` shows the whole message.
 const USER_EXCERPT_HEAD: usize = 6;
 const USER_EXCERPT_LINES: usize = USER_EXCERPT_HEAD + 2;
+
+fn push_wrapped(lines: &mut Vec<Line<'static>>, text: &str, style: Style, width: usize) {
+    for line in wrap_text(text, width) {
+        lines.push(Line::from(Span::styled(line, style)));
+    }
+}
+
+/// Renders assistant text with the few markers a terminal can carry cheaply:
+/// fenced code blocks get a dim bar and an indent, `inline code` is cyan,
+/// `**bold**` is bold, headings are bold and list items get a bullet.
+/// Anything else is left as written.
+fn push_rich(lines: &mut Vec<Line<'static>>, text: &str, base: Style, width: usize) {
+    let mut in_code = false;
+    for raw in text.lines() {
+        let trimmed = raw.trim_start();
+        if trimmed.starts_with("```") {
+            in_code = !in_code;
+            continue;
+        }
+        if in_code {
+            let bar = "  │ ";
+            let available = width.saturating_sub(4).max(1);
+            for line in wrap_text(raw, available) {
+                lines.push(Line::from(vec![
+                    Span::styled(bar.to_owned(), Style::default().fg(Color::DarkGray)),
+                    Span::styled(line, Style::default().fg(Color::White)),
+                ]));
+            }
+            continue;
+        }
+        let indent = raw.len() - trimmed.len();
+        if let Some(rest) = trimmed
+            .strip_prefix("- ")
+            .or_else(|| trimmed.strip_prefix("* "))
+        {
+            push_styled(
+                lines,
+                &format!("{}• {rest}", " ".repeat(indent)),
+                base,
+                width,
+            );
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix('#') {
+            push_styled(
+                lines,
+                &format!("{}{}", " ".repeat(indent), rest.trim_start()),
+                base.add_modifier(Modifier::BOLD),
+                width,
+            );
+            continue;
+        }
+        push_styled(lines, raw, base, width);
+    }
+}
+
+fn push_styled(lines: &mut Vec<Line<'static>>, text: &str, style: Style, width: usize) {
+    let spans = inline_spans(text, style);
+    let measured: usize = spans
+        .iter()
+        .map(|span| {
+            span.content
+                .chars()
+                .map(|character| character.width().unwrap_or(0))
+                .sum::<usize>()
+        })
+        .sum();
+    if measured <= width {
+        lines.push(Line::from(spans));
+        return;
+    }
+    let plain: String = spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+    for line in wrap_text(&plain, width) {
+        lines.push(Line::from(Span::styled(line, style)));
+    }
+}
+
+fn inline_spans(text: &str, base: Style) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    for (index, segment) in text.split('`').enumerate() {
+        let code = index % 2 == 1;
+        for (part_index, part) in segment.split("**").enumerate() {
+            if part.is_empty() {
+                continue;
+            }
+            let mut style = base;
+            if code {
+                style = style.fg(Color::Cyan);
+            }
+            if part_index % 2 == 1 {
+                style = style.add_modifier(Modifier::BOLD);
+            }
+            spans.push(Span::styled(part.to_owned(), style));
+        }
+    }
+    spans
+}
 
 /// Wrapped input lines and the line the cursor sits on.
 fn input_view(app: &App, width: usize) -> (Vec<String>, usize) {
@@ -1629,6 +1783,7 @@ mod tests {
             call_id: keel_core::ToolCallId::new(1),
             tool: "shell".to_owned(),
             risk: keel_core::RiskLevel::Dangerous,
+            args_preview: Some("program=python".to_owned()),
         });
         events.append(Event::ToolFinished {
             turn_id: TurnId::new(1),
@@ -1648,7 +1803,8 @@ mod tests {
             BlockKind::Tool {
                 name: "shell".to_owned(),
                 ok: Some(true),
-                duration_ms: 12
+                duration_ms: 12,
+                args: "program=python".to_owned(),
             }
         );
         assert_eq!(block.text, "all tests passed");
@@ -1663,6 +1819,7 @@ mod tests {
                 name: "shell".to_owned(),
                 ok: Some(false),
                 duration_ms: 5,
+                args: String::new(),
             },
             text: "one\ntwo\nthree\nfour\nfive\nsix".to_owned(),
         });
@@ -1697,6 +1854,7 @@ mod tests {
                 name: "echo".to_owned(),
                 ok: Some(true),
                 duration_ms: 1,
+                args: String::new(),
             },
             text: "command output".to_owned(),
         });
@@ -1863,6 +2021,53 @@ mod tests {
     }
 
     #[test]
+    fn a_code_block_is_rendered_with_a_bar_and_no_fences() {
+        let mut app = app();
+        app.blocks.push(Block {
+            kind: BlockKind::Result,
+            text: "before\n```rust\nlet x = 1;\n```\nafter".to_owned(),
+        });
+        let rendered = frame(&app, 80, 20);
+        assert!(rendered.contains("│ let x = 1;"), "{rendered}");
+        assert!(!rendered.contains("```"), "{rendered}");
+        assert!(rendered.contains("before"), "{rendered}");
+    }
+
+    #[test]
+    fn inline_code_markers_are_removed() {
+        let mut app = app();
+        app.blocks.push(Block {
+            kind: BlockKind::Result,
+            text: "run `cargo test` now".to_owned(),
+        });
+        let rendered = frame(&app, 80, 20);
+        assert!(rendered.contains("run cargo test now"), "{rendered}");
+        assert!(!rendered.contains('`'), "{rendered}");
+    }
+
+    #[test]
+    fn tool_lines_separate_input_and_output() {
+        let mut app = app();
+        app.start_turn("go".to_owned());
+        app.blocks.push(Block {
+            kind: BlockKind::Tool {
+                name: "shell".to_owned(),
+                ok: Some(true),
+                duration_ms: 12,
+                args: "program=python".to_owned(),
+            },
+            text: "exit code: 0".to_owned(),
+        });
+        app.collapse("done", None, &TokenUsage::default(), 20, 0);
+        app.handle_key(ctrl('o'));
+
+        let rendered = frame(&app, 80, 24);
+        assert!(rendered.contains("✓ shell  12 ms"), "{rendered}");
+        assert!(rendered.contains("in   program=python"), "{rendered}");
+        assert!(rendered.contains("out  exit code: 0"), "{rendered}");
+    }
+
+    #[test]
     fn the_input_box_grows_with_a_pasted_message() {
         let mut app = app();
         app.input = "line1\nline2\nline3\nline4".chars().collect();
@@ -1965,6 +2170,7 @@ mod tests {
                 name: "list_dir".to_owned(),
                 ok: Some(true),
                 duration_ms: 3,
+                args: String::new(),
             },
             text: String::new(),
         });
@@ -2041,6 +2247,7 @@ mod tests {
                 name: "echo".to_owned(),
                 ok: Some(true),
                 duration_ms: 1,
+                args: String::new(),
             },
             text: String::new(),
         });
@@ -2049,7 +2256,7 @@ mod tests {
 
         let rendered = frame(&app, 80, 24);
         golden("tui-result.txt", &rendered);
-        assert!(rendered.contains("⏺ final answer"));
+        assert!(rendered.contains("final answer"));
         assert!(rendered.contains("1 tool · 1 file"));
         assert!(!rendered.contains("partial"));
         assert!(!rendered.contains("echo"));

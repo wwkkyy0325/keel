@@ -218,6 +218,10 @@ First complete kernel and reference host.
 - TUI: the input box grows up to six content lines and scrolls around the
   cursor; a sent message longer than eight lines collapses to its head until
   `Ctrl-O`. Running tools are yellow, the status dot is green when idle.
+- TUI: tool calls read as one block under a shared gutter (`✓`/`✗`/`…`) with
+  nested `in` and `out` lines; assistant text renders fenced code blocks with
+  a bar, inline code, bold and bullets. `ToolStarted` carries a bounded,
+  redacted `args_preview` that is never persisted.
 - A finished turn with open task items shows the remaining count and
   pre-fills the prompt in the TUI; the host never restarts a turn by itself.
 - `--help`/`-h` prints usage and `--version`/`-V` prints the host version

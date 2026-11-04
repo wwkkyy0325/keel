@@ -59,8 +59,9 @@ Stable within a major version:
   keys so a host can persist the stream without a second schema. A host may
   call `EventLog::clear` between turns after persisting the stream; sequence
   numbers stay monotonic within the process. `ToolFinished` carries a bounded,
-  redacted `output_preview` for a live UI; the field is skipped during
-  serialization, so tool output never reaches the persisted stream.
+  redacted `output_preview` and `ToolStarted` a bounded, redacted
+  `args_preview` for a live UI; both are skipped during serialization, so tool
+  arguments and output never reach the persisted stream.
 - Turn limits are runaway protection, not a task budget: 500 model calls, the
   profile's `tools.budget` and a 24-hour backstop. The timeouts are
   *inactivity* windows: a command with five minutes of silence is stopped, a

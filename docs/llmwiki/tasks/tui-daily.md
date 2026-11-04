@@ -164,16 +164,26 @@ One palette, no per-theme setting:
 
 | Element | Look |
 |---|---|
-| User message | Cyan, `› ` prefix |
+| User message | Cyan, `› ` at column 0; a blank line follows |
 | Assistant text | Default foreground, no prefix |
-| Tool running | Yellow, `⏺ <name> …` |
-| Tool done | Dim gray, `⏺ <name> ok <ms>` |
-| Tool failed | Red, `⏺ <name> failed <ms>` plus the error excerpt |
-| Final answer marker | Green `⏺ ` |
-| Summary | Dim gray `⎿ tools · files · duration` |
-| Notice | Yellow `· ` |
-| Error | Red `! ` |
+| Tool running | Yellow, `  … <name>` |
+| Tool done | Dim gray, `  ✓ <name>  <ms>` |
+| Tool failed | Red, `  ✗ <name>  <ms>` |
+| Tool input | Dim label `    in   ` + the bounded, redacted arguments |
+| Tool output | Dim label `    out  ` + the excerpt; failure output is red |
+| Summary | Dim gray `  ⎿ tools · files · duration` |
+| Notice | Yellow `  · ` |
+| Error | Red `  ! ` |
 | Status dot | Green when idle, yellow while working |
+| Code block | `  │ ` dim bar, code on the default foreground |
+| Inline code | Cyan, backticks removed |
+| Bold | Bold, `**` removed |
+| List item | `• `, nested indentation kept |
+
+Process lines share one gutter at column 2: status glyph, then the name.
+Arguments and output are nested under it at column 4, so a tool call reads as
+one block. There is no bullet glyph on the answer; the answer is plain text at
+column 0, with the summary underneath.
 
 ## States
 
@@ -237,6 +247,13 @@ One palette, no per-theme setting:
       `the_input_box_grows_with_a_pasted_message`,
       `a_long_sent_message_collapses_until_details_are_shown`. Done
       2026-11-05.
+- [x] Tool calls read as `in`/`out` blocks under one glyph gutter; the
+      kernel's `ToolStarted` carries a bounded, redacted `args_preview`
+      (skipped by serialization). Assistant text renders fenced code blocks,
+      inline code, bold and bullets. Verify:
+      `tool_lines_separate_input_and_output`,
+      `a_code_block_is_rendered_with_a_bar_and_no_fences`,
+      `inline_code_markers_are_removed`. Done 2026-11-05.
 - [ ] Tool line compaction: one line per call with target and duration;
       failure keeps the error; `Ctrl-O` expands. The finished-turn aggregate
       drops the token count. Verify: a running turn renders N lines; a

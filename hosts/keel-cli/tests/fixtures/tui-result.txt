@@ -1,8 +1,8 @@
-· type a request; /help lists commands
+  · type a request; /help lists commands
 
 › say hello
 
-⏺ final answer
+final answer
   ⎿ 1 tool · 1 file · 15 in / 5 out · 12 ms
 
 

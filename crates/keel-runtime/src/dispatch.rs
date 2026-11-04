@@ -26,6 +26,7 @@ struct PreparedCall {
     call_id: ToolCallId,
     name: String,
     args: ToolArgs,
+    args_preview: String,
     risk: RiskLevel,
 }
 
@@ -144,6 +145,7 @@ impl ToolDispatcher {
                 tool,
                 call_id: call.id,
                 name: call.name,
+                args_preview: redact_secrets(&crate::summary::compact_args(&call.args)),
                 args: call.args,
                 risk: schema.risk,
             };
@@ -173,6 +175,7 @@ impl ToolDispatcher {
                     call_id: prepared.call_id,
                     tool: prepared.name.clone(),
                     risk: prepared.risk,
+                    args_preview: Some(prepared.args_preview.clone()),
                 });
                 let result = run_tool(
                     prepared.tool,
@@ -231,6 +234,7 @@ impl ToolDispatcher {
                 call_id: prepared.call_id,
                 tool: prepared.name.clone(),
                 risk: prepared.risk,
+                args_preview: Some(prepared.args_preview.clone()),
             });
             let ctx = self.tool_ctx(turn_id, prepared.call_id, cancel.clone());
             let result = if cancel.is_cancelled() {
@@ -449,6 +453,7 @@ impl ToolDispatcher {
             call_id,
             tool: name.clone(),
             risk,
+            args_preview: None,
         });
         let result = ToolResult::failure(call_id, name, error);
         self.events.append(Event::ToolFinished {

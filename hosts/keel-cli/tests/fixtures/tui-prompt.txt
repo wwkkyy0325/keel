@@ -1,4 +1,4 @@
-· type a request; /help lists commands
+  · type a request; /help lists commands
 
 
 

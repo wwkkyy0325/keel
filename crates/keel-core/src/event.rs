@@ -181,6 +181,10 @@ pub enum Event {
         call_id: ToolCallId,
         tool: String,
         risk: RiskLevel,
+        /// Bounded, redacted arguments for a live UI. Skipped during
+        /// serialization so values stay out of the persisted stream.
+        #[serde(skip)]
+        args_preview: Option<String>,
     },
     ToolFinished {
         turn_id: TurnId,
