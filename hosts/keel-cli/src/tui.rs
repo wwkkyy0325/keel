@@ -9,11 +9,10 @@ use std::cell::Cell;
 use std::collections::HashSet;
 use std::io;
 use std::io::IsTerminal;
-use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use crossterm::event::{Event as CrosstermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -108,7 +107,6 @@ pub struct TuiHost {
     pub todos: Option<Arc<Mutex<TodoList>>>,
     pub store: Option<Store>,
     pub session_id: String,
-    pub workspace: PathBuf,
     /// Every scope, primary first, labeled with its access.
     pub roots: Vec<String>,
     /// Job or `--input` text placed in the prompt; never submitted.
@@ -175,8 +173,6 @@ impl UsageTotal {
 
 struct App {
     text: Text,
-    workspace: String,
-    model: String,
     permission: String,
     /// Every scope, primary first, labeled with its access.
     roots: Vec<String>,
@@ -193,6 +189,11 @@ struct App {
     content_lines: Cell<usize>,
     viewport_lines: Cell<usize>,
     running: bool,
+    /// When the running turn started; the status line shows its elapsed time.
+    started: Option<Instant>,
+    /// Open and total task items, refreshed from the shared list.
+    remaining: usize,
+    total_tasks: usize,
     cancel: Option<CancelToken>,
     pending: Option<InteractionJob>,
     pending_choice: usize,
@@ -212,17 +213,9 @@ struct App {
 }
 
 impl App {
-    fn new(
-        text: Text,
-        workspace: String,
-        model: String,
-        permission: String,
-        roots: Vec<String>,
-    ) -> Self {
+    fn new(text: Text, permission: String, roots: Vec<String>) -> Self {
         Self {
             text,
-            workspace,
-            model,
             permission,
             roots,
             blocks: vec![Block {
@@ -240,6 +233,9 @@ impl App {
             content_lines: Cell::new(0),
             viewport_lines: Cell::new(1),
             running: false,
+            started: None,
+            remaining: 0,
+            total_tasks: 0,
             cancel: None,
             pending: None,
             pending_choice: 0,
@@ -292,6 +288,7 @@ impl App {
         });
         self.streaming = Some(self.blocks.len() - 1);
         self.running = true;
+        self.started = Some(Instant::now());
         self.status = "working".to_owned();
         self.follow = true;
     }
@@ -382,6 +379,7 @@ impl App {
         self.turn_blocked = 0;
         self.usage.add(usage);
         self.running = false;
+        self.started = None;
         self.cancel = None;
         self.status = "ready".to_owned();
         self.follow = true;
@@ -890,16 +888,8 @@ pub async fn run(host: TuiHost) -> Result<ExitCode, KernelError> {
     }
     let _guard = TerminalGuard::enter()?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout())).map_err(io_error)?;
-    let workspace = host
-        .workspace
-        .file_name()
-        .and_then(|name| name.to_str())
-        .map(str::to_owned)
-        .unwrap_or_else(|| host.workspace.display().to_string());
     let mut app = App::new(
         host.text,
-        workspace,
-        host.config.model_route.model.clone(),
         host.config.permission_level.as_str().to_owned(),
         host.roots.clone(),
     );
@@ -920,6 +910,9 @@ pub async fn run(host: TuiHost) -> Result<ExitCode, KernelError> {
     let mut ticks = tokio::time::interval(Duration::from_millis(80));
 
     while !app.should_quit {
+        let (open, total) = task_counts(todos.as_ref());
+        app.remaining = open;
+        app.total_tasks = total;
         terminal.draw(|frame| draw(&app, frame)).map_err(io_error)?;
         tokio::select! {
             Some(key) = key_rx.recv() => {
@@ -1022,6 +1015,21 @@ fn start_turn(
             })
             .await;
     });
+}
+
+/// Open and total task items for the status line.
+fn task_counts(todos: Option<&Arc<Mutex<TodoList>>>) -> (usize, usize) {
+    let Some(handle) = todos else { return (0, 0) };
+    let list = handle
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let total = list.items.len();
+    let open = list
+        .items
+        .iter()
+        .filter(|item| matches!(item.status, TodoStatus::Pending | TodoStatus::InProgress))
+        .count();
+    (open, total)
 }
 
 /// Task items the model has not closed, used only to offer the next turn.
@@ -1150,17 +1158,22 @@ fn draw(app: &App, frame: &mut Frame) {
     } else {
         app.text.status_ready()
     };
-    let left = format!(
-        " ● {} · {} · {} · {}",
-        state, app.workspace, app.model, app.permission
-    );
-    let right = if app.running {
-        app.text.hint_running()
-    } else if app.hidden.is_empty() {
-        app.text.hint_idle()
+    let mut left = format!(" ● {state}");
+    if app.remaining > 0 && app.total_tasks > 0 {
+        left.push_str(" · ");
+        left.push_str(&app.text.task_status(app.remaining, app.total_tasks));
+    }
+    if let Some(started) = app.started {
+        left.push_str(&format!(" · {}s", started.elapsed().as_secs()));
+    }
+    let mut right = app.text.mode_label(&app.permission);
+    if app.running {
+        right.push_str(" · Ctrl-C");
+    } else if !app.hidden.is_empty() {
+        right.push_str(" · Ctrl-O · Shift+Tab");
     } else {
-        app.text.hint_details()
-    };
+        right.push_str(" · Shift+Tab");
+    }
     let footer = Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)])
         .split(chunks[3]);
     let status_style = Style::default().fg(if app.running {
@@ -1232,8 +1245,6 @@ mod tests {
     fn app() -> App {
         App::new(
             Text::new(crate::ui_text::Lang::En),
-            "Keel".to_owned(),
-            "mock".to_owned(),
             "workspace_auto".to_owned(),
             Vec::new(),
         )
@@ -1309,8 +1320,6 @@ mod tests {
     fn slash_roots_lists_every_scope() {
         let mut app = App::new(
             Text::new(crate::ui_text::Lang::En),
-            "Keel".to_owned(),
-            "mock".to_owned(),
             "workspace_auto".to_owned(),
             vec!["C:/ws [write]".to_owned(), "D:/Archive [read]".to_owned()],
         );
@@ -1670,8 +1679,6 @@ mod tests {
     fn the_chinese_screen_renders_translated_chrome() {
         let app = App::new(
             Text::new(crate::ui_text::Lang::Zh),
-            "Keel".to_owned(),
-            "mock".to_owned(),
             "workspace_auto".to_owned(),
             Vec::new(),
         );
@@ -1702,9 +1709,9 @@ mod tests {
     fn the_empty_screen_has_a_header_input_and_status() {
         let rendered = frame(&app(), 80, 24);
         golden("tui-empty.txt", &rendered);
-        assert!(rendered.contains("● ready · Keel · mock · workspace_auto"));
-        assert!(rendered.contains("> ▏"));
-        assert!(rendered.contains("Shift+Tab"));
+        assert!(rendered.contains("● ready"), "{rendered}");
+        assert!(rendered.contains("Confirm · Shift+Tab"), "{rendered}");
+        assert!(rendered.contains("> ▏"), "{rendered}");
     }
 
     #[test]

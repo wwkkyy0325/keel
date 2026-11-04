@@ -2098,3 +2098,14 @@
   needs structured fields on `InteractionRequest`.
 - `--lang auto|zh|en` added and listed in `--help`; `auto` detects.
 - Tests: resolution order, both arms, Chinese screen render. 433 pass.
+
+### Minimal status line (2026-11-05)
+
+- The status line is now `● state · tasks open/total · elapsed` on the left
+  (tasks only while some are open, elapsed only while a turn runs) and the
+  permission mode plus one contextual key on the right (`Shift+Tab`, `Ctrl-O`
+  when process blocks are collapsed, `Ctrl-C` while running).
+- Removed the workspace and model name from the status line; `/roots` still
+  lists scopes, and the model is a profile decision. `TuiHost` no longer
+  carries a workspace string.
+- Task counts refresh from the shared `TodoList` before every draw.

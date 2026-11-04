@@ -101,17 +101,22 @@ impl Text {
         self.pick("工作中", "working")
     }
 
-    /// Key hints are not translated; the keys are the same in both languages.
-    pub fn hint_running(&self) -> &'static str {
-        "Ctrl-C · PgUp/PgDn "
+    pub fn task_status(&self, open: usize, total: usize) -> String {
+        match self.lang {
+            Lang::Zh => format!("任务 {open}/{total}"),
+            Lang::En => format!("tasks {open}/{total}"),
+        }
     }
 
-    pub fn hint_idle(&self) -> &'static str {
-        "Shift+Tab · /help "
-    }
-
-    pub fn hint_details(&self) -> &'static str {
-        "Ctrl-O · Shift+Tab · /help "
+    pub fn mode_label(&self, mode: &str) -> String {
+        match (self.lang, mode) {
+            (Lang::Zh, "workspace_auto") => "确认",
+            (Lang::Zh, "full_auto") => "自动",
+            (Lang::En, "workspace_auto") => "Confirm",
+            (Lang::En, "full_auto") => "Auto",
+            _ => mode,
+        }
+        .to_owned()
     }
 
     pub fn permission_title(&self) -> &'static str {
@@ -300,5 +305,11 @@ mod tests {
             Text::new(Lang::Zh).permission_title(),
             Text::new(Lang::En).permission_title()
         );
+        assert_eq!(Text::new(Lang::Zh).mode_label("workspace_auto"), "确认");
+        assert_eq!(Text::new(Lang::Zh).mode_label("full_auto"), "自动");
+        assert_eq!(Text::new(Lang::En).mode_label("full_auto"), "Auto");
+        assert_eq!(Text::new(Lang::En).mode_label("custom"), "custom");
+        assert_eq!(Text::new(Lang::Zh).task_status(2, 5), "任务 2/5");
+        assert_eq!(Text::new(Lang::En).task_status(2, 5), "tasks 2/5");
     }
 }

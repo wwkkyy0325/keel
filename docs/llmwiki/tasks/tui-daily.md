@@ -34,17 +34,13 @@ day without turning it into a dashboard.
 │                                                            │
 │ 两个用例都通过了。                                          │
 ├────────────────────────────────────────────────────────────┤
-│ Idle · tasks 2/2 · 4.1s                        Confirm     │
+│ Idle · tasks 2/5                       Confirm · Shift+Tab │
 │ > _                                                        │
 └────────────────────────────────────────────────────────────┘
 ```
 
-The English chrome is the same layout:
-
-```
-│ Idle · tasks 2/2 · 4.1s                        Confirm     │
-│ > _                                                        │
-```
+The English chrome is the same layout. While a turn runs the left side adds
+the elapsed time and the right side shows `Ctrl-C` instead of `Shift+Tab`.
 
 Rules:
 
@@ -54,8 +50,9 @@ Rules:
    While a turn runs, tool lines appear; when it ends, they collapse into one
    aggregate line: tools, files and duration, no token counts.
 3. **One status line.** Left: state (`Idle`, `Working`, `Waiting`, `Cancelled`),
-   open tasks when a list exists, elapsed time. Right: permission mode, plus
-   `Ctrl-C` only while a turn runs. Nothing else; tokens live in `/cost`.
+   open tasks when a list exists, elapsed time while a turn runs. Right:
+   permission mode (`Confirm` / `Auto`) and the one key that applies. Nothing
+   else; tokens live in `/cost`.
 4. **One input line**, which grows for a pasted multi-line message.
 
 ## What is shown, and what is not
@@ -177,8 +174,13 @@ switching stays on the command line (`--store`, `--session-id`).
       sentence itself stays kernel-owned English for now. Verify: `ui_text`
       unit tests; `the_chinese_screen_renders_translated_chrome`. Done
       2026-11-05.
-- [ ] Layout simplification: drop the header, one status line, one growing
-      input. Verify: goldens `tui-idle.zh.txt` and `tui-idle.en.txt`.
+- [x] Status line: state, open tasks, elapsed while a turn runs, mode, and
+      the one contextual key (`Shift+Tab`, `Ctrl-O` or `Ctrl-C`). The
+      workspace and model name are no longer shown; they were permanent
+      chrome the user does not act on. Verify: goldens, `tui-empty.txt`
+      asserts `Confirm · Shift+Tab`; `ui_text` unit tests. Done 2026-11-05.
+- [ ] The input grows for a pasted multi-line message; today it is a fixed
+      three-line box. Verify: a five-line paste is fully visible.
 - [ ] Tool line compaction: one line per call with target and duration;
       failure keeps the error; `Ctrl-O` expands. The finished-turn aggregate
       drops the token count. Verify: a running turn renders N lines; a
@@ -186,9 +188,6 @@ switching stays on the command line (`--store`, `--session-id`).
 - [ ] Sub-agent and background lines from the event log
       (`BackgroundStarted`, `SubAgentFinished`), no panels. Verify: both
       events render one line in each language.
-- [ ] Status line: state, open tasks, elapsed, mode, and `Ctrl-C` while a
-      turn runs. Verify: a turn in each state renders the right left and right
-      halves.
 - [ ] Permission prompt strings through the table; keys unchanged. Verify:
       goldens `tui-prompt.zh.txt` and `tui-prompt.en.txt`.
 - [ ] `/cost` prints the turn total and the session total; `/help` lists the
