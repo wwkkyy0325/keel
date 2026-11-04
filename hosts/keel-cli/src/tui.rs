@@ -188,6 +188,8 @@ struct App {
     show_process: bool,
     content_lines: Cell<usize>,
     viewport_lines: Cell<usize>,
+    /// Width of the last draw, so a detail toggle can measure the transcript.
+    last_width: Cell<usize>,
     running: bool,
     /// When the running turn started; the status line shows its elapsed time.
     started: Option<Instant>,
@@ -232,6 +234,7 @@ impl App {
             show_process: false,
             content_lines: Cell::new(0),
             viewport_lines: Cell::new(1),
+            last_width: Cell::new(80),
             running: false,
             started: None,
             remaining: 0,
@@ -274,6 +277,39 @@ impl App {
         self.follow = true;
     }
 
+    /// Shows or hides the process of finished turns. Revealing scrolls to the
+    /// last turn's first hidden block: without that, the view stays at the
+    /// bottom and the toggle looks like a no-op.
+    fn toggle_details(&mut self) {
+        self.show_process = !self.show_process;
+        self.follow = true;
+        if !self.show_process {
+            return;
+        }
+        let Some(target) = self.last_turn_hidden_start() else {
+            return;
+        };
+        let width = self.last_width.get().max(1);
+        let (_, offsets) = self.transcript_at(width);
+        if let Some((_, line)) = offsets.iter().find(|(index, _)| *index == target) {
+            self.follow = false;
+            self.scroll = line.saturating_sub(1);
+        }
+    }
+
+    /// The first hidden block after the most recent user message.
+    fn last_turn_hidden_start(&self) -> Option<usize> {
+        let last_user = self
+            .blocks
+            .iter()
+            .rposition(|block| matches!(block.kind, BlockKind::User))?;
+        self.hidden
+            .iter()
+            .copied()
+            .filter(|index| *index > last_user)
+            .min()
+    }
+
     fn start_turn(&mut self, input: String) {
         self.blocks.push(Block {
             kind: BlockKind::User,
@@ -312,6 +348,11 @@ impl App {
             done.outcome.duration_ms,
             done.outcome.answer.changes.len(),
         );
+        self.add_end_notice(
+            done.outcome.state,
+            done.outcome.answer.missing,
+            error.is_some(),
+        );
         for text in &done.outcome.late_interjections {
             self.notice(self.text.interjection_late(text));
         }
@@ -323,6 +364,26 @@ impl App {
         }
         if let Some(kind) = done.outcome.secret_warning {
             self.notice(self.text.secret_notice(kind.as_str()));
+        }
+    }
+
+    /// One line for a turn that did not end in a plain answer. The kernel
+    /// already types the state and flags a missing answer; the UI must not
+    /// leave the user guessing why the screen is empty.
+    fn add_end_notice(&mut self, state: TurnState, missing: bool, has_error: bool) {
+        match state {
+            TurnState::Cancelled => self.notice(self.text.turn_cancelled()),
+            TurnState::Error => {
+                if !has_error {
+                    self.notice(self.text.turn_failed());
+                }
+            }
+            TurnState::Done | TurnState::Converge => {
+                if missing {
+                    self.notice(self.text.empty_answer());
+                }
+            }
+            other => self.notice(self.text.turn_ended(&other.to_string())),
         }
     }
 
@@ -510,8 +571,7 @@ impl App {
                     None
                 }
                 KeyCode::Char('o') => {
-                    self.show_process = !self.show_process;
-                    self.follow = true;
+                    self.toggle_details();
                     None
                 }
                 _ => None,
@@ -731,6 +791,12 @@ impl App {
     }
 
     fn transcript(&self, width: usize) -> Vec<Line<'static>> {
+        self.transcript_at(width).0
+    }
+
+    /// The transcript and the first line of every visible block, so a toggle
+    /// can scroll to the block it just revealed.
+    fn transcript_at(&self, width: usize) -> (Vec<Line<'static>>, Vec<(usize, usize)>) {
         let visible: Vec<(usize, &Block)> = self
             .blocks
             .iter()
@@ -738,7 +804,9 @@ impl App {
             .filter(|(index, _)| self.show_process || !self.hidden.contains(index))
             .collect();
         let mut lines = Vec::new();
+        let mut offsets = Vec::with_capacity(visible.len());
         for (position, (index, block)) in visible.iter().enumerate() {
+            offsets.push((*index, lines.len()));
             let (prefix, text, style) = match &block.kind {
                 BlockKind::User => ("› ", block.text.clone(), Style::default().fg(Color::Cyan)),
                 BlockKind::Assistant => ("", block.text.clone(), Style::default().fg(Color::White)),
@@ -803,7 +871,7 @@ impl App {
                 lines.push(Line::from(""));
             }
         }
-        lines
+        (lines, offsets)
     }
 }
 
@@ -1059,10 +1127,7 @@ fn continuation_hint(text: Text, state: TurnState, remaining: usize) -> Option<S
 fn run_slash(app: &mut App, command: &str, store: Option<&Store>) {
     match command.trim() {
         "/help" => app.notice(app.text.help()),
-        "/details" => {
-            app.show_process = !app.show_process;
-            app.follow = true;
-        }
+        "/details" => app.toggle_details(),
         "/quit" | "/exit" => app.should_quit = true,
         "/clear" => app.blocks.clear(),
         "/cost" => app.notice(
@@ -1115,6 +1180,7 @@ fn draw(app: &App, frame: &mut Frame) {
     ])
     .split(area);
 
+    app.last_width.set(chunks[0].width as usize);
     let lines = app.transcript(chunks[0].width as usize);
     let content = lines.len();
     let visible = chunks[0].height as usize;
@@ -1687,6 +1753,44 @@ mod tests {
         let plain: String = frame(&app, 80, 12).replace(' ', "");
         assert!(plain.contains("输入任务"), "{plain}");
         assert!(plain.contains("就绪"), "{plain}");
+    }
+
+    #[test]
+    fn ctrl_o_reveals_the_last_turn_process() {
+        let mut app = app();
+        app.start_turn("go".to_owned());
+        app.blocks.push(Block {
+            kind: BlockKind::Tool {
+                name: "list_dir".to_owned(),
+                ok: Some(true),
+                duration_ms: 3,
+            },
+            text: String::new(),
+        });
+        app.collapse("done", None, &TokenUsage::default(), 10, 0);
+        let hidden = frame(&app, 60, 20);
+        assert!(!hidden.contains("list_dir"), "{hidden}");
+
+        app.handle_key(ctrl('o'));
+        let shown = frame(&app, 60, 20);
+        assert!(shown.contains("list_dir"), "{shown}");
+    }
+
+    #[test]
+    fn a_cancelled_turn_says_so() {
+        let mut app = app();
+        app.add_end_notice(TurnState::Cancelled, true, false);
+        let last = app.blocks.last().expect("notice");
+        assert_eq!(last.kind, BlockKind::Notice);
+        assert!(last.text.contains("cancelled"), "{}", last.text);
+    }
+
+    #[test]
+    fn a_missing_answer_is_explained() {
+        let mut app = app();
+        app.add_end_notice(TurnState::Done, true, false);
+        let last = app.blocks.last().expect("notice");
+        assert!(last.text.contains("without an answer"), "{}", last.text);
     }
 
     #[test]

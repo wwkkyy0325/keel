@@ -251,6 +251,28 @@ impl Text {
         }
     }
 
+    pub fn turn_cancelled(&self) -> &'static str {
+        self.pick("本轮已取消", "turn cancelled")
+    }
+
+    pub fn turn_failed(&self) -> &'static str {
+        self.pick("本轮失败", "turn failed")
+    }
+
+    pub fn empty_answer(&self) -> &'static str {
+        self.pick(
+            "本轮没有文本回答；过程已保留，可按 Ctrl-O 展开",
+            "the turn ended without an answer; press Ctrl-O to expand the process",
+        )
+    }
+
+    pub fn turn_ended(&self, state: &str) -> String {
+        match self.lang {
+            Lang::Zh => format!("本轮结束：{state}"),
+            Lang::En => format!("turn ended: {state}"),
+        }
+    }
+
     pub fn continuation_hint(&self, remaining: usize) -> String {
         match self.lang {
             Lang::Zh => format!("还有 {remaining} 个任务未完成；按 Enter 继续"),

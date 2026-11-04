@@ -85,7 +85,8 @@ No new panels. Everything above lands in the transcript or the status line.
   answer. The transcript keeps the user message, the answer and the aggregate.
 - `Ctrl-O` or `/details` toggles the process for the whole conversation. The
   toggle only filters hidden blocks; it never re-runs, reorders or drops
-  messages.
+  messages. Revealing scrolls to the last turn's first hidden block: without
+  that, the view stays at the bottom and the toggle looks like a no-op.
 - A per-turn expansion would need a cursor over blocks, a selection model and
   a second key set. A global toggle is one key, and it answers the question the
   user actually asks ("what did it do"). If it ever proves insufficient, the
@@ -151,9 +152,13 @@ switching stays on the command line (`--store`, `--session-id`).
   status reads `Waiting`; `↑`/`↓` select, `Enter` confirms, letters still work.
 - **Finished with open tasks**: one hint line under the answer, input
   prefilled with a continuation (already implemented); no dialog.
-- **Cancelled**: the partial answer stays, status `Cancelled` for one turn,
-  input usable.
+- **Cancelled**: the partial answer stays, one line says the turn was
+  cancelled, status returns to idle, input usable.
+- **Empty result**: a turn that ends without body text says so in one line and
+  points at `Ctrl-O`; it is not a blank screen.
 - **Error**: one red line with the message; the session stays open.
+- **Any other terminal state**: one line names the state instead of leaving
+  the transcript silent.
 - **Terminal cannot run the UI** (piped stdin): exit with a clear message.
 
 ## Failure paths
@@ -181,6 +186,12 @@ switching stays on the command line (`--store`, `--session-id`).
       workspace and model name are no longer shown; they were permanent
       chrome the user does not act on. Verify: goldens, `tui-empty.txt`
       asserts `Workspace · Shift+Tab`; `ui_text` unit tests. Done 2026-11-05.
+- [x] Terminal states are explicit: cancelled, failed, missing answer and any
+      other ending produce one line, driven by the typed `TurnOutcome.state`
+      and `Answer::missing`. Revealing details scrolls to the last turn's
+      process. Verify: `ctrl_o_reveals_the_last_turn_process`,
+      `a_cancelled_turn_says_so`, `a_missing_answer_is_explained`. Done
+      2026-11-05.
 - [ ] The input grows for a pasted multi-line message; today it is a fixed
       three-line box. Verify: a five-line paste is fully visible.
 - [ ] Tool line compaction: one line per call with target and duration;

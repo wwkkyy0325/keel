@@ -207,6 +207,9 @@ First complete kernel and reference host.
 - TUI: Chinese and English chrome, chosen from the shell locale or the OS UI
   language at startup; `--lang auto|zh|en` overrides. The model channel and
   tool names stay English.
+- TUI: a cancelled, failed or empty turn ends with one explicit line, and
+  revealing details moves the viewport to the last turn's process instead of
+  leaving it off-screen.
 - A finished turn with open task items shows the remaining count and
   pre-fills the prompt in the TUI; the host never restarts a turn by itself.
 - `--help`/`-h` prints usage and `--version`/`-V` prints the host version

@@ -2120,3 +2120,17 @@
   wrapper the reference host does not implement.
 - Goldens regenerated; 433 tests pass. Built in `target/verify` because a
   running `--tui --demo` session held the default binary.
+
+### TUI state coverage and detail reveal (2026-11-05)
+
+- `Ctrl-O` and `/details` share one toggle. Revealing now scrolls to the last
+  turn's first hidden block; before, the view stayed at the bottom, so the
+  process reappeared off-screen and the toggle looked broken.
+- Every terminal outcome gets a line: cancelled, failed, missing answer (using
+  `Answer::missing`, which the kernel already set), and any other state is
+  named. Previously a cancelled or empty turn showed only the aggregate
+  summary.
+- Tests: `ctrl_o_reveals_the_last_turn_process`,
+  `a_cancelled_turn_says_so`, `a_missing_answer_is_explained`.
+- Verified in `target/verify` because a running `--tui --demo` holds the
+  default binary.
