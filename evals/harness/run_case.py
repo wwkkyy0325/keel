@@ -271,6 +271,7 @@ def run_case(case_dir: Path, profile: str | None = None, keep: bool = False) -> 
         "usage": parse_usage(stdout),
         "mechanisms": mechanisms,
         "workspace": str(workspace) if keep else None,
+        "state_home": str(state_home) if keep else None,
         "stdout_tail": stdout[-MAX_OUTPUT:],
         "stderr_tail": stderr[-MAX_OUTPUT:],
         "verify_tail": verify_stdout[-MAX_OUTPUT:] + verify_stderr[-MAX_OUTPUT:],
@@ -291,7 +292,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("case", type=Path)
     parser.add_argument("--profile", help="override the profile in meta.toml")
-    parser.add_argument("--keep", action="store_true", help="keep the workspace")
+    parser.add_argument(
+        "--keep",
+        action="store_true",
+        help="keep the workspace and the eval state (keel.db holds the event stream)",
+    )
     args = parser.parse_args()
 
     report = run_case(args.case, args.profile, args.keep)

@@ -2216,6 +2216,22 @@
   the event policy and the `cargo-semver-checks` command.
 - Kernel-only CI includes `keel-testkit`.
 
+### Tool-result share measured; no code-execution sandbox (2026-11-07)
+
+- `run_case.py --keep` now keeps the eval state home, so the event stream in
+  `keel.db` survives and per-call usage can be analyzed.
+- `evals/harness/tool_share.py`: computes, per turn, the input a tool round
+  injects into the next model call (`input(n) - input(n-1) - output(n-1)`),
+  its share of input, the round-trip count and the longest read chain.
+- Three coding cases on `deepseek-flash`: tool results are 2.2%, 9.7% and 5.0%
+  of model input; a turn takes 8-12 model calls; context never exceeded 7k of
+  a 24k budget. Cost ceiling for removing it entirely is 5-25%, before the
+  output tokens PTC would spend writing the orchestration code.
+- Decision: do not build a code-execution sandbox. The dispatcher stays the
+  only path to a tool, which is what keeps the permission gate, path
+  confinement and the read-only/parallel policy.
+- Report: `evals/reports/2026-11-07-tool-result-share.md`.
+
 ### `edit_file` exact-match tool (2026-11-08)
 
 - `keel-runtime::tools::EditFileTool`: `edit_file { path, old, new,
