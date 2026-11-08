@@ -74,7 +74,7 @@ impl PermissionEngine {
     /// Sets the directory whose files may be read back after a tool result is
     /// truncated. The path should already be canonical and absolute.
     pub fn with_outputs(mut self, path: impl Into<PathBuf>) -> Self {
-        self.outputs = path.into();
+        self.outputs = keel_core::simplify_path(path.into());
         self
     }
 
@@ -441,13 +441,26 @@ fn is_env_template(name: &str) -> bool {
     )
 }
 
+/// Create the temporary directory under a canonical base. On Windows CI
+/// `temp_dir()` can contain an 8.3 short name such as `RUNNER~1`; the engine
+/// canonicalizes its root, so a request built from the short path would not
+/// share a prefix with it.
+#[cfg(test)]
+fn test_dir() -> tempfile::TempDir {
+    let base = std::fs::canonicalize(std::env::temp_dir()).unwrap_or_else(|_| std::env::temp_dir());
+    tempfile::Builder::new()
+        .prefix("keel-permission-")
+        .tempdir_in(base)
+        .unwrap()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use keel_core::resolve_path;
 
     fn engine(level: PermissionLevel) -> (PermissionEngine, tempfile::TempDir) {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_dir();
         let engine = PermissionEngine::new(dir.path(), level).unwrap();
         (engine, dir)
     }
@@ -603,8 +616,8 @@ mod tests {
 
     #[test]
     fn a_configured_outputs_directory_is_readable() {
-        let workspace = tempfile::tempdir().unwrap();
-        let state = tempfile::tempdir().unwrap();
+        let workspace = test_dir();
+        let state = test_dir();
         let outputs = state.path().join("outputs");
         let engine = PermissionEngine::new(workspace.path(), PermissionLevel::WorkspaceAuto)
             .unwrap()
@@ -769,8 +782,8 @@ mod root_scope_tests {
 
     #[test]
     fn a_root_added_after_construction_survives_grant_revocation() {
-        let workspace = tempfile::tempdir().unwrap();
-        let extra = tempfile::tempdir().unwrap();
+        let workspace = test_dir();
+        let extra = test_dir();
         let engine =
             PermissionEngine::new(workspace.path(), PermissionLevel::WorkspaceAuto).unwrap();
         let scope = engine.add_root(extra.path(), AccessKind::Write).unwrap();
@@ -791,8 +804,8 @@ mod root_scope_tests {
 
     #[test]
     fn adding_the_same_root_twice_keeps_the_first_scope() {
-        let workspace = tempfile::tempdir().unwrap();
-        let extra = tempfile::tempdir().unwrap();
+        let workspace = test_dir();
+        let extra = test_dir();
         let engine =
             PermissionEngine::new(workspace.path(), PermissionLevel::WorkspaceAuto).unwrap();
         let first = engine.add_root(extra.path(), AccessKind::Read).unwrap();
@@ -803,8 +816,8 @@ mod root_scope_tests {
 
     #[test]
     fn an_extra_read_root_allows_reads_and_confirms_writes() {
-        let workspace = tempfile::tempdir().unwrap();
-        let extra = tempfile::tempdir().unwrap();
+        let workspace = test_dir();
+        let extra = test_dir();
         let engine = PermissionEngine::new(workspace.path(), PermissionLevel::WorkspaceAuto)
             .unwrap()
             .with_root(extra.path(), AccessKind::Read)
@@ -823,8 +836,8 @@ mod root_scope_tests {
 
     #[test]
     fn an_extra_write_root_allows_reads_and_writes() {
-        let workspace = tempfile::tempdir().unwrap();
-        let extra = tempfile::tempdir().unwrap();
+        let workspace = test_dir();
+        let extra = test_dir();
         let engine = PermissionEngine::new(workspace.path(), PermissionLevel::WorkspaceAuto)
             .unwrap()
             .with_root(extra.path(), AccessKind::Write)
@@ -843,8 +856,8 @@ mod root_scope_tests {
 
     #[test]
     fn execution_in_an_extra_root_still_requires_confirmation() {
-        let workspace = tempfile::tempdir().unwrap();
-        let extra = tempfile::tempdir().unwrap();
+        let workspace = test_dir();
+        let extra = test_dir();
         let engine = PermissionEngine::new(workspace.path(), PermissionLevel::WorkspaceAuto)
             .unwrap()
             .with_root(extra.path(), AccessKind::Write)
@@ -859,8 +872,8 @@ mod root_scope_tests {
 
     #[test]
     fn the_most_specific_root_wins() {
-        let workspace = tempfile::tempdir().unwrap();
-        let outer = tempfile::tempdir().unwrap();
+        let workspace = test_dir();
+        let outer = test_dir();
         let inner = outer.path().join("inner");
         std::fs::create_dir(&inner).unwrap();
         let engine = PermissionEngine::new(workspace.path(), PermissionLevel::WorkspaceAuto)
@@ -883,8 +896,8 @@ mod root_scope_tests {
 
     #[test]
     fn the_primary_root_is_listed_first() {
-        let workspace = tempfile::tempdir().unwrap();
-        let extra = tempfile::tempdir().unwrap();
+        let workspace = test_dir();
+        let extra = test_dir();
         let engine = PermissionEngine::new(workspace.path(), PermissionLevel::WorkspaceAuto)
             .unwrap()
             .with_root(extra.path(), AccessKind::Read)
