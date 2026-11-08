@@ -1,5 +1,6 @@
 mod common;
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -12,8 +13,8 @@ use keel_core::{
     ToolSchema, TurnId, TurnState, VerificationMode, VerifySpec,
 };
 use keel_runtime::{
-    DeferAllInteractionPort, EventLog, InteractionBroker, InterjectionPush, MockModel, MockStep,
-    PermissionEngine, RuntimeConfig, TurnDriver, TurnDriverConfig, TurnLimits,
+    AcceptanceSelector, DeferAllInteractionPort, EventLog, InteractionBroker, InterjectionPush,
+    MockModel, MockStep, PermissionEngine, RuntimeConfig, TurnDriver, TurnDriverConfig, TurnLimits,
 };
 
 struct RepromptPolicy {
@@ -668,6 +669,89 @@ async fn acceptance_after_changes_runs_after_an_edit() {
             record.event,
             Event::VerificationFinished { passed: true, .. }
         )));
+}
+
+#[tokio::test]
+async fn an_acceptance_selector_sees_the_changed_path() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("note.txt"), "old").unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&["edit_file"], 4, PermissionLevel::WorkspaceAuto);
+    let mut args = ToolArgs::new();
+    args.insert("path", ArgValue::String("note.txt".to_owned()));
+    args.insert("old", ArgValue::String("old".to_owned()));
+    args.insert("new", ArgValue::String("new".to_owned()));
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let seen_for_selector = seen.clone();
+    let selector: AcceptanceSelector = Arc::new(move |paths: &[PathBuf]| {
+        *seen_for_selector.lock().unwrap() = paths.to_vec();
+        vec![AcceptanceItem {
+            id: "sum".to_owned(),
+            description: "2 + 2".to_owned(),
+            required: true,
+            verify: VerifySpec::Compute {
+                expression: "2 + 2".to_owned(),
+                expected: "4".to_owned(),
+            },
+        }]
+    });
+    let driver = common::build_driver(
+        MockModel::new(vec![
+            MockStep::ToolCall {
+                name: "edit_file".to_owned(),
+                args,
+            },
+            MockStep::Text("done".to_owned()),
+        ]),
+        config,
+        events.clone(),
+        dir.path(),
+        common::test_limits(),
+    )
+    .with_acceptance_selector(selector, 0);
+
+    let outcome = driver.run("edit", CancelToken::new()).await;
+
+    assert!(outcome.is_done());
+    assert_eq!(*seen.lock().unwrap(), vec![PathBuf::from("note.txt")]);
+    assert!(outcome
+        .verification
+        .as_ref()
+        .is_some_and(|report| report.passed()));
+}
+
+#[tokio::test]
+async fn an_empty_selector_finishes_without_a_check() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("note.txt"), "old").unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&["edit_file"], 4, PermissionLevel::WorkspaceAuto);
+    let mut args = ToolArgs::new();
+    args.insert("path", ArgValue::String("note.txt".to_owned()));
+    args.insert("old", ArgValue::String("old".to_owned()));
+    args.insert("new", ArgValue::String("new".to_owned()));
+    let selector: AcceptanceSelector = Arc::new(|_paths: &[PathBuf]| Vec::new());
+    let driver = common::build_driver(
+        MockModel::new(vec![
+            MockStep::ToolCall {
+                name: "edit_file".to_owned(),
+                args,
+            },
+            MockStep::Text("done".to_owned()),
+        ]),
+        config,
+        events.clone(),
+        dir.path(),
+        common::test_limits(),
+    )
+    .with_acceptance_selector(selector, 0);
+
+    let outcome = driver.run("edit", CancelToken::new()).await;
+
+    assert!(outcome.is_done());
+    let report = outcome.verification.as_ref().expect("a report");
+    assert!(report.passed());
+    assert!(report.evidence.is_empty());
 }
 
 #[tokio::test]

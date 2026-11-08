@@ -31,7 +31,7 @@ pub use context::{
     TaskStateStage,
 };
 pub use dispatch::ToolDispatcher;
-pub use driver::{KernelOptions, TurnDriver, TurnDriverConfig, TurnOutcome};
+pub use driver::{AcceptanceSelector, KernelOptions, TurnDriver, TurnDriverConfig, TurnOutcome};
 pub use event_log::{EventLog, EventRecord};
 pub use fsm::{transition, TurnFsm};
 pub use governor::{ContextGovernor, Pressure, PressureLevel};

@@ -10,8 +10,8 @@ use keel_core::{
     EventSink, InteractionId, InteractionRequest, InteractionResponse, KernelError, Message,
     MessageRole, ModelChunk, ModelError, ModelProvider, ModelRequest, ModelRole, ModelRoute,
     OnTimeout, Policy, ReasoningLevel, SecretKind, SegmentRecord, Session, SessionSnapshot,
-    TodoList, TodoState, TodoStatus, ToolArgs, ToolCallId, ToolOutcome, TurnEvent, TurnRecord,
-    TurnState, VerificationMode, VerificationReport,
+    TodoList, TodoState, TodoStatus, ToolArgs, ToolCallId, ToolCallRequest, ToolOutcome, TurnEvent,
+    TurnRecord, TurnState, VerificationMode, VerificationReport,
 };
 
 use crate::background::BackgroundTasks;
@@ -95,6 +95,7 @@ or commands you changed. Do not claim a check ran unless you saw its output.";
 const WORKSPACE_MUTATING_TOOLS: &[&str] = &[
     "write_file",
     "edit_file",
+    "multi_edit",
     "move_file",
     "delete_file",
     "make_dir",
@@ -104,6 +105,26 @@ const WORKSPACE_MUTATING_TOOLS: &[&str] = &[
 fn mutates_workspace(name: &str) -> bool {
     WORKSPACE_MUTATING_TOOLS.contains(&name)
 }
+
+/// The workspace paths a successful mutating call touched. A shell call is
+/// not listed, so a selector falls back when only shell ran.
+fn changed_paths(call: &ToolCallRequest) -> Vec<PathBuf> {
+    let path = |key: &str| match call.args.get(key) {
+        Some(ArgValue::String(value)) => Some(PathBuf::from(value)),
+        _ => None,
+    };
+    match call.name.as_str() {
+        "move_file" => ["from", "to"].into_iter().filter_map(path).collect(),
+        "write_file" | "edit_file" | "multi_edit" | "delete_file" | "make_dir" | "restore_file" => {
+            path("path").into_iter().collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Chooses acceptance items from the paths a turn changed. The host decides
+/// which checks apply; the kernel only reports the paths.
+pub type AcceptanceSelector = Arc<dyn Fn(&[PathBuf]) -> Vec<AcceptanceItem> + Send + Sync>;
 
 #[derive(Default)]
 struct TurnStats {
@@ -121,6 +142,8 @@ struct TurnStats {
     verification: Option<VerificationReport>,
     /// At least one workspace-changing tool call succeeded this turn.
     workspace_changed: bool,
+    /// Paths the successful mutating calls touched, as written by the model.
+    changed_paths: Vec<PathBuf>,
     awaiting_wrap_up: bool,
     wrap_up_report: Option<String>,
     answer: Answer,
@@ -130,6 +153,7 @@ struct TurnStats {
 
 struct AcceptancePlan {
     items: Vec<AcceptanceItem>,
+    selector: Option<AcceptanceSelector>,
     max_reprompts: u32,
     /// Skip the checks on a turn that did not change the workspace.
     only_after_changes: bool,
@@ -282,6 +306,7 @@ impl<M: ModelProvider> TurnDriver<M> {
     pub fn with_acceptance(mut self, items: Vec<AcceptanceItem>, max_reprompts: u32) -> Self {
         self.acceptance = Some(AcceptancePlan {
             items,
+            selector: None,
             max_reprompts,
             only_after_changes: false,
         });
@@ -297,6 +322,24 @@ impl<M: ModelProvider> TurnDriver<M> {
     ) -> Self {
         self.acceptance = Some(AcceptancePlan {
             items,
+            selector: None,
+            max_reprompts,
+            only_after_changes: true,
+        });
+        self
+    }
+
+    /// Acceptance checks chosen from the paths the turn changed. The selector
+    /// runs once, after the model stops; an empty list finishes without a
+    /// check. A conversational turn never calls the selector.
+    pub fn with_acceptance_selector(
+        mut self,
+        selector: AcceptanceSelector,
+        max_reprompts: u32,
+    ) -> Self {
+        self.acceptance = Some(AcceptancePlan {
+            items: Vec::new(),
+            selector: Some(selector),
             max_reprompts,
             only_after_changes: true,
         });
@@ -1402,6 +1445,7 @@ impl<M: ModelProvider> TurnDriver<M> {
                         && mutates_workspace(&call.name)
                     {
                         stats.workspace_changed = true;
+                        stats.changed_paths.extend(changed_paths(call));
                     }
 
                     let status = match &result.outcome {
@@ -1514,33 +1558,53 @@ impl<M: ModelProvider> TurnDriver<M> {
                     // test command and no acceptance event.
                     self.step(fsm, turn_id, TurnEvent::DoneSignal)?;
                 } else {
-                    let verifier = AcceptanceVerifier::new(&self.workspace_root);
-                    let report = verifier.verify(&plan.items).await;
-                    let failures = verification_failures(&report);
-                    self.events.append(Event::VerificationFinished {
-                        turn_id,
-                        passed: report.passed(),
-                        required_failed: report.required_failed.clone(),
-                        required_unverified: report.required_unverified.clone(),
-                    });
-                    stats.verification = Some(report.clone());
-                    if report.passed() {
+                    let items = match &plan.selector {
+                        Some(selector) => selector(&stats.changed_paths),
+                        None => plan.items.clone(),
+                    };
+                    if items.is_empty() {
+                        stats.verification = Some(VerificationReport {
+                            evidence: Vec::new(),
+                            required_failed: Vec::new(),
+                            required_unverified: Vec::new(),
+                            optional_failed: Vec::new(),
+                        });
+                        self.events.append(Event::VerificationFinished {
+                            turn_id,
+                            passed: true,
+                            required_failed: Vec::new(),
+                            required_unverified: Vec::new(),
+                        });
                         self.step(fsm, turn_id, TurnEvent::DoneSignal)?;
                     } else {
-                        self.escalate_reasoning(turn_id, stats, "verification failed");
-                        if stats.verification_reprompts < plan.max_reprompts {
-                            stats.verification_reprompts =
-                                stats.verification_reprompts.saturating_add(1);
+                        let verifier = AcceptanceVerifier::new(&self.workspace_root);
+                        let report = verifier.verify(&items).await;
+                        let failures = verification_failures(&report);
+                        self.events.append(Event::VerificationFinished {
+                            turn_id,
+                            passed: report.passed(),
+                            required_failed: report.required_failed.clone(),
+                            required_unverified: report.required_unverified.clone(),
+                        });
+                        stats.verification = Some(report.clone());
+                        if report.passed() {
+                            self.step(fsm, turn_id, TurnEvent::DoneSignal)?;
+                        } else {
+                            self.escalate_reasoning(turn_id, stats, "verification failed");
+                            if stats.verification_reprompts < plan.max_reprompts {
+                                stats.verification_reprompts =
+                                    stats.verification_reprompts.saturating_add(1);
+                                self.step(fsm, turn_id, TurnEvent::UnverifiedHard)?;
+                                messages.push(Arc::new(Message::system(format!(
+                                    "[verification] required items did not pass: {}. Fix the workspace and report the real result; do not claim a check ran unless it did.",
+                                    failures.join(", ")
+                                ))));
+                                self.step(fsm, turn_id, TurnEvent::Ready)?;
+                                continue 'turn;
+                            }
                             self.step(fsm, turn_id, TurnEvent::UnverifiedHard)?;
-                            messages.push(Arc::new(Message::system(format!(
-                                "[verification] required items did not pass: {}. Fix the workspace and report the real result; do not claim a check ran unless it did.",
-                                failures.join(", ")
-                            ))));
-                            self.step(fsm, turn_id, TurnEvent::Ready)?;
-                            continue 'turn;
+                            return Err(KernelError::VerificationFailed { failures });
                         }
-                        self.step(fsm, turn_id, TurnEvent::UnverifiedHard)?;
-                        return Err(KernelError::VerificationFailed { failures });
                     }
                 }
             } else {
@@ -1873,4 +1937,52 @@ fn render_summary_record(segment_id: u32, record: &SegmentRecord) -> String {
     }
     line.push('\n');
     line
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn multi_edit_counts_as_a_workspace_change() {
+        assert!(mutates_workspace("multi_edit"));
+    }
+
+    #[test]
+    fn a_write_reports_its_path() {
+        let mut args = ToolArgs::new();
+        args.insert("path", ArgValue::String("src/lib.rs".to_owned()));
+        let call = ToolCallRequest {
+            id: ToolCallId::new(1),
+            name: "write_file".to_owned(),
+            args,
+        };
+        assert_eq!(changed_paths(&call), vec![PathBuf::from("src/lib.rs")]);
+    }
+
+    #[test]
+    fn a_move_reports_both_paths() {
+        let mut args = ToolArgs::new();
+        args.insert("from", ArgValue::String("a.txt".to_owned()));
+        args.insert("to", ArgValue::String("b.txt".to_owned()));
+        let call = ToolCallRequest {
+            id: ToolCallId::new(2),
+            name: "move_file".to_owned(),
+            args,
+        };
+        assert_eq!(
+            changed_paths(&call),
+            vec![PathBuf::from("a.txt"), PathBuf::from("b.txt")]
+        );
+    }
+
+    #[test]
+    fn a_shell_call_reports_no_path() {
+        let call = ToolCallRequest {
+            id: ToolCallId::new(3),
+            name: "shell".to_owned(),
+            args: ToolArgs::new(),
+        };
+        assert!(changed_paths(&call).is_empty());
+    }
 }
