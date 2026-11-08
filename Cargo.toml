@@ -15,6 +15,10 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.80"
 license = "Apache-2.0"
+repository = "https://github.com/wwkkyy0325/keel"
+homepage = "https://github.com/wwkkyy0325/keel"
+keywords = ["agent", "llm", "kernel", "ai", "rust"]
+categories = ["development-tools", "command-line-utilities"]
 
 [workspace.dependencies]
 async-trait = "0.1"

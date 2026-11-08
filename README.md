@@ -12,6 +12,18 @@ coding cases and five companion personas run against `deepseek-flash`; the
 remaining M6 work is packaging and release. The mechanism-level evidence is in
 `docs/case-study.md`.
 
+## Quick start
+
+```bash
+git clone https://github.com/wwkkyy0325/keel.git
+cd keel
+cargo run -p keel-cli -- --profile variants/coding/profile.toml --input "hello"
+```
+
+Rust 1.80 or newer. The mock profile needs no API key and makes no network
+calls. For a real model, copy `.env.example` to `.env`, set one key and use the
+matching profile; credentials never belong in a profile or a chat.
+
 ## Why "Keel"
 
 The keel is the structural spine of a ship: it carries the load, and the hull,
@@ -27,6 +39,16 @@ rigging and cabins are built around it. Keel is that spine for agent variants.
 
 The kernel never knows variant names. The middle layer answers the kernel's
 policy questions. Plugins add capability and never bypass permissions.
+
+## What Keel is not
+
+- Not a coding assistant you install and use. `hosts/keel-cli` is a reference
+  host and an executable contract test, not a product.
+- Not a workflow engine or a multi-agent framework.
+- Not a memory database. Memory is a kernel mechanism with a deliberately
+  narrow default; embeddings are opt-in, not a prerequisite.
+- Not a sandbox. Permission levels gate tool calls, not processes; OS
+  confinement is a backstop, not a virtual machine.
 
 ## Kernel vs reference host
 
@@ -529,6 +551,11 @@ cargo test --release -p keel-runtime --test performance -- --ignored --nocapture
 CI runs the same format, lint and test gates on Ubuntu, Windows and macOS,
 plus the kernel-only build and `minimal_turn` example on each platform.
 `cargo deny` runs in a separate Linux job.
+
+## Contributing
+
+See `CONTRIBUTING.md` for the workflow and the clean-room rules. Report
+security issues privately as described in `SECURITY.md`.
 
 ## License
 
