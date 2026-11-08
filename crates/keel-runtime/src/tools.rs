@@ -802,7 +802,8 @@ impl Tool for CodeSearchTool {
         ToolSchema {
             name: "code_search".to_owned(),
             description: "Search UTF-8 files for a substring or regex, optionally case-sensitive \
-                          and filtered by a file-name glob."
+                          and filtered by a file-name glob. `.gitignore` and common build \
+                          directories are skipped."
                 .to_owned(),
             risk: RiskLevel::ReadOnly,
             params: vec![
@@ -1141,7 +1142,8 @@ impl Tool for GlobTool {
             name: "glob".to_owned(),
             description: "Find files by a path pattern. `*` matches within one segment, `**` \
                           across segments; a pattern without `/` matches the file name at any \
-                          depth. Results are newest first."
+                          depth. Results are newest first. `.gitignore` and common build \
+                          directories are skipped."
                 .to_owned(),
             risk: RiskLevel::ReadOnly,
             params: vec![

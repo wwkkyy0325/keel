@@ -6,7 +6,7 @@ use keel_core::{
     AccessKind, ArgValue, CancelToken, ErrorCode, Tool, ToolArgs, ToolCallId, ToolCtx, TurnId,
 };
 use keel_runtime::{
-    ApplyEditsTool, CodeSearchTool, ListDirTool, ListTrashTool, LocalBackgroundTasks,
+    ApplyEditsTool, CodeSearchTool, GlobTool, ListDirTool, ListTrashTool, LocalBackgroundTasks,
     LocalTrashStore, ReadFileTool, ReadLedger, RestoreFileTool, ShellTool, TrashStore,
     WriteFileTool,
 };
@@ -429,6 +429,46 @@ async fn code_search_reports_output_truncation() {
         "{content}"
     );
     assert!(!content.contains("stopped after"), "{content}");
+}
+
+#[tokio::test]
+async fn code_search_respects_gitignore() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join(".gitignore"), "ignored/\n").unwrap();
+    std::fs::create_dir_all(dir.path().join("ignored")).unwrap();
+    std::fs::write(dir.path().join("ignored/data.txt"), "hello world\n").unwrap();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::write(dir.path().join("src/main.txt"), "hello world\n").unwrap();
+    let tool = CodeSearchTool::new();
+    let mut args = ToolArgs::new();
+    args.insert("query", ArgValue::String("hello world".to_owned()));
+
+    let result = tool.call(args, &ctx(dir.path())).await;
+
+    assert!(result.is_success());
+    let content = result.content().unwrap();
+    assert!(content.contains("src/main.txt:1:"), "{content}");
+    assert!(!content.contains("ignored/data.txt"), "{content}");
+}
+
+#[tokio::test]
+async fn glob_respects_gitignore() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join(".gitignore"), "ignored/\n").unwrap();
+    std::fs::create_dir_all(dir.path().join("ignored")).unwrap();
+    std::fs::write(dir.path().join("ignored/data.txt"), "data\n").unwrap();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::write(dir.path().join("src/main.txt"), "main\n").unwrap();
+    let tool = GlobTool::new();
+    let mut args = ToolArgs::new();
+    args.insert("pattern", ArgValue::String("**/*.txt".to_owned()));
+
+    let result = tool.call(args, &ctx(dir.path())).await;
+
+    assert!(result.is_success());
+    let content = result.content().unwrap();
+    assert!(content.contains("src/main.txt"), "{content}");
+    assert!(!content.contains("ignored/data.txt"), "{content}");
 }
 
 fn trash(root: &Path) -> Arc<dyn TrashStore> {
