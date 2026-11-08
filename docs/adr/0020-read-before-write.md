@@ -56,3 +56,20 @@ refusal must tell the model to read the file again.
   prefix is not detected; the write limit has the same bound.
 - Contract tests cover an unread file, a stale file, a read-then-write, a
   new file and an unread edit.
+
+## Amendment (2026-11-08)
+
+Rule 2 recorded the whole file even when `read_file` returned only a line
+range, so a model could read one line and then overwrite the file with
+`write_file`, discarding content it never saw. The ledger entry now carries a
+coverage flag:
+
+- a plain `read_file`, and a successful `write_file`, record `full = true`;
+- a ranged or truncated read records `full = false`;
+- a later partial read of the same bytes does not clear an earlier full read;
+- an edit (`edit_file`, `multi_edit`) keeps the flag of the read it checked.
+
+`write_file` on an existing file uses `check_full` and refuses a partially
+seen file with "read the whole file before overwriting it; a line range is
+not enough". `edit_file` and `multi_edit` still accept any current read; their
+exact-match requirement protects the bytes they do not replace.

@@ -213,7 +213,8 @@ impl Tool for ReadFileTool {
         };
         if let Some(ledger) = &self.ledger {
             if !lossy {
-                ledger.record(&resolved, content.as_bytes());
+                let full = offset.is_none() && limit.is_none() && !truncated;
+                ledger.record(&resolved, content.as_bytes(), full);
             }
         }
         if truncated {
@@ -1513,7 +1514,7 @@ impl Tool for WriteFileTool {
                             return ToolResult::failure(ctx.call_id, "write_file", io_error(&error))
                         }
                     };
-                    if let Err(reason) = ledger.check(&resolved, &existing) {
+                    if let Err(reason) = ledger.check_full(&resolved, &existing) {
                         return ToolResult::failure(
                             ctx.call_id,
                             "write_file",
@@ -1563,7 +1564,7 @@ impl Tool for WriteFileTool {
         match tokio::fs::write(&resolved, content).await {
             Ok(()) => {
                 if let Some(ledger) = &self.ledger {
-                    ledger.record(&resolved, content.as_bytes());
+                    ledger.record(&resolved, content.as_bytes(), true);
                 }
                 let message = match backup {
                     Some(entry) => format!(
@@ -1754,7 +1755,7 @@ impl Tool for EditFileTool {
         match tokio::fs::write(&resolved, &edited).await {
             Ok(()) => {
                 if let Some(ledger) = &self.ledger {
-                    ledger.record(&resolved, edited.as_bytes());
+                    ledger.record_edit(&resolved, edited.as_bytes());
                 }
                 let note = if normalized {
                     " (line endings normalized)"
@@ -2102,7 +2103,7 @@ impl Tool for MultiEditTool {
         match tokio::fs::write(&resolved, &edited).await {
             Ok(()) => {
                 if let Some(ledger) = &self.ledger {
-                    ledger.record(&resolved, edited.as_bytes());
+                    ledger.record_edit(&resolved, edited.as_bytes());
                 }
                 let note = if normalized {
                     " (line endings normalized)"
@@ -2862,6 +2863,32 @@ mod file_tool_tests {
             Some(keel_core::ErrorCode::InvalidArguments)
         );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "external");
+    }
+
+    #[tokio::test]
+    async fn a_ranged_read_cannot_overwrite_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notes.txt");
+        std::fs::write(&path, "one\ntwo\nthree\n").unwrap();
+        let ledger = ReadLedger::new();
+        let reader = ReadFileTool::new().with_ledger(ledger.clone());
+        let mut read_args = args(&[("path", "notes.txt")]);
+        read_args.insert("offset", ArgValue::Integer(1));
+        read_args.insert("limit", ArgValue::Integer(1));
+        reader.call(read_args, &ctx(dir.path())).await;
+        let writer = WriteFileTool::new(trash(dir.path())).with_ledger(ledger);
+
+        let refused = writer
+            .call(
+                args(&[("path", "notes.txt"), ("content", "new")]),
+                &ctx(dir.path()),
+            )
+            .await;
+
+        let error = refused.error().expect("a refusal");
+        assert_eq!(error.code, keel_core::ErrorCode::InvalidArguments);
+        assert!(error.message.contains("whole file"), "{}", error.message);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "one\ntwo\nthree\n");
     }
 
     #[tokio::test]
