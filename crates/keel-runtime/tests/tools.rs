@@ -148,6 +148,98 @@ async fn read_file_truncates_a_file_over_the_limit() {
 }
 
 #[tokio::test]
+async fn read_file_returns_a_line_range_without_changing_its_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("code.txt"),
+        "one\r\ntwo\r\nthree\r\nfour\r\n",
+    )
+    .unwrap();
+    let tool = ReadFileTool::new();
+    let mut args = ToolArgs::new();
+    args.insert("path", ArgValue::String("code.txt".to_owned()));
+    args.insert("offset", ArgValue::Integer(2));
+    args.insert("limit", ArgValue::Integer(2));
+
+    let result = tool.call(args, &ctx(dir.path())).await;
+
+    assert!(result.is_success());
+    assert_eq!(result.content(), Some("two\r\nthree\r\n"));
+}
+
+#[tokio::test]
+async fn read_file_reports_an_offset_past_the_end() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("code.txt"), "one\ntwo\nthree\nfour\n").unwrap();
+    let tool = ReadFileTool::new();
+    let mut args = ToolArgs::new();
+    args.insert("path", ArgValue::String("code.txt".to_owned()));
+    args.insert("offset", ArgValue::Integer(9));
+
+    let result = tool.call(args, &ctx(dir.path())).await;
+
+    assert!(result.is_success());
+    let content = result.content().unwrap();
+    assert!(content.contains("no lines at offset 9"), "{content}");
+    assert!(content.contains("4 lines"), "{content}");
+}
+
+#[tokio::test]
+async fn read_file_rejects_a_zero_offset() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("code.txt"), "one\n").unwrap();
+    let tool = ReadFileTool::new();
+    let mut args = ToolArgs::new();
+    args.insert("path", ArgValue::String("code.txt".to_owned()));
+    args.insert("offset", ArgValue::Integer(0));
+
+    let result = tool.call(args, &ctx(dir.path())).await;
+
+    assert_eq!(
+        result.error().map(|error| error.code),
+        Some(ErrorCode::InvalidArguments)
+    );
+}
+
+#[tokio::test]
+async fn code_search_can_be_case_sensitive_and_glob_filtered() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::write(dir.path().join("src").join("main.rs"), "Hello\nhello\n").unwrap();
+    std::fs::write(dir.path().join("notes.txt"), "Hello\n").unwrap();
+
+    let tool = CodeSearchTool::new();
+    let mut args = ToolArgs::new();
+    args.insert("query", ArgValue::String("Hello".to_owned()));
+    args.insert("case_sensitive", ArgValue::Boolean(true));
+    args.insert("glob", ArgValue::String("*.rs".to_owned()));
+
+    let result = tool.call(args, &ctx(dir.path())).await;
+
+    assert!(result.is_success());
+    let content = result.content().unwrap();
+    assert!(content.contains("src/main.rs:1:"), "{content}");
+    assert!(!content.contains("src/main.rs:2:"), "{content}");
+    assert!(!content.contains("notes.txt"), "{content}");
+}
+
+#[tokio::test]
+async fn code_search_rejects_a_non_boolean_case_flag() {
+    let dir = tempfile::tempdir().unwrap();
+    let tool = CodeSearchTool::new();
+    let mut args = ToolArgs::new();
+    args.insert("query", ArgValue::String("hello".to_owned()));
+    args.insert("case_sensitive", ArgValue::String("true".to_owned()));
+
+    let result = tool.call(args, &ctx(dir.path())).await;
+
+    assert_eq!(
+        result.error().map(|error| error.code),
+        Some(ErrorCode::InvalidArguments)
+    );
+}
+
+#[tokio::test]
 async fn shell_runs_allowlisted_programs_without_a_shell() {
     let dir = tempfile::tempdir().unwrap();
     let tool = ShellTool::new(vec!["rustc".to_owned()]);

@@ -4,14 +4,15 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use keel_core::{
-    resolve_path, AccessKind, ArgValue, ParamKind, ParamSpec, PermissionRequest, RiskLevel,
-    TodoError, TodoList, TodoState, TodoStatus, Tool, ToolArgs, ToolCtx, ToolError, ToolResult,
-    ToolSchema,
+    resolve_path, AccessKind, ArgValue, ErrorCode, ParamKind, ParamSpec, PermissionRequest,
+    RiskLevel, TodoError, TodoList, TodoState, TodoStatus, Tool, ToolArgs, ToolCtx, ToolError,
+    ToolResult, ToolSchema,
 };
 use tokio::io::AsyncReadExt;
 
 use crate::background::BackgroundTasks;
 use crate::command::{self, CommandSpec};
+use crate::read_ledger::ReadLedger;
 use crate::trash::TrashStore;
 
 /// Returns the argument text unchanged. Used to exercise the tool loop.
@@ -63,11 +64,20 @@ impl Tool for EchoTool {
 const MAX_READ_FILE_BYTES: u64 = 8 * 1024 * 1024;
 
 /// Reads a UTF-8 text file from the workspace.
-pub struct ReadFileTool;
+pub struct ReadFileTool {
+    ledger: Option<ReadLedger>,
+}
 
 impl ReadFileTool {
     pub fn new() -> Self {
-        Self
+        Self { ledger: None }
+    }
+
+    /// Records every successful read so a later write can refuse a blind
+    /// overwrite or a stale read (ADR 0020).
+    pub fn with_ledger(mut self, ledger: ReadLedger) -> Self {
+        self.ledger = Some(ledger);
+        self
     }
 }
 
@@ -82,13 +92,27 @@ impl Tool for ReadFileTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "read_file".to_owned(),
-            description: "Read a UTF-8 text file from the workspace.".to_owned(),
+            description: "Read a UTF-8 text file from the workspace. `offset` is a 1-based line \
+                          number; `limit` is a line count."
+                .to_owned(),
             risk: RiskLevel::ReadOnly,
-            params: vec![ParamSpec {
-                name: "path".to_owned(),
-                kind: ParamKind::String,
-                required: true,
-            }],
+            params: vec![
+                ParamSpec {
+                    name: "path".to_owned(),
+                    kind: ParamKind::String,
+                    required: true,
+                },
+                ParamSpec {
+                    name: "offset".to_owned(),
+                    kind: ParamKind::Integer,
+                    required: false,
+                },
+                ParamSpec {
+                    name: "limit".to_owned(),
+                    kind: ParamKind::Integer,
+                    required: false,
+                },
+            ],
         }
     }
 
@@ -109,6 +133,42 @@ impl Tool for ReadFileTool {
         let path = match args.require_str("path") {
             Ok(path) => path,
             Err(error) => return ToolResult::failure(ctx.call_id, "read_file", error),
+        };
+        let offset = match args.get("offset") {
+            Some(keel_core::ArgValue::Integer(value)) if *value >= 1 => Some(*value as usize),
+            Some(keel_core::ArgValue::Integer(_)) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "read_file",
+                    ToolError::invalid_arguments("argument `offset` must be at least 1"),
+                )
+            }
+            Some(_) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "read_file",
+                    ToolError::invalid_arguments("argument `offset` must be integer"),
+                )
+            }
+            None => None,
+        };
+        let limit = match args.get("limit") {
+            Some(keel_core::ArgValue::Integer(value)) if *value >= 1 => Some(*value as usize),
+            Some(keel_core::ArgValue::Integer(_)) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "read_file",
+                    ToolError::invalid_arguments("argument `limit` must be at least 1"),
+                )
+            }
+            Some(_) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "read_file",
+                    ToolError::invalid_arguments("argument `limit` must be integer"),
+                )
+            }
+            None => None,
         };
         let resolved = resolve_path(&ctx.workspace_root, Path::new(path));
         // Bounded read: a log or archive larger than the limit yields its head
@@ -133,12 +193,15 @@ impl Tool for ReadFileTool {
         {
             return ToolResult::failure(ctx.call_id, "read_file", io_error(&error));
         }
-        let mut content = match String::from_utf8(buffer) {
-            Ok(text) => text,
+        let (mut content, lossy) = match String::from_utf8(buffer) {
+            Ok(text) => (text, false),
             Err(error) if truncated => {
                 // The cut may land inside a character; keep the valid prefix.
                 let valid = error.utf8_error().valid_up_to();
-                String::from_utf8_lossy(&error.as_bytes()[..valid]).into_owned()
+                (
+                    String::from_utf8_lossy(&error.as_bytes()[..valid]).into_owned(),
+                    true,
+                )
             }
             Err(_) => {
                 return ToolResult::failure(
@@ -148,11 +211,39 @@ impl Tool for ReadFileTool {
                 );
             }
         };
+        if let Some(ledger) = &self.ledger {
+            if !lossy {
+                ledger.record(&resolved, content.as_bytes());
+            }
+        }
         if truncated {
             content.push_str(&format!(
                 "\n\n[truncated: the file is {len} bytes; showing the first \
                  {MAX_READ_FILE_BYTES} bytes]"
             ));
+        }
+        if offset.is_some() || limit.is_some() {
+            let start_line = offset.unwrap_or(1);
+            let total = content.split_inclusive('\n').count();
+            if start_line > total && !content.is_empty() {
+                return ToolResult::success(
+                    ctx.call_id,
+                    "read_file",
+                    format!("no lines at offset {start_line}; the file has {total} lines"),
+                );
+            }
+            let mut start = 0usize;
+            for segment in content.split_inclusive('\n').take(start_line - 1) {
+                start += segment.len();
+            }
+            let mut end = start;
+            for (taken, segment) in content[start..].split_inclusive('\n').enumerate() {
+                if limit.is_some_and(|max| taken >= max) {
+                    break;
+                }
+                end += segment.len();
+            }
+            content = content[start..end].to_owned();
         }
         ToolResult::success(ctx.call_id, "read_file", content)
     }
@@ -603,7 +694,9 @@ impl Tool for CodeSearchTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "code_search".to_owned(),
-            description: "Search UTF-8 files for a case-insensitive substring.".to_owned(),
+            description: "Search UTF-8 files for a substring, optionally case-sensitive and \
+                          filtered by a file-name glob."
+                .to_owned(),
             risk: RiskLevel::ReadOnly,
             params: vec![
                 ParamSpec {
@@ -619,6 +712,16 @@ impl Tool for CodeSearchTool {
                 ParamSpec {
                     name: "max_results".to_owned(),
                     kind: ParamKind::Integer,
+                    required: false,
+                },
+                ParamSpec {
+                    name: "case_sensitive".to_owned(),
+                    kind: ParamKind::Boolean,
+                    required: false,
+                },
+                ParamSpec {
+                    name: "glob".to_owned(),
+                    kind: ParamKind::String,
                     required: false,
                 },
             ],
@@ -648,7 +751,7 @@ impl Tool for CodeSearchTool {
             return ToolResult::failure(ctx.call_id, "code_search", ToolError::cancelled());
         }
         let query = match args.require_str("query") {
-            Ok(query) if !query.is_empty() => query.to_lowercase(),
+            Ok(query) if !query.is_empty() => query,
             Ok(_) => {
                 return ToolResult::failure(
                     ctx.call_id,
@@ -657,6 +760,33 @@ impl Tool for CodeSearchTool {
                 )
             }
             Err(error) => return ToolResult::failure(ctx.call_id, "code_search", error),
+        };
+        let case_sensitive = match args.get("case_sensitive") {
+            Some(keel_core::ArgValue::Boolean(value)) => *value,
+            Some(_) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "code_search",
+                    ToolError::invalid_arguments("argument `case_sensitive` must be boolean"),
+                )
+            }
+            None => false,
+        };
+        let needle = if case_sensitive {
+            query.to_owned()
+        } else {
+            query.to_lowercase()
+        };
+        let glob = match args.get("glob") {
+            Some(keel_core::ArgValue::String(value)) if !value.is_empty() => Some(value.as_str()),
+            Some(keel_core::ArgValue::String(_)) | None => None,
+            Some(_) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "code_search",
+                    ToolError::invalid_arguments("argument `glob` must be string"),
+                )
+            }
         };
         let path = match args.get("path") {
             Some(keel_core::ArgValue::String(value)) => value.as_str(),
@@ -717,6 +847,14 @@ impl Tool for CodeSearchTool {
                 if !file_type.is_file() {
                     continue;
                 }
+                let relative = entry_path
+                    .strip_prefix(&ctx.workspace_root)
+                    .unwrap_or(&entry_path);
+                if let Some(pattern) = glob {
+                    if !glob_matches(pattern, relative) {
+                        continue;
+                    }
+                }
                 let metadata = match entry.metadata().await {
                     Ok(metadata) => metadata,
                     Err(_) => continue,
@@ -734,15 +872,17 @@ impl Tool for CodeSearchTool {
                 if text.contains('\0') {
                     continue;
                 }
-                let relative = entry_path
-                    .strip_prefix(&ctx.workspace_root)
-                    .unwrap_or(&entry_path);
                 for (index, line) in text.lines().enumerate() {
                     if matches.len() >= limit {
                         truncated = true;
                         break;
                     }
-                    if line.to_lowercase().contains(&query) {
+                    let matched = if case_sensitive {
+                        line.contains(query)
+                    } else {
+                        line.to_lowercase().contains(&needle)
+                    };
+                    if matched {
                         let line = truncate_chars(line.trim(), MAX_SEARCH_LINE_CHARS);
                         matches.push(format!(
                             "{}:{}: {line}",
@@ -773,6 +913,213 @@ impl Tool for CodeSearchTool {
     }
 }
 
+/// Finds files by a path pattern.
+///
+/// `*` matches within one path segment, `**` matches any number of segments.
+/// A pattern without a separator matches the file name at any depth. Results
+/// are newest first.
+pub struct GlobTool;
+
+impl GlobTool {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for GlobTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+const DEFAULT_GLOB_LIMIT: usize = 100;
+const MAX_GLOB_LIMIT: usize = 500;
+const MAX_GLOB_COLLECTED: usize = 1000;
+
+#[async_trait]
+impl Tool for GlobTool {
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "glob".to_owned(),
+            description: "Find files by a path pattern. `*` matches within one segment, `**` \
+                          across segments; a pattern without `/` matches the file name at any \
+                          depth. Results are newest first."
+                .to_owned(),
+            risk: RiskLevel::ReadOnly,
+            params: vec![
+                ParamSpec {
+                    name: "pattern".to_owned(),
+                    kind: ParamKind::String,
+                    required: true,
+                },
+                ParamSpec {
+                    name: "path".to_owned(),
+                    kind: ParamKind::String,
+                    required: false,
+                },
+                ParamSpec {
+                    name: "limit".to_owned(),
+                    kind: ParamKind::Integer,
+                    required: false,
+                },
+            ],
+        }
+    }
+
+    fn permission_requests(&self, args: &ToolArgs) -> Result<Vec<PermissionRequest>, ToolError> {
+        let path = match args.get("path") {
+            Some(ArgValue::String(value)) => value.as_str(),
+            Some(_) => {
+                return Err(ToolError::invalid_arguments(
+                    "argument `path` must be string",
+                ))
+            }
+            None => ".",
+        };
+        Ok(vec![PermissionRequest {
+            tool: "glob".to_owned(),
+            access: AccessKind::Read,
+            path: Some(PathBuf::from(path)),
+            detail: None,
+        }])
+    }
+
+    async fn call(&self, args: ToolArgs, ctx: &ToolCtx) -> ToolResult {
+        if ctx.cancel.is_cancelled() {
+            return ToolResult::failure(ctx.call_id, "glob", ToolError::cancelled());
+        }
+        let pattern = match args.require_str("pattern") {
+            Ok(pattern) if !pattern.trim().is_empty() => pattern.replace('\\', "/"),
+            Ok(_) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "glob",
+                    ToolError::invalid_arguments("argument `pattern` must not be empty"),
+                )
+            }
+            Err(error) => return ToolResult::failure(ctx.call_id, "glob", error),
+        };
+        let pattern = pattern.strip_prefix("./").unwrap_or(&pattern).to_owned();
+        let path = match args.get("path") {
+            Some(ArgValue::String(value)) => value.as_str(),
+            Some(_) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "glob",
+                    ToolError::invalid_arguments("argument `path` must be string"),
+                )
+            }
+            None => ".",
+        };
+        let limit = match args.get("limit") {
+            Some(ArgValue::Integer(value)) => (*value).clamp(1, MAX_GLOB_LIMIT as i64) as usize,
+            Some(_) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "glob",
+                    ToolError::invalid_arguments("argument `limit` must be integer"),
+                )
+            }
+            None => DEFAULT_GLOB_LIMIT,
+        };
+        let root = resolve_path(&ctx.workspace_root, Path::new(path));
+
+        let mut stack = vec![(root, 0usize)];
+        let mut found: Vec<(std::time::SystemTime, String)> = Vec::new();
+        let mut overflow = false;
+        while let Some((directory, depth)) = stack.pop() {
+            let mut entries = match tokio::fs::read_dir(&directory).await {
+                Ok(entries) => entries,
+                Err(_) => continue,
+            };
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                if ctx.cancel.is_cancelled() {
+                    return ToolResult::failure(ctx.call_id, "glob", ToolError::cancelled());
+                }
+                let file_type = match entry.file_type().await {
+                    Ok(file_type) => file_type,
+                    Err(_) => continue,
+                };
+                if file_type.is_symlink() {
+                    continue;
+                }
+                let entry_path = entry.path();
+                if file_type.is_dir() {
+                    if depth < MAX_SEARCH_DEPTH && !is_skipped_directory(&entry_path) {
+                        stack.push((entry_path, depth + 1));
+                    }
+                    continue;
+                }
+                if !file_type.is_file() {
+                    continue;
+                }
+                let relative = entry_path
+                    .strip_prefix(&ctx.workspace_root)
+                    .unwrap_or(&entry_path);
+                let relative_text = relative.to_string_lossy().replace('\\', "/");
+                let matched = if pattern.contains('/') {
+                    glob_path_match(&pattern, &relative_text)
+                } else {
+                    relative
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| wildcard_match(&pattern, name))
+                };
+                if !matched {
+                    continue;
+                }
+                let modified = entry
+                    .metadata()
+                    .await
+                    .ok()
+                    .and_then(|metadata| metadata.modified().ok())
+                    .unwrap_or(std::time::UNIX_EPOCH);
+                found.push((modified, relative_text));
+                if found.len() >= MAX_GLOB_COLLECTED {
+                    overflow = true;
+                    break;
+                }
+            }
+            if overflow {
+                break;
+            }
+        }
+
+        found.sort_by(|left, right| right.0.cmp(&left.0).then(left.1.cmp(&right.1)));
+        let truncated = overflow || found.len() > limit;
+        found.truncate(limit);
+        let mut output = found
+            .into_iter()
+            .map(|(_, path)| path)
+            .collect::<Vec<_>>()
+            .join("\n");
+        if output.is_empty() {
+            output.push_str("no files match");
+        }
+        if truncated {
+            output.push_str(&format!("\n... stopped after {limit} files"));
+        }
+        ToolResult::success(ctx.call_id, "glob", output)
+    }
+}
+
+fn glob_path_match(pattern: &str, path: &str) -> bool {
+    let pattern: Vec<&str> = pattern.split('/').filter(|part| !part.is_empty()).collect();
+    let parts: Vec<&str> = path.split('/').filter(|part| !part.is_empty()).collect();
+    match_segments(&pattern, &parts)
+}
+
+fn match_segments(pattern: &[&str], parts: &[&str]) -> bool {
+    let Some((head, rest)) = pattern.split_first() else {
+        return parts.is_empty();
+    };
+    if *head == "**" {
+        return match_segments(rest, parts)
+            || (!parts.is_empty() && match_segments(pattern, &parts[1..]));
+    }
+    !parts.is_empty() && wildcard_match(head, parts[0]) && match_segments(rest, &parts[1..])
+}
+
 fn is_skipped_directory(path: &Path) -> bool {
     matches!(
         path.file_name().and_then(|name| name.to_str()),
@@ -783,12 +1130,63 @@ fn is_skipped_directory(path: &Path) -> bool {
                 | "node_modules"
                 | "dist"
                 | "build"
+                | "out"
+                | "coverage"
+                | "vendor"
                 | ".venv"
+                | "venv"
                 | "__pycache__"
+                | ".pytest_cache"
+                | ".mypy_cache"
+                | ".ruff_cache"
+                | ".svelte-kit"
+                | ".next"
+                | ".turbo"
                 | ".idea"
                 | ".vscode"
         )
     )
+}
+
+/// A glob without a separator matches the file name; one with a separator
+/// matches the workspace-relative path. `*` and `?` are supported.
+fn glob_matches(pattern: &str, relative: &Path) -> bool {
+    let normalized = pattern.replace('\\', "/");
+    if normalized.contains('/') {
+        wildcard_match(&normalized, &relative.to_string_lossy().replace('\\', "/"))
+    } else {
+        relative
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| wildcard_match(&normalized, name))
+    }
+}
+
+fn wildcard_match(pattern: &str, text: &str) -> bool {
+    let pattern = pattern.as_bytes();
+    let text = text.as_bytes();
+    let (mut p, mut t) = (0usize, 0usize);
+    let (mut star, mut resume) = (None, 0usize);
+    while t < text.len() {
+        if p < pattern.len() && (pattern[p] == b'?' || pattern[p] == text[t]) {
+            p += 1;
+            t += 1;
+        } else if p < pattern.len() && pattern[p] == b'*' {
+            star = Some(p);
+            resume = t;
+            p += 1;
+        } else if let Some(index) = star {
+            p = index + 1;
+            resume += 1;
+            t = resume;
+        } else {
+            return false;
+        }
+    }
+    while p < pattern.len() && pattern[p] == b'*' {
+        p += 1;
+    }
+    p == pattern.len()
 }
 
 fn truncate_chars(text: &str, limit: usize) -> String {
@@ -989,11 +1387,22 @@ the command continues in the background; its result arrives before the next mode
 /// fallback.
 pub struct WriteFileTool {
     trash: Arc<dyn TrashStore>,
+    ledger: Option<ReadLedger>,
 }
 
 impl WriteFileTool {
     pub fn new(trash: Arc<dyn TrashStore>) -> Self {
-        Self { trash }
+        Self {
+            trash,
+            ledger: None,
+        }
+    }
+
+    /// Refuses an existing file that was not read, or changed since it was
+    /// read (ADR 0020). A new file needs no read.
+    pub fn with_ledger(mut self, ledger: ReadLedger) -> Self {
+        self.ledger = Some(ledger);
+        self
     }
 }
 
@@ -1043,6 +1452,49 @@ impl Tool for WriteFileTool {
         };
         let resolved = resolve_path(&ctx.workspace_root, Path::new(path));
 
+        if let Some(ledger) = &self.ledger {
+            match tokio::fs::metadata(&resolved).await {
+                Ok(metadata) if metadata.is_file() => {
+                    let existing = match tokio::fs::File::open(&resolved).await {
+                        Ok(mut file) => {
+                            let mut buffer = Vec::new();
+                            if let Err(error) = (&mut file)
+                                .take(MAX_READ_FILE_BYTES)
+                                .read_to_end(&mut buffer)
+                                .await
+                            {
+                                return ToolResult::failure(
+                                    ctx.call_id,
+                                    "write_file",
+                                    io_error(&error),
+                                );
+                            }
+                            buffer
+                        }
+                        Err(error) => {
+                            return ToolResult::failure(ctx.call_id, "write_file", io_error(&error))
+                        }
+                    };
+                    if let Err(reason) = ledger.check(&resolved, &existing) {
+                        return ToolResult::failure(
+                            ctx.call_id,
+                            "write_file",
+                            ToolError::new(
+                                ErrorCode::InvalidArguments,
+                                format!("{}: {reason}", resolved.display()),
+                                true,
+                            ),
+                        );
+                    }
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return ToolResult::failure(ctx.call_id, "write_file", io_error(&error));
+                }
+            }
+        }
+
         let backup = match tokio::fs::metadata(&resolved).await {
             Ok(metadata) if metadata.is_file() => match self.trash.backup(&resolved).await {
                 Ok(entry) => Some(entry),
@@ -1072,6 +1524,9 @@ impl Tool for WriteFileTool {
 
         match tokio::fs::write(&resolved, content).await {
             Ok(()) => {
+                if let Some(ledger) = &self.ledger {
+                    ledger.record(&resolved, content.as_bytes());
+                }
                 let message = match backup {
                     Some(entry) => format!(
                         "wrote {} bytes to {} (previous version in trash as {})",
@@ -1095,11 +1550,21 @@ impl Tool for WriteFileTool {
 /// writing. The previous version is backed up before the write.
 pub struct EditFileTool {
     trash: Arc<dyn TrashStore>,
+    ledger: Option<ReadLedger>,
 }
 
 impl EditFileTool {
     pub fn new(trash: Arc<dyn TrashStore>) -> Self {
-        Self { trash }
+        Self {
+            trash,
+            ledger: None,
+        }
+    }
+
+    /// Requires a current read of the file before the edit (ADR 0020).
+    pub fn with_ledger(mut self, ledger: ReadLedger) -> Self {
+        self.ledger = Some(ledger);
+        self
     }
 }
 
@@ -1240,7 +1705,39 @@ impl Tool for EditFileTool {
                 return ToolResult::failure(ctx.call_id, "edit_file", io_error(&error));
             }
         };
-        let matches = content.match_indices(&old).count();
+        if let Some(ledger) = &self.ledger {
+            if let Err(reason) = ledger.check(&resolved, content.as_bytes()) {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "edit_file",
+                    ToolError::new(
+                        ErrorCode::InvalidArguments,
+                        format!("{}: {reason}", resolved.display()),
+                        true,
+                    ),
+                );
+            }
+        }
+
+        let eol = if content.contains("\r\n") {
+            "\r\n"
+        } else {
+            "\n"
+        };
+        let mut needle = std::borrow::Cow::Borrowed(old);
+        let mut matches = content.match_indices(needle.as_ref()).count();
+        let mut normalized = false;
+        if matches == 0 {
+            let candidate = with_line_ending(old, eol);
+            if candidate != old {
+                let count = content.match_indices(&candidate).count();
+                if count > 0 {
+                    needle = std::borrow::Cow::Owned(candidate);
+                    matches = count;
+                    normalized = true;
+                }
+            }
+        }
         if matches == 0 {
             return ToolResult::failure(
                 ctx.call_id,
@@ -1258,24 +1755,40 @@ impl Tool for EditFileTool {
                 )),
             );
         }
+        let replacement = with_line_ending(new, eol);
+        if needle.as_ref() == replacement {
+            return ToolResult::failure(
+                ctx.call_id,
+                "edit_file",
+                ToolError::invalid_arguments("`old` and `new` are identical"),
+            );
+        }
 
         let entry = match self.trash.backup(&resolved).await {
             Ok(entry) => entry,
             Err(error) => return ToolResult::failure(ctx.call_id, "edit_file", error),
         };
         let edited = if replace_all {
-            content.replace(old, new)
+            content.replace(needle.as_ref(), &replacement)
         } else {
-            content.replacen(old, new, 1)
+            content.replacen(needle.as_ref(), &replacement, 1)
         };
-        match tokio::fs::write(&resolved, edited).await {
+        match tokio::fs::write(&resolved, &edited).await {
             Ok(()) => {
+                if let Some(ledger) = &self.ledger {
+                    ledger.record(&resolved, edited.as_bytes());
+                }
                 let replaced = if replace_all { matches } else { 1 };
+                let note = if normalized {
+                    " (line endings normalized)"
+                } else {
+                    ""
+                };
                 ToolResult::success(
                     ctx.call_id,
                     "edit_file",
                     format!(
-                        "edited {}: {replaced} replacement(s) (previous version in trash as {})",
+                        "edited {}: {replaced} replacement(s){note} (previous version in trash as {})",
                         resolved.display(),
                         entry.id
                     ),
@@ -1283,6 +1796,16 @@ impl Tool for EditFileTool {
             }
             Err(error) => ToolResult::failure(ctx.call_id, "edit_file", io_error(&error)),
         }
+    }
+}
+
+/// Converts every line ending in `text` to `eol`'s style.
+fn with_line_ending(text: &str, eol: &str) -> String {
+    let normalized = text.replace("\r\n", "\n");
+    if eol == "\r\n" {
+        normalized.replace('\n', "\r\n")
+    } else {
+        normalized
     }
 }
 
@@ -1955,5 +2478,181 @@ mod file_tool_tests {
             std::fs::read_to_string(dir.path().join("file.txt")).unwrap(),
             "abc"
         );
+    }
+
+    #[tokio::test]
+    async fn write_file_requires_a_read_of_an_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notes.txt");
+        std::fs::write(&path, "old").unwrap();
+        let tool = WriteFileTool::new(trash(dir.path())).with_ledger(ReadLedger::new());
+
+        let refused = tool
+            .call(
+                args(&[("path", "notes.txt"), ("content", "new")]),
+                &ctx(dir.path()),
+            )
+            .await;
+        assert_eq!(
+            refused.error().map(|error| error.code),
+            Some(keel_core::ErrorCode::InvalidArguments)
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "old");
+
+        let created = tool
+            .call(
+                args(&[("path", "fresh.txt"), ("content", "new")]),
+                &ctx(dir.path()),
+            )
+            .await;
+        assert!(content(&created).contains("wrote"));
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("fresh.txt")).unwrap(),
+            "new"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_read_allows_a_write_and_a_stale_file_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notes.txt");
+        std::fs::write(&path, "old").unwrap();
+        let ledger = ReadLedger::new();
+        let reader = ReadFileTool::new().with_ledger(ledger.clone());
+        reader
+            .call(args(&[("path", "notes.txt")]), &ctx(dir.path()))
+            .await;
+        let writer = WriteFileTool::new(trash(dir.path())).with_ledger(ledger);
+
+        let written = writer
+            .call(
+                args(&[("path", "notes.txt"), ("content", "new")]),
+                &ctx(dir.path()),
+            )
+            .await;
+        assert!(content(&written).contains("wrote"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
+
+        std::fs::write(&path, "external").unwrap();
+        let stale = writer
+            .call(
+                args(&[("path", "notes.txt"), ("content", "again")]),
+                &ctx(dir.path()),
+            )
+            .await;
+        assert_eq!(
+            stale.error().map(|error| error.code),
+            Some(keel_core::ErrorCode::InvalidArguments)
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "external");
+    }
+
+    #[tokio::test]
+    async fn edit_file_requires_a_read() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("notes.txt"), "abc").unwrap();
+        let tool = EditFileTool::new(trash(dir.path())).with_ledger(ReadLedger::new());
+
+        let refused = tool
+            .call(
+                args(&[("path", "notes.txt"), ("old", "a"), ("new", "z")]),
+                &ctx(dir.path()),
+            )
+            .await;
+
+        assert_eq!(
+            refused.error().map(|error| error.code),
+            Some(keel_core::ErrorCode::InvalidArguments)
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("notes.txt")).unwrap(),
+            "abc"
+        );
+    }
+
+    #[tokio::test]
+    async fn edit_file_matches_after_normalizing_line_endings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("crlf.txt");
+        std::fs::write(&path, "one\r\ntwo\r\nthree\r\n").unwrap();
+        let ledger = ReadLedger::new();
+        let reader = ReadFileTool::new().with_ledger(ledger.clone());
+        reader
+            .call(args(&[("path", "crlf.txt")]), &ctx(dir.path()))
+            .await;
+        let tool = EditFileTool::new(trash(dir.path())).with_ledger(ledger);
+
+        let result = tool
+            .call(
+                args(&[
+                    ("path", "crlf.txt"),
+                    ("old", "two\nthree"),
+                    ("new", "TWO\nTHREE"),
+                ]),
+                &ctx(dir.path()),
+            )
+            .await;
+
+        let text = content(&result);
+        assert!(text.contains("line endings normalized"), "{text}");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "one\r\nTWO\r\nTHREE\r\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn edit_file_keeps_lf_for_a_crlf_snippet() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("lf.txt");
+        std::fs::write(&path, "one\ntwo\n").unwrap();
+        let ledger = ReadLedger::new();
+        let reader = ReadFileTool::new().with_ledger(ledger.clone());
+        reader
+            .call(args(&[("path", "lf.txt")]), &ctx(dir.path()))
+            .await;
+        let tool = EditFileTool::new(trash(dir.path())).with_ledger(ledger);
+
+        let result = tool
+            .call(
+                args(&[("path", "lf.txt"), ("old", "two\r\n"), ("new", "TWO\r\n")]),
+                &ctx(dir.path()),
+            )
+            .await;
+
+        assert!(content(&result).contains("line endings normalized"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "one\nTWO\n");
+    }
+
+    #[tokio::test]
+    async fn glob_matches_paths_and_skips_build_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("src/nested")).unwrap();
+        std::fs::create_dir_all(dir.path().join("target")).unwrap();
+        std::fs::write(dir.path().join("src/main.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(dir.path().join("src/nested/lib.rs"), "pub fn f() {}\n").unwrap();
+        std::fs::write(dir.path().join("target/generated.rs"), "generated\n").unwrap();
+        std::fs::write(dir.path().join("README.md"), "# demo\n").unwrap();
+        let tool = GlobTool::new();
+
+        let nested = tool
+            .call(args(&[("pattern", "**/*.rs")]), &ctx(dir.path()))
+            .await;
+        let text = content(&nested);
+        assert!(text.contains("src/main.rs"), "{text}");
+        assert!(text.contains("src/nested/lib.rs"), "{text}");
+        assert!(!text.contains("target/generated.rs"), "{text}");
+
+        let direct = tool
+            .call(args(&[("pattern", "src/*.rs")]), &ctx(dir.path()))
+            .await;
+        let text = content(&direct);
+        assert!(text.contains("src/main.rs"), "{text}");
+        assert!(!text.contains("src/nested/lib.rs"), "{text}");
+
+        let by_name = tool
+            .call(args(&[("pattern", "*.md")]), &ctx(dir.path()))
+            .await;
+        assert!(content(&by_name).contains("README.md"));
     }
 }

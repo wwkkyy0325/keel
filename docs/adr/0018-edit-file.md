@@ -46,3 +46,16 @@ write.
   remain separate operations.
 - Contract tests pin the single-match, ambiguous, `replace_all`, missing-file
   and empty-snippet cases.
+
+## Amendment — line-ending fallback (2026-11-08)
+
+Exact matching is still the primary path. A Windows checkout is commonly CRLF
+while a model's JSON snippet uses LF, so an exact-only tool fails on every
+such edit even though the text is correct.
+
+When the exact snippet is absent, `edit_file` converts `old` to the file's
+line ending (CRLF when the file contains CRLF, otherwise LF) and tries again.
+`new` is converted to the same style, so the edit cannot turn a CRLF file into
+a mixed file. The fallback is still literal: zero matches fail, and more than
+one match is still ambiguous. The success message says the line endings were
+normalized. Read-before-write (ADR 0020) applies before either path.

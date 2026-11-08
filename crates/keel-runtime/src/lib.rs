@@ -16,6 +16,7 @@ pub mod interjection;
 pub mod mock_model;
 pub mod permission;
 pub mod profile;
+pub mod read_ledger;
 pub mod registry;
 pub mod subagent;
 pub mod summarizer;
@@ -40,6 +41,7 @@ pub use keel_policy::{RuntimeConfig, TurnLimits};
 pub use mock_model::{MockModel, MockStep};
 pub use permission::{PermissionEngine, RootScope};
 pub use profile::{from_profile_str, load_profile, validate_config};
+pub use read_ledger::ReadLedger;
 pub use registry::ToolRegistry;
 pub use subagent::{SpawnAgentTool, SubAgentOutcome, SubAgentRunner, SubAgentSpec};
 pub use summarizer::{
@@ -47,7 +49,7 @@ pub use summarizer::{
     MEMO_BUDGET_CEILING, MEMO_BUDGET_FLOOR, SUMMARY_INPUT_MARGIN,
 };
 pub use tools::{
-    CodeSearchTool, DeleteFileTool, EchoTool, EditFileTool, ListDirTool, ListTrashTool,
+    CodeSearchTool, DeleteFileTool, EchoTool, EditFileTool, GlobTool, ListDirTool, ListTrashTool,
     MakeDirTool, MoveFileTool, ReadFileTool, RestoreFileTool, ShellTool, TodoTool, WriteFileTool,
 };
 pub use trash::{LocalTrashStore, TrashEntry, TrashStore};

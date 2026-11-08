@@ -2246,3 +2246,36 @@
   if `reasoning_effort` is not advertised. DeepSeek-style thinking providers
   reject a follow-up tool round that drops it.
 - A wire test pins the follow-up request. Found by Keelson's live demo eval.
+
+### Workspace read and search options (2026-11-08)
+
+- `read_file` accepts optional `offset` and `limit` in lines. The range is
+  returned as its exact bytes, CRLF preserved and without line numbers, so it
+  can be handed to `edit_file`. An offset past the end reports the line count;
+  a value below 1 is `InvalidArguments`.
+- `code_search` accepts `case_sensitive` and a file-name `glob`. A pattern
+  with a path separator matches the workspace-relative path; `*` and `?` are
+  the only wildcards. No regex and no ripgrep dependency.
+- The skipped-directory list now covers `out`, `coverage`, `vendor`, the
+  virtualenv and tool caches, and `.next`/`.svelte-kit` build output.
+- Four `read_file` contract tests and one search filter test. ADR 0019 records
+  the contract.
+
+### Read before write, line-ending fallback and glob (2026-11-08)
+
+- `read_ledger::ReadLedger`: a per-engine SHA-256 record of the files the
+  model has read. `write_file` on an existing file and every `edit_file`
+  require a current read; a new file needs none. The refusal is a retryable
+  `InvalidArguments` that tells the model to read again.
+- `ReadFileTool`, `WriteFileTool` and `EditFileTool` gain `with_ledger`.
+  The `new()` constructors keep the old behavior for hosts and tests that do
+  not wire one.
+- `edit_file` falls back to a line-ending-normalized match when the exact
+  snippet is absent. A CRLF file edits with an LF snippet and stays CRLF; an
+  LF file edits with a CRLF snippet and stays LF. The fallback is still
+  literal: zero matches fail and multiple matches stay ambiguous.
+- `GlobTool`: `glob { pattern, path?, limit? }`. `*` within a segment, `**`
+  across segments, a pattern without a separator matches the file name at any
+  depth. Files only, newest first, bounded. ADR 0021 records the contract.
+- Five tool tests and three ledger tests; ADR 0020 records read-before-write
+  and ADR 0018 gains the line-ending amendment.
