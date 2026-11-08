@@ -12,6 +12,7 @@ categories.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+ignore = "0.4.30"
 keel-core.workspace = true
 keel-policy.workspace = true
 regex.workspace = true
