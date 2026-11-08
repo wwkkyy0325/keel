@@ -362,6 +362,11 @@ fn is_system_directory(path: &Path) -> bool {
     }
     let unix = [
         "/etc", "/usr", "/bin", "/sbin", "/boot", "/sys", "/proc", "/dev", "/var", "/root",
+        // macOS resolves these through /private, so the canonical path has to
+        // be recognised too. /private/var and /private/tmp are deliberately
+        // absent: they hold the user's temporary workspaces.
+        "/private/etc", "/private/usr", "/private/bin", "/private/sbin", "/private/boot",
+        "/private/dev", "/private/root",
     ];
     unix.iter()
         .any(|prefix| text == *prefix || text.starts_with(&format!("{prefix}/")))
