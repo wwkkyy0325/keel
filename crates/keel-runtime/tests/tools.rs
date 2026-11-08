@@ -350,6 +350,54 @@ async fn code_search_rejects_a_non_integer_context() {
 }
 
 #[tokio::test]
+async fn code_search_context_merges_overlapping_blocks() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("main.rs"), "one\ntwo\nthree\nfour\n").unwrap();
+    let tool = CodeSearchTool::new();
+    let mut args = ToolArgs::new();
+    args.insert("query", ArgValue::String("two|three".to_owned()));
+    args.insert("regex", ArgValue::Boolean(true));
+    args.insert("context", ArgValue::Integer(1));
+
+    let result = tool.call(args, &ctx(dir.path())).await;
+
+    assert!(result.is_success());
+    let content = result.content().unwrap();
+    assert!(content.contains("main.rs:1- one"), "{content}");
+    assert!(content.contains("main.rs:2: two"), "{content}");
+    assert!(content.contains("main.rs:3: three"), "{content}");
+    assert!(content.contains("main.rs:4- four"), "{content}");
+    assert_eq!(content.matches("main.rs:2").count(), 1, "{content}");
+    assert!(!content.contains("\n--\n"), "{content}");
+}
+
+#[tokio::test]
+async fn code_search_reports_output_truncation() {
+    let dir = tempfile::tempdir().unwrap();
+    let line = "x".repeat(200);
+    let text = (0..200)
+        .map(|_| line.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(dir.path().join("big.txt"), text).unwrap();
+    let tool = CodeSearchTool::new();
+    let mut args = ToolArgs::new();
+    args.insert("query", ArgValue::String("xxx".to_owned()));
+    args.insert("context", ArgValue::Integer(1));
+    args.insert("max_results", ArgValue::Integer(500));
+
+    let result = tool.call(args, &ctx(dir.path())).await;
+
+    assert!(result.is_success());
+    let content = result.content().unwrap();
+    assert!(
+        content.contains("output truncated at the byte limit"),
+        "{content}"
+    );
+    assert!(!content.contains("stopped after"), "{content}");
+}
+
+#[tokio::test]
 async fn shell_runs_allowlisted_programs_without_a_shell() {
     let dir = tempfile::tempdir().unwrap();
     let tool = ShellTool::new(vec!["rustc".to_owned()]);

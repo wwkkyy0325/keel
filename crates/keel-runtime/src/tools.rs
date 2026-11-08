@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -586,6 +587,67 @@ struct SearchMatch {
     after: Vec<(usize, String)>,
 }
 
+/// Renders matches with context, merging overlapping ranges so a line is
+/// printed once. A line that is both context and a match keeps the match
+/// marker.
+fn render_context(matches: &[SearchMatch]) -> String {
+    let mut blocks: Vec<String> = Vec::new();
+    let mut index = 0;
+    while index < matches.len() {
+        let path = matches[index].path.clone();
+        let mut lines: BTreeMap<usize, (String, bool)> = BTreeMap::new();
+        let mut ranges: Vec<(usize, usize)> = Vec::new();
+        while index < matches.len() && matches[index].path == path {
+            let found = &matches[index];
+            for (line, text) in &found.before {
+                lines.entry(*line).or_insert((text.clone(), false));
+            }
+            lines.insert(found.line, (found.text.clone(), true));
+            for (line, text) in &found.after {
+                lines.entry(*line).or_insert((text.clone(), false));
+            }
+            let start = found
+                .before
+                .first()
+                .map(|(line, _)| *line)
+                .unwrap_or(found.line);
+            let end = found
+                .after
+                .last()
+                .map(|(line, _)| *line)
+                .unwrap_or(found.line);
+            ranges.push((start, end));
+            index += 1;
+        }
+        ranges.sort_unstable();
+        let mut merged: Vec<(usize, usize)> = Vec::new();
+        for (start, end) in ranges {
+            if let Some(last) = merged.last_mut() {
+                if start <= last.1 + 1 {
+                    last.1 = last.1.max(end);
+                    continue;
+                }
+            }
+            merged.push((start, end));
+        }
+        for (start, end) in merged {
+            let block: Vec<String> = (start..=end)
+                .filter_map(|line| {
+                    lines.get(&line).map(|(text, matched)| {
+                        if *matched {
+                            format!("{path}:{line}: {text}")
+                        } else {
+                            format!("{path}:{line}- {text}")
+                        }
+                    })
+                })
+                .collect();
+            blocks.push(block.join("\n"));
+        }
+    }
+    blocks.join("\n--\n")
+}
+
 #[async_trait]
 impl Tool for ListDirTool {
     fn schema(&self) -> ToolSchema {
@@ -993,6 +1055,7 @@ impl Tool for CodeSearchTool {
         }
 
         matches.sort_by(|left, right| left.path.cmp(&right.path).then(left.line.cmp(&right.line)));
+        let mut output_truncated = false;
         let mut output = if context == 0 {
             matches
                 .iter()
@@ -1000,31 +1063,19 @@ impl Tool for CodeSearchTool {
                 .collect::<Vec<_>>()
                 .join("\n")
         } else {
-            matches
-                .iter()
-                .map(|found| {
-                    let mut block = String::new();
-                    for (line, text) in &found.before {
-                        block.push_str(&format!("{}:{line}- {text}\n", found.path));
-                    }
-                    block.push_str(&format!("{}:{}: {}\n", found.path, found.line, found.text));
-                    for (line, text) in &found.after {
-                        block.push_str(&format!("{}:{line}- {text}\n", found.path));
-                    }
-                    block.trim_end().to_owned()
-                })
-                .collect::<Vec<_>>()
-                .join("\n--\n")
+            render_context(&matches)
         };
         if output.len() > MAX_SEARCH_OUTPUT_BYTES {
             output.truncate(char_boundary(&output, MAX_SEARCH_OUTPUT_BYTES));
-            truncated = true;
+            output_truncated = true;
         }
         if output.is_empty() {
             output.push_str("no matches");
         }
         if truncated {
             output.push_str(&format!("\n... stopped after {limit} matches"));
+        } else if output_truncated {
+            output.push_str("\n... output truncated at the byte limit");
         }
         ToolResult::success(ctx.call_id, "code_search", output)
     }
