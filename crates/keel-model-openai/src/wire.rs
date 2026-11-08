@@ -22,7 +22,10 @@ pub fn build_request(
     } else {
         &request.route.model
     };
-    let include_reasoning = reasoning.is_some();
+    // Thinking-mode providers require the assistant's reasoning text on the
+    // next request even when `reasoning_effort` is not advertised. The budget
+    // is the signal that the turn may have produced it.
+    let include_reasoning = reasoning.is_some() || request.thinking_budget > 0;
     let messages: Vec<Value> = request
         .messages
         .iter()
@@ -353,4 +356,36 @@ fn parse_arg(value: &Value) -> Result<ArgValue, ModelError> {
 
 fn invalid(message: impl Into<String>) -> ModelError {
     ModelError::new(ErrorCode::InvalidResponse, message, false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use keel_core::ModelRoute;
+    use std::sync::Arc;
+
+    #[test]
+    fn thinking_budget_keeps_reasoning_content_on_the_followup() {
+        let request = ModelRequest {
+            messages: vec![Arc::new(
+                Message::assistant("done").with_reasoning("checked the files"),
+            )],
+            tools: Vec::new(),
+            control_tool: false,
+            thinking_budget: 1024,
+            max_output_tokens: 128,
+            route: ModelRoute {
+                provider: "openai".to_owned(),
+                model: "m".to_owned(),
+            },
+            reasoning: ReasoningLevel::Low,
+        };
+
+        let body = build_request(&request, "fallback", None);
+
+        assert_eq!(
+            body["messages"][0]["reasoning_content"],
+            "checked the files"
+        );
+    }
 }

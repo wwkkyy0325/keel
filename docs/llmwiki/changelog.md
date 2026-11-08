@@ -2238,3 +2238,11 @@
 - Two turn tests: a text-only turn with a failing checklist stays `Done` with
   no verification event; an `edit_file` turn runs the checklist and reaches
   `Done` with evidence. ADR 0004 records the mode.
+
+### OpenAI thinking turns keep `reasoning_content` (2026-11-08)
+
+- `keel-model-openai::wire::build_request` now includes the assistant
+  `reasoning_content` field when the request has `thinking_budget > 0`, even
+  if `reasoning_effort` is not advertised. DeepSeek-style thinking providers
+  reject a follow-up tool round that drops it.
+- A wire test pins the follow-up request. Found by Keelson's live demo eval.
