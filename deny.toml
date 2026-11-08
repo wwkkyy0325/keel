@@ -25,6 +25,9 @@ deny = [
 
 [advisories]
 yanked = "deny"
+# `ratatui` 0.29 pulls `paste`, which is archived but has no known
+# vulnerability and no safe upgrade yet. Drop this ignore when ratatui does.
+ignore = ["RUSTSEC-2024-0436"]
 
 [sources]
 unknown-registry = "deny"
