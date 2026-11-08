@@ -1421,7 +1421,8 @@ impl Tool for ShellTool {
             name: "shell".to_owned(),
             description: "Run a program with a fixed argument list; no shell. Common developer \
                           programs are standard; any other program still runs after the user \
-                          confirms it."
+                          confirms it. Set `mutates` to true when the command writes to the \
+                          workspace, so the turn is verified."
                 .to_owned(),
             risk: RiskLevel::Dangerous,
             params: vec![
@@ -1443,6 +1444,11 @@ impl Tool for ShellTool {
                 ParamSpec {
                     name: "background".to_owned(),
                     kind: ParamKind::String,
+                    required: false,
+                },
+                ParamSpec {
+                    name: "mutates".to_owned(),
+                    kind: ParamKind::Boolean,
                     required: false,
                 },
             ],

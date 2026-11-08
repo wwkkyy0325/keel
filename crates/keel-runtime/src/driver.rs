@@ -106,6 +106,14 @@ fn mutates_workspace(name: &str) -> bool {
     WORKSPACE_MUTATING_TOOLS.contains(&name)
 }
 
+/// A shell call is invisible to the file tools; the model can mark a command
+/// that writes to the workspace with `mutates: true`.
+fn call_mutates_workspace(call: &ToolCallRequest) -> bool {
+    mutates_workspace(&call.name)
+        || (call.name == "shell"
+            && matches!(call.args.get("mutates"), Some(ArgValue::Boolean(true))))
+}
+
 /// The workspace paths a successful mutating call touched. A shell call is
 /// not listed, so a selector falls back when only shell ran.
 fn changed_paths(call: &ToolCallRequest) -> Vec<PathBuf> {
@@ -1442,7 +1450,7 @@ impl<M: ModelProvider> TurnDriver<M> {
                     )));
 
                     if matches!(&result.outcome, ToolOutcome::Success { .. })
-                        && mutates_workspace(&call.name)
+                        && call_mutates_workspace(call)
                     {
                         stats.workspace_changed = true;
                         stats.changed_paths.extend(changed_paths(call));
@@ -1946,6 +1954,24 @@ mod tests {
     #[test]
     fn multi_edit_counts_as_a_workspace_change() {
         assert!(mutates_workspace("multi_edit"));
+    }
+
+    #[test]
+    fn a_shell_mutation_hint_counts_as_a_workspace_change() {
+        let mut args = ToolArgs::new();
+        args.insert("mutates", ArgValue::Boolean(true));
+        let marked = ToolCallRequest {
+            id: ToolCallId::new(4),
+            name: "shell".to_owned(),
+            args,
+        };
+        let plain = ToolCallRequest {
+            id: ToolCallId::new(5),
+            name: "shell".to_owned(),
+            args: ToolArgs::new(),
+        };
+        assert!(call_mutates_workspace(&marked));
+        assert!(!call_mutates_workspace(&plain));
     }
 
     #[test]

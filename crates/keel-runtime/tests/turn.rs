@@ -671,6 +671,93 @@ async fn acceptance_after_changes_runs_after_an_edit() {
         )));
 }
 
+fn shell_args(mutates: Option<bool>) -> ToolArgs {
+    let mut args = ToolArgs::new();
+    args.insert("program", ArgValue::String("python".to_owned()));
+    args.insert(
+        "args",
+        ArgValue::StringList(vec!["-c".to_owned(), "print(1)".to_owned()]),
+    );
+    if let Some(value) = mutates {
+        args.insert("mutates", ArgValue::Boolean(value));
+    }
+    args
+}
+
+#[tokio::test]
+async fn a_shell_mutation_hint_runs_after_changes_verification() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&["shell"], 4, PermissionLevel::FullAuto);
+    let driver = common::build_driver(
+        MockModel::new(vec![
+            MockStep::ToolCall {
+                name: "shell".to_owned(),
+                args: shell_args(Some(true)),
+            },
+            MockStep::Text("done".to_owned()),
+        ]),
+        config,
+        events.clone(),
+        dir.path(),
+        common::test_limits(),
+    )
+    .with_acceptance_after_changes(
+        vec![AcceptanceItem {
+            id: "sum".to_owned(),
+            description: "2 + 2".to_owned(),
+            required: true,
+            verify: VerifySpec::Compute {
+                expression: "2 + 2".to_owned(),
+                expected: "4".to_owned(),
+            },
+        }],
+        0,
+    );
+
+    let outcome = driver.run("run", CancelToken::new()).await;
+
+    assert!(outcome.is_done());
+    assert!(outcome.verification.is_some());
+}
+
+#[tokio::test]
+async fn a_shell_without_the_hint_skips_after_changes_verification() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&["shell"], 4, PermissionLevel::FullAuto);
+    let driver = common::build_driver(
+        MockModel::new(vec![
+            MockStep::ToolCall {
+                name: "shell".to_owned(),
+                args: shell_args(None),
+            },
+            MockStep::Text("done".to_owned()),
+        ]),
+        config,
+        events.clone(),
+        dir.path(),
+        common::test_limits(),
+    )
+    .with_acceptance_after_changes(
+        vec![AcceptanceItem {
+            id: "sum".to_owned(),
+            description: "2 + 2".to_owned(),
+            required: true,
+            verify: VerifySpec::Compute {
+                expression: "2 + 2".to_owned(),
+                expected: "4".to_owned(),
+            },
+        }],
+        0,
+    );
+
+    let outcome = driver.run("run", CancelToken::new()).await;
+
+    assert!(outcome.is_done());
+    assert!(outcome.verification.is_none());
+}
+
 #[tokio::test]
 async fn an_acceptance_selector_sees_the_changed_path() {
     let dir = tempfile::tempdir().unwrap();
