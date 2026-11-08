@@ -14,9 +14,10 @@ use keel_core::{
 };
 use keel_runtime::{
     validate_config, CodeSearchTool, ContextBuilder, DeferAllInteractionPort, DeleteFileTool,
-    EchoTool, EventLog, HistoryStage, InteractionBroker, LatestStage, ListDirTool, LocalTrashStore,
-    MakeDirTool, MemoryStage, MoveFileTool, PermissionEngine, ReadFileTool, RuntimeConfig,
-    SystemStage, ToolRegistry, TurnDriver, TurnDriverConfig, TurnLimits, WriteFileTool,
+    EchoTool, EditFileTool, EventLog, HistoryStage, InteractionBroker, LatestStage, ListDirTool,
+    LocalTrashStore, MakeDirTool, MemoryStage, MoveFileTool, PermissionEngine, ReadFileTool,
+    RuntimeConfig, SystemStage, ToolRegistry, TurnDriver, TurnDriverConfig, TurnLimits,
+    WriteFileTool,
 };
 
 pub fn runtime_config(
@@ -71,6 +72,9 @@ pub fn standard_registry(root: &Path) -> Arc<ToolRegistry> {
         Arc::new(LocalTrashStore::new(root.to_path_buf()));
     registry
         .register(Arc::new(WriteFileTool::new(trash.clone())))
+        .unwrap();
+    registry
+        .register(Arc::new(EditFileTool::new(trash.clone())))
         .unwrap();
     registry
         .register(Arc::new(MoveFileTool::new(trash.clone())))

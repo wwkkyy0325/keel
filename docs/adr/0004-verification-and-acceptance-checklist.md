@@ -27,7 +27,12 @@ kernel or a verifier, not self-certified by the model.
    declared verifier commands for that plan; the hard deny list still wins.
 6. Deferring an interaction marks dependent acceptance items as `Deferred` and
    lets independent work continue.
-7. The contract is defined now; M2 implements calculator, command, test and
+7. A host may register the checklist as **after-changes**: a turn that did not
+   change the workspace skips verification. Workspace-changing tools are
+   `write_file`, `edit_file`, `move_file`, `delete_file`, `make_dir` and
+   `restore_file`; `shell` is excluded so a test run cannot trigger a second
+   verification run. This keeps a conversational turn free of test commands.
+8. The contract is defined now; M2 implements calculator, command, test and
    file-hash verifiers with the coding profile. M5 adds fault injection, human
    verification and eval reports.
 

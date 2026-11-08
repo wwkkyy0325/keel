@@ -1088,6 +1088,204 @@ impl Tool for WriteFileTool {
     }
 }
 
+/// Replaces an exact snippet in a UTF-8 text file.
+///
+/// The match is literal, not a pattern. Unless `replace_all` is set, the
+/// snippet must occur exactly once; zero or multiple matches fail without
+/// writing. The previous version is backed up before the write.
+pub struct EditFileTool {
+    trash: Arc<dyn TrashStore>,
+}
+
+impl EditFileTool {
+    pub fn new(trash: Arc<dyn TrashStore>) -> Self {
+        Self { trash }
+    }
+}
+
+#[async_trait]
+impl Tool for EditFileTool {
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "edit_file".to_owned(),
+            description: "Replace an exact snippet in a UTF-8 text file. The match is literal; \
+                          by default the snippet must occur exactly once. Set replace_all to \
+                          replace every occurrence."
+                .to_owned(),
+            risk: RiskLevel::Mutating,
+            params: vec![
+                ParamSpec {
+                    name: "path".to_owned(),
+                    kind: ParamKind::String,
+                    required: true,
+                },
+                ParamSpec {
+                    name: "old".to_owned(),
+                    kind: ParamKind::String,
+                    required: true,
+                },
+                ParamSpec {
+                    name: "new".to_owned(),
+                    kind: ParamKind::String,
+                    required: true,
+                },
+                ParamSpec {
+                    name: "replace_all".to_owned(),
+                    kind: ParamKind::Boolean,
+                    required: false,
+                },
+            ],
+        }
+    }
+
+    fn permission_requests(&self, args: &ToolArgs) -> Result<Vec<PermissionRequest>, ToolError> {
+        let path = args.require_str("path")?;
+        Ok(vec![PermissionRequest {
+            tool: "edit_file".to_owned(),
+            access: AccessKind::Write,
+            path: Some(PathBuf::from(path)),
+            detail: None,
+        }])
+    }
+
+    async fn call(&self, args: ToolArgs, ctx: &ToolCtx) -> ToolResult {
+        if ctx.cancel.is_cancelled() {
+            return ToolResult::failure(ctx.call_id, "edit_file", ToolError::cancelled());
+        }
+        let path = match args.require_str("path") {
+            Ok(path) => path,
+            Err(error) => return ToolResult::failure(ctx.call_id, "edit_file", error),
+        };
+        let old = match args.require_str("old") {
+            Ok(old) => old,
+            Err(error) => return ToolResult::failure(ctx.call_id, "edit_file", error),
+        };
+        let new = match args.require_str("new") {
+            Ok(new) => new,
+            Err(error) => return ToolResult::failure(ctx.call_id, "edit_file", error),
+        };
+        if old.is_empty() {
+            return ToolResult::failure(
+                ctx.call_id,
+                "edit_file",
+                ToolError::invalid_arguments("`old` must not be empty"),
+            );
+        }
+        if old == new {
+            return ToolResult::failure(
+                ctx.call_id,
+                "edit_file",
+                ToolError::invalid_arguments("`old` and `new` are identical"),
+            );
+        }
+        let replace_all = match args.get("replace_all") {
+            None => false,
+            Some(ArgValue::Boolean(value)) => *value,
+            Some(_) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "edit_file",
+                    ToolError::invalid_arguments("argument `replace_all` must be boolean"),
+                )
+            }
+        };
+
+        let resolved = resolve_path(&ctx.workspace_root, Path::new(path));
+        let metadata = match tokio::fs::metadata(&resolved).await {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "edit_file",
+                    ToolError::not_found(format!("`{}` does not exist", resolved.display())),
+                )
+            }
+            Err(error) => {
+                return ToolResult::failure(ctx.call_id, "edit_file", io_error(&error));
+            }
+        };
+        if !metadata.is_file() {
+            return ToolResult::failure(
+                ctx.call_id,
+                "edit_file",
+                ToolError::invalid_arguments(format!(
+                    "`{}` is not a regular file",
+                    resolved.display()
+                )),
+            );
+        }
+        if metadata.len() > MAX_READ_FILE_BYTES {
+            return ToolResult::failure(
+                ctx.call_id,
+                "edit_file",
+                ToolError::invalid_arguments(format!(
+                    "`{}` is larger than the edit limit",
+                    resolved.display()
+                )),
+            );
+        }
+        let content = match tokio::fs::read_to_string(&resolved).await {
+            Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::InvalidData => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "edit_file",
+                    ToolError::invalid_arguments(format!(
+                        "`{}` is not UTF-8 text",
+                        resolved.display()
+                    )),
+                )
+            }
+            Err(error) => {
+                return ToolResult::failure(ctx.call_id, "edit_file", io_error(&error));
+            }
+        };
+        let matches = content.match_indices(&old).count();
+        if matches == 0 {
+            return ToolResult::failure(
+                ctx.call_id,
+                "edit_file",
+                ToolError::not_found(format!("snippet not found in `{}`", resolved.display())),
+            );
+        }
+        if matches > 1 && !replace_all {
+            return ToolResult::failure(
+                ctx.call_id,
+                "edit_file",
+                ToolError::invalid_arguments(format!(
+                    "snippet occurs {matches} times in `{}`; pass replace_all or a longer snippet",
+                    resolved.display()
+                )),
+            );
+        }
+
+        let entry = match self.trash.backup(&resolved).await {
+            Ok(entry) => entry,
+            Err(error) => return ToolResult::failure(ctx.call_id, "edit_file", error),
+        };
+        let edited = if replace_all {
+            content.replace(old, new)
+        } else {
+            content.replacen(old, new, 1)
+        };
+        match tokio::fs::write(&resolved, edited).await {
+            Ok(()) => {
+                let replaced = if replace_all { matches } else { 1 };
+                ToolResult::success(
+                    ctx.call_id,
+                    "edit_file",
+                    format!(
+                        "edited {}: {replaced} replacement(s) (previous version in trash as {})",
+                        resolved.display(),
+                        entry.id
+                    ),
+                )
+            }
+            Err(error) => ToolResult::failure(ctx.call_id, "edit_file", io_error(&error)),
+        }
+    }
+}
+
 /// Lists recoverable versions in the workspace trash, newest first.
 pub struct ListTrashTool {
     trash: Arc<dyn TrashStore>,
@@ -1670,6 +1868,92 @@ mod file_tool_tests {
         assert_eq!(
             result.error().map(|error| error.code),
             Some(keel_core::ErrorCode::NotFound)
+        );
+    }
+
+    #[tokio::test]
+    async fn edit_file_replaces_one_snippet_and_backs_it_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("lib.rs");
+        std::fs::write(&path, "let x = 1;\nlet y = 2;\n").unwrap();
+        let trash = trash(dir.path());
+        let tool = EditFileTool::new(trash.clone());
+
+        let result = tool
+            .call(
+                args(&[
+                    ("path", "lib.rs"),
+                    ("old", "let x = 1;"),
+                    ("new", "let x = 3;"),
+                ]),
+                &ctx(dir.path()),
+            )
+            .await;
+
+        assert!(content(&result).contains("1 replacement"));
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "let x = 3;\nlet y = 2;\n"
+        );
+        let entries = trash.list(10).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            std::fs::read_to_string(&entries[0].stored).unwrap(),
+            "let x = 1;\nlet y = 2;\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn edit_file_refuses_ambiguous_matches_unless_replace_all() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notes.txt");
+        std::fs::write(&path, "x\nx\n").unwrap();
+        let tool = EditFileTool::new(trash(dir.path()));
+
+        let result = tool
+            .call(
+                args(&[("path", "notes.txt"), ("old", "x"), ("new", "y")]),
+                &ctx(dir.path()),
+            )
+            .await;
+        assert!(result.error().is_some());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "x\nx\n");
+
+        let mut replace_all = args(&[("path", "notes.txt"), ("old", "x"), ("new", "y")]);
+        replace_all.insert("replace_all", ArgValue::Boolean(true));
+        let result = tool.call(replace_all, &ctx(dir.path())).await;
+
+        assert!(content(&result).contains("2 replacement"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "y\ny\n");
+    }
+
+    #[tokio::test]
+    async fn edit_file_refuses_missing_files_and_empty_snippets() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = EditFileTool::new(trash(dir.path()));
+
+        let missing = tool
+            .call(
+                args(&[("path", "missing.txt"), ("old", "a"), ("new", "b")]),
+                &ctx(dir.path()),
+            )
+            .await;
+        assert_eq!(
+            missing.error().map(|error| error.code),
+            Some(keel_core::ErrorCode::NotFound)
+        );
+
+        std::fs::write(dir.path().join("file.txt"), "abc").unwrap();
+        let empty = tool
+            .call(
+                args(&[("path", "file.txt"), ("old", ""), ("new", "x")]),
+                &ctx(dir.path()),
+            )
+            .await;
+        assert!(empty.error().is_some());
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("file.txt")).unwrap(),
+            "abc"
         );
     }
 }

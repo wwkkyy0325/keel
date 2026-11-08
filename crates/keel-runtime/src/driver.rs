@@ -90,6 +90,21 @@ const FINAL_CALL: &str = "This is the last model call for this turn and tools \
 are disabled. Report what you completed, what is still pending, and the files \
 or commands you changed. Do not claim a check ran unless you saw its output.";
 
+/// Tools whose success can change the workspace. A shell call that only runs
+/// tests is not counted, so it cannot trigger a second verification run.
+const WORKSPACE_MUTATING_TOOLS: &[&str] = &[
+    "write_file",
+    "edit_file",
+    "move_file",
+    "delete_file",
+    "make_dir",
+    "restore_file",
+];
+
+fn mutates_workspace(name: &str) -> bool {
+    WORKSPACE_MUTATING_TOOLS.contains(&name)
+}
+
 #[derive(Default)]
 struct TurnStats {
     model_calls: u32,
@@ -104,6 +119,8 @@ struct TurnStats {
     verification_reprompts: u32,
     continuations: u32,
     verification: Option<VerificationReport>,
+    /// At least one workspace-changing tool call succeeded this turn.
+    workspace_changed: bool,
     awaiting_wrap_up: bool,
     wrap_up_report: Option<String>,
     answer: Answer,
@@ -114,6 +131,8 @@ struct TurnStats {
 struct AcceptancePlan {
     items: Vec<AcceptanceItem>,
     max_reprompts: u32,
+    /// Skip the checks on a turn that did not change the workspace.
+    only_after_changes: bool,
 }
 
 /// Terminal result of one turn.
@@ -264,6 +283,22 @@ impl<M: ModelProvider> TurnDriver<M> {
         self.acceptance = Some(AcceptancePlan {
             items,
             max_reprompts,
+            only_after_changes: false,
+        });
+        self
+    }
+
+    /// Acceptance checks that only run when the turn changed the workspace.
+    /// A conversational turn costs no test command.
+    pub fn with_acceptance_after_changes(
+        mut self,
+        items: Vec<AcceptanceItem>,
+        max_reprompts: u32,
+    ) -> Self {
+        self.acceptance = Some(AcceptancePlan {
+            items,
+            max_reprompts,
+            only_after_changes: true,
         });
         self
     }
@@ -1363,6 +1398,12 @@ impl<M: ModelProvider> TurnDriver<M> {
                         live,
                     )));
 
+                    if matches!(&result.outcome, ToolOutcome::Success { .. })
+                        && mutates_workspace(&call.name)
+                    {
+                        stats.workspace_changed = true;
+                    }
+
                     let status = match &result.outcome {
                         ToolOutcome::Success { .. } => "ok".to_owned(),
                         ToolOutcome::Failure { error } => {
@@ -1463,34 +1504,44 @@ impl<M: ModelProvider> TurnDriver<M> {
 
             stats.answer.set_body(&round_text);
             self.step(fsm, turn_id, TurnEvent::DoneSignal)?;
+            let should_verify = self
+                .acceptance
+                .as_ref()
+                .is_some_and(|plan| !plan.only_after_changes || stats.workspace_changed);
             if let Some(plan) = &self.acceptance {
-                let verifier = AcceptanceVerifier::new(&self.workspace_root);
-                let report = verifier.verify(&plan.items).await;
-                let failures = verification_failures(&report);
-                self.events.append(Event::VerificationFinished {
-                    turn_id,
-                    passed: report.passed(),
-                    required_failed: report.required_failed.clone(),
-                    required_unverified: report.required_unverified.clone(),
-                });
-                stats.verification = Some(report.clone());
-                if report.passed() {
+                if !should_verify {
+                    // A conversational turn did not touch the workspace; no
+                    // test command and no acceptance event.
                     self.step(fsm, turn_id, TurnEvent::DoneSignal)?;
                 } else {
-                    self.escalate_reasoning(turn_id, stats, "verification failed");
-                    if stats.verification_reprompts < plan.max_reprompts {
-                        stats.verification_reprompts =
-                            stats.verification_reprompts.saturating_add(1);
+                    let verifier = AcceptanceVerifier::new(&self.workspace_root);
+                    let report = verifier.verify(&plan.items).await;
+                    let failures = verification_failures(&report);
+                    self.events.append(Event::VerificationFinished {
+                        turn_id,
+                        passed: report.passed(),
+                        required_failed: report.required_failed.clone(),
+                        required_unverified: report.required_unverified.clone(),
+                    });
+                    stats.verification = Some(report.clone());
+                    if report.passed() {
+                        self.step(fsm, turn_id, TurnEvent::DoneSignal)?;
+                    } else {
+                        self.escalate_reasoning(turn_id, stats, "verification failed");
+                        if stats.verification_reprompts < plan.max_reprompts {
+                            stats.verification_reprompts =
+                                stats.verification_reprompts.saturating_add(1);
+                            self.step(fsm, turn_id, TurnEvent::UnverifiedHard)?;
+                            messages.push(Arc::new(Message::system(format!(
+                                "[verification] required items did not pass: {}. Fix the workspace and report the real result; do not claim a check ran unless it did.",
+                                failures.join(", ")
+                            ))));
+                            self.step(fsm, turn_id, TurnEvent::Ready)?;
+                            continue 'turn;
+                        }
                         self.step(fsm, turn_id, TurnEvent::UnverifiedHard)?;
-                        messages.push(Arc::new(Message::system(format!(
-                            "[verification] required items did not pass: {}. Fix the workspace and report the real result; do not claim a check ran unless it did.",
-                            failures.join(", ")
-                        ))));
-                        self.step(fsm, turn_id, TurnEvent::Ready)?;
-                        continue 'turn;
+                        return Err(KernelError::VerificationFailed { failures });
                     }
-                    self.step(fsm, turn_id, TurnEvent::UnverifiedHard)?;
-                    return Err(KernelError::VerificationFailed { failures });
                 }
             } else {
                 match self.policy.verification_mode() {
@@ -1507,7 +1558,11 @@ impl<M: ModelProvider> TurnDriver<M> {
             break 'turn;
         }
 
-        if fsm.state() == TurnState::Converge && self.acceptance.is_some() {
+        let should_verify = self
+            .acceptance
+            .as_ref()
+            .is_some_and(|plan| !plan.only_after_changes || stats.workspace_changed);
+        if fsm.state() == TurnState::Converge && should_verify {
             let failures = match &stats.verification {
                 Some(report) if report.passed() => Vec::new(),
                 Some(report) => verification_failures(report),

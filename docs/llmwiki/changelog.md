@@ -2215,3 +2215,26 @@
 - `docs/kernel-upgrade.md`: pinning, the upgrade checklist, what is breaking,
   the event policy and the `cargo-semver-checks` command.
 - Kernel-only CI includes `keel-testkit`.
+
+### `edit_file` exact-match tool (2026-11-08)
+
+- `keel-runtime::tools::EditFileTool`: `edit_file { path, old, new,
+  replace_all? }`. Literal match; exactly one occurrence by default; zero or
+  multiple matches fail without writing; `replace_all` is explicit.
+- Existing UTF-8 regular files only, capped at the read limit; the path goes
+  through the write permission gate; the previous version is backed up to the
+  trash before the write.
+- Three contract tests: single replacement with backup, ambiguous match
+  refusal plus `replace_all`, and missing/empty inputs. ADR 0018 records the
+  contract.
+
+### Acceptance after workspace changes (2026-11-08)
+
+- `TurnDriver::with_acceptance_after_changes`: the checklist runs only when a
+  workspace-changing tool (`write_file`, `edit_file`, `move_file`,
+  `delete_file`, `make_dir`, `restore_file`) succeeded in the turn. A
+  conversational turn skips it; `shell` is excluded so a test command cannot
+  trigger a second verification run.
+- Two turn tests: a text-only turn with a failing checklist stays `Done` with
+  no verification event; an `edit_file` turn runs the checklist and reaches
+  `Done` with evidence. ADR 0004 records the mode.

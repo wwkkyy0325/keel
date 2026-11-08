@@ -580,6 +580,97 @@ async fn acceptance_pass_reaches_done_with_evidence() {
 }
 
 #[tokio::test]
+async fn acceptance_after_changes_skips_a_conversational_turn() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&[], 0, PermissionLevel::WorkspaceAuto);
+    let driver = common::build_driver(
+        MockModel::new(vec![MockStep::Text("done".to_owned())]),
+        config,
+        events.clone(),
+        dir.path(),
+        common::test_limits(),
+    )
+    .with_acceptance_after_changes(
+        vec![AcceptanceItem {
+            id: "never".to_owned(),
+            description: "must not run".to_owned(),
+            required: true,
+            verify: VerifySpec::Compute {
+                expression: "1 + 1".to_owned(),
+                expected: "3".to_owned(),
+            },
+        }],
+        0,
+    );
+
+    let outcome = driver.run("hi", CancelToken::new()).await;
+
+    assert!(outcome.is_done());
+    assert!(outcome.verification.is_none());
+    assert!(!events
+        .for_turn(outcome.turn_id)
+        .into_iter()
+        .any(|record| matches!(record.event, Event::VerificationFinished { .. })));
+}
+
+#[tokio::test]
+async fn acceptance_after_changes_runs_after_an_edit() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("note.txt"), "old").unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&["edit_file"], 4, PermissionLevel::WorkspaceAuto);
+    let mut args = ToolArgs::new();
+    args.insert("path", ArgValue::String("note.txt".to_owned()));
+    args.insert("old", ArgValue::String("old".to_owned()));
+    args.insert("new", ArgValue::String("new".to_owned()));
+    let driver = common::build_driver(
+        MockModel::new(vec![
+            MockStep::ToolCall {
+                name: "edit_file".to_owned(),
+                args,
+            },
+            MockStep::Text("done".to_owned()),
+        ]),
+        config,
+        events.clone(),
+        dir.path(),
+        common::test_limits(),
+    )
+    .with_acceptance_after_changes(
+        vec![AcceptanceItem {
+            id: "sum".to_owned(),
+            description: "2 + 2".to_owned(),
+            required: true,
+            verify: VerifySpec::Compute {
+                expression: "2 + 2".to_owned(),
+                expected: "4".to_owned(),
+            },
+        }],
+        0,
+    );
+
+    let outcome = driver.run("edit", CancelToken::new()).await;
+
+    assert!(outcome.is_done());
+    assert!(outcome
+        .verification
+        .as_ref()
+        .is_some_and(|report| report.passed()));
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("note.txt")).unwrap(),
+        "new"
+    );
+    assert!(events
+        .for_turn(outcome.turn_id)
+        .into_iter()
+        .any(|record| matches!(
+            record.event,
+            Event::VerificationFinished { passed: true, .. }
+        )));
+}
+
+#[tokio::test]
 async fn acceptance_failure_reprompts_then_ends_in_error() {
     let dir = tempfile::tempdir().unwrap();
     let events = Arc::new(EventLog::new());
