@@ -14,7 +14,7 @@ use tokio::io::AsyncReadExt;
 use crate::background::BackgroundTasks;
 use crate::command::{self, CommandSpec};
 use crate::read_ledger::ReadLedger;
-use crate::trash::TrashStore;
+use crate::trash::{TrashEntry, TrashStore};
 
 /// Returns the argument text unchanged. Used to exercise the tool loop.
 pub struct EchoTool;
@@ -2294,6 +2294,282 @@ impl Tool for MultiEditTool {
             }
             Err(error) => ToolResult::failure(ctx.call_id, "multi_edit", io_error(&error)),
         }
+    }
+}
+
+/// Applies exact replacements across several files after validating every
+/// edit. No file is written until every replacement matches.
+pub struct ApplyEditsTool {
+    trash: Arc<dyn TrashStore>,
+    ledger: Option<ReadLedger>,
+}
+
+impl ApplyEditsTool {
+    pub fn new(trash: Arc<dyn TrashStore>) -> Self {
+        Self {
+            trash,
+            ledger: None,
+        }
+    }
+
+    /// Requires a current read of every file before the edit (ADR 0028).
+    pub fn with_ledger(mut self, ledger: ReadLedger) -> Self {
+        self.ledger = Some(ledger);
+        self
+    }
+}
+
+#[async_trait]
+impl Tool for ApplyEditsTool {
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "apply_edits".to_owned(),
+            description: "Apply exact replacements across one or more files atomically. `paths`, \
+                          `old` and `new` are parallel lists; edit i replaces `old[i]` with \
+                          `new[i]` in `paths[i]`. Every edit is validated before any file is \
+                          written."
+                .to_owned(),
+            risk: RiskLevel::Mutating,
+            params: vec![
+                ParamSpec {
+                    name: "paths".to_owned(),
+                    kind: ParamKind::StringList,
+                    required: true,
+                },
+                ParamSpec {
+                    name: "old".to_owned(),
+                    kind: ParamKind::StringList,
+                    required: true,
+                },
+                ParamSpec {
+                    name: "new".to_owned(),
+                    kind: ParamKind::StringList,
+                    required: true,
+                },
+                ParamSpec {
+                    name: "replace_all".to_owned(),
+                    kind: ParamKind::Boolean,
+                    required: false,
+                },
+            ],
+        }
+    }
+
+    fn permission_requests(&self, args: &ToolArgs) -> Result<Vec<PermissionRequest>, ToolError> {
+        let paths = match args.get("paths") {
+            Some(ArgValue::StringList(values)) if !values.is_empty() => values,
+            _ => {
+                return Err(ToolError::invalid_arguments(
+                    "argument `paths` must be a non-empty string list",
+                ))
+            }
+        };
+        let mut unique: Vec<&String> = Vec::new();
+        for path in paths {
+            if !unique.contains(&path) {
+                unique.push(path);
+            }
+        }
+        Ok(unique
+            .into_iter()
+            .map(|path| PermissionRequest {
+                tool: "apply_edits".to_owned(),
+                access: AccessKind::Write,
+                path: Some(PathBuf::from(path)),
+                detail: None,
+            })
+            .collect())
+    }
+
+    async fn call(&self, args: ToolArgs, ctx: &ToolCtx) -> ToolResult {
+        if ctx.cancel.is_cancelled() {
+            return ToolResult::failure(ctx.call_id, "apply_edits", ToolError::cancelled());
+        }
+        let paths = match args.get("paths") {
+            Some(ArgValue::StringList(values)) if !values.is_empty() => values,
+            _ => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "apply_edits",
+                    ToolError::invalid_arguments(
+                        "argument `paths` must be a non-empty string list",
+                    ),
+                )
+            }
+        };
+        let olds = match args.get("old") {
+            Some(ArgValue::StringList(values)) if !values.is_empty() => values,
+            _ => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "apply_edits",
+                    ToolError::invalid_arguments("argument `old` must be a non-empty string list"),
+                )
+            }
+        };
+        let news = match args.get("new") {
+            Some(ArgValue::StringList(values)) if !values.is_empty() => values,
+            _ => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "apply_edits",
+                    ToolError::invalid_arguments("argument `new` must be a non-empty string list"),
+                )
+            }
+        };
+        if paths.len() != olds.len() || paths.len() != news.len() {
+            return ToolResult::failure(
+                ctx.call_id,
+                "apply_edits",
+                ToolError::invalid_arguments(format!(
+                    "`paths`, `old` and `new` must have the same length ({} vs {} vs {})",
+                    paths.len(),
+                    olds.len(),
+                    news.len()
+                )),
+            );
+        }
+        let replace_all = match args.get("replace_all") {
+            None => false,
+            Some(ArgValue::Boolean(value)) => *value,
+            Some(_) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "apply_edits",
+                    ToolError::invalid_arguments("argument `replace_all` must be boolean"),
+                )
+            }
+        };
+
+        let resolved: Vec<PathBuf> = paths
+            .iter()
+            .map(|path| resolve_path(&ctx.workspace_root, Path::new(path)))
+            .collect();
+        let mut originals: BTreeMap<PathBuf, String> = BTreeMap::new();
+        for path in &resolved {
+            if originals.contains_key(path) {
+                continue;
+            }
+            let content = match read_editable(ctx, "apply_edits", path).await {
+                Ok(content) => content,
+                Err(result) => return result,
+            };
+            if let Some(ledger) = &self.ledger {
+                if let Err(reason) = ledger.check(path, content.as_bytes()) {
+                    return ToolResult::failure(
+                        ctx.call_id,
+                        "apply_edits",
+                        ToolError::new(
+                            ErrorCode::InvalidArguments,
+                            format!("{}: {reason}", path.display()),
+                            true,
+                        ),
+                    );
+                }
+            }
+            originals.insert(path.clone(), content);
+        }
+
+        let mut edited = originals.clone();
+        let mut replaced = 0usize;
+        let mut normalized = false;
+        for index in 0..resolved.len() {
+            let path = &resolved[index];
+            let content = edited.get_mut(path).expect("the file was read");
+            match apply_edit(content, &olds[index], &news[index], replace_all) {
+                Ok((next, count, fell_back)) => {
+                    *content = next;
+                    replaced = replaced.saturating_add(count);
+                    normalized |= fell_back;
+                }
+                Err(EditError::Empty) => {
+                    return ToolResult::failure(
+                        ctx.call_id,
+                        "apply_edits",
+                        ToolError::invalid_arguments(format!(
+                            "edit {}: `old` must not be empty",
+                            index + 1
+                        )),
+                    )
+                }
+                Err(EditError::Unchanged) => {
+                    return ToolResult::failure(
+                        ctx.call_id,
+                        "apply_edits",
+                        ToolError::invalid_arguments(format!(
+                            "edit {}: `old` and `new` are identical",
+                            index + 1
+                        )),
+                    )
+                }
+                Err(EditError::Missing) => {
+                    return ToolResult::failure(
+                        ctx.call_id,
+                        "apply_edits",
+                        ToolError::not_found(format!(
+                            "edit {}: snippet not found in `{}`",
+                            index + 1,
+                            path.display()
+                        )),
+                    )
+                }
+                Err(EditError::Ambiguous(count)) => {
+                    return ToolResult::failure(
+                        ctx.call_id,
+                        "apply_edits",
+                        ToolError::invalid_arguments(format!(
+                            "edit {}: snippet occurs {count} times in `{}`; pass replace_all or a \
+                             longer snippet",
+                            index + 1,
+                            path.display()
+                        )),
+                    )
+                }
+            }
+        }
+
+        let changed: Vec<PathBuf> = edited
+            .iter()
+            .filter(|(path, content)| originals.get(*path) != Some(*content))
+            .map(|(path, _)| path.clone())
+            .collect();
+        let mut written: Vec<(PathBuf, TrashEntry)> = Vec::new();
+        for path in &changed {
+            let content = edited.get(path).expect("the file was edited");
+            let entry = match self.trash.backup(path).await {
+                Ok(entry) => entry,
+                Err(error) => return ToolResult::failure(ctx.call_id, "apply_edits", error),
+            };
+            match tokio::fs::write(path, content).await {
+                Ok(()) => {
+                    if let Some(ledger) = &self.ledger {
+                        ledger.record_edit(path, content.as_bytes());
+                    }
+                    written.push((path.clone(), entry));
+                }
+                Err(error) => {
+                    for (path, entry) in written.iter().rev() {
+                        let _ = tokio::fs::copy(&entry.stored, path).await;
+                    }
+                    return ToolResult::failure(ctx.call_id, "apply_edits", io_error(&error));
+                }
+            }
+        }
+
+        let note = if normalized {
+            " (line endings normalized)"
+        } else {
+            ""
+        };
+        ToolResult::success(
+            ctx.call_id,
+            "apply_edits",
+            format!(
+                "edited {} file(s): {replaced} replacement(s) across {} edit(s){note}",
+                changed.len(),
+                resolved.len()
+            ),
+        )
     }
 }
 

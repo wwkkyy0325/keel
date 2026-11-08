@@ -96,6 +96,7 @@ const WORKSPACE_MUTATING_TOOLS: &[&str] = &[
     "write_file",
     "edit_file",
     "multi_edit",
+    "apply_edits",
     "move_file",
     "delete_file",
     "make_dir",
@@ -123,6 +124,13 @@ fn changed_paths(call: &ToolCallRequest) -> Vec<PathBuf> {
     };
     match call.name.as_str() {
         "move_file" => ["from", "to"].into_iter().filter_map(path).collect(),
+        "apply_edits" => match call.args.get("paths") {
+            Some(ArgValue::StringList(values)) => values
+                .iter()
+                .map(|value| PathBuf::from(value.as_str()))
+                .collect(),
+            _ => Vec::new(),
+        },
         "write_file" | "edit_file" | "multi_edit" | "delete_file" | "make_dir" | "restore_file" => {
             path("path").into_iter().collect()
         }
@@ -1972,6 +1980,25 @@ mod tests {
         };
         assert!(call_mutates_workspace(&marked));
         assert!(!call_mutates_workspace(&plain));
+    }
+
+    #[test]
+    fn apply_edits_reports_every_path() {
+        let mut args = ToolArgs::new();
+        args.insert(
+            "paths",
+            ArgValue::StringList(vec!["a.rs".to_owned(), "b.rs".to_owned()]),
+        );
+        let call = ToolCallRequest {
+            id: ToolCallId::new(6),
+            name: "apply_edits".to_owned(),
+            args,
+        };
+        assert!(call_mutates_workspace(&call));
+        assert_eq!(
+            changed_paths(&call),
+            vec![PathBuf::from("a.rs"), PathBuf::from("b.rs")]
+        );
     }
 
     #[test]

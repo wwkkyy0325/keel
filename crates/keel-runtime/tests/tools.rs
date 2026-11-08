@@ -6,8 +6,9 @@ use keel_core::{
     AccessKind, ArgValue, CancelToken, ErrorCode, Tool, ToolArgs, ToolCallId, ToolCtx, TurnId,
 };
 use keel_runtime::{
-    CodeSearchTool, ListDirTool, ListTrashTool, LocalBackgroundTasks, LocalTrashStore,
-    ReadFileTool, RestoreFileTool, ShellTool, TrashStore, WriteFileTool,
+    ApplyEditsTool, CodeSearchTool, ListDirTool, ListTrashTool, LocalBackgroundTasks,
+    LocalTrashStore, ReadFileTool, ReadLedger, RestoreFileTool, ShellTool, TrashStore,
+    WriteFileTool,
 };
 
 fn ctx(root: &Path) -> ToolCtx {
@@ -428,6 +429,141 @@ async fn code_search_reports_output_truncation() {
         "{content}"
     );
     assert!(!content.contains("stopped after"), "{content}");
+}
+
+fn trash(root: &Path) -> Arc<dyn TrashStore> {
+    Arc::new(LocalTrashStore::new(root.to_path_buf()))
+}
+
+fn string_list(values: &[&str]) -> ArgValue {
+    ArgValue::StringList(values.iter().map(|value| (*value).to_owned()).collect())
+}
+
+async fn read_files(reader: &ReadFileTool, root: &Path, names: &[&str]) {
+    for name in names {
+        let mut read = ToolArgs::new();
+        read.insert("path", ArgValue::String((*name).to_owned()));
+        reader.call(read, &ctx(root)).await;
+    }
+}
+
+#[tokio::test]
+async fn apply_edits_updates_two_files() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "alpha\n").unwrap();
+    std::fs::write(dir.path().join("b.txt"), "beta\n").unwrap();
+    let ledger = ReadLedger::new();
+    let reader = ReadFileTool::new().with_ledger(ledger.clone());
+    read_files(&reader, dir.path(), &["a.txt", "b.txt"]).await;
+    let tool = ApplyEditsTool::new(trash(dir.path())).with_ledger(ledger);
+    let mut edit = ToolArgs::new();
+    edit.insert("paths", string_list(&["a.txt", "b.txt"]));
+    edit.insert("old", string_list(&["alpha", "beta"]));
+    edit.insert("new", string_list(&["ALPHA", "BETA"]));
+
+    let result = tool.call(edit, &ctx(dir.path())).await;
+
+    assert!(result.is_success(), "{result:?}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "ALPHA\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("b.txt")).unwrap(),
+        "BETA\n"
+    );
+    assert!(result.content().unwrap().contains("2 file"));
+}
+
+#[tokio::test]
+async fn apply_edits_writes_nothing_when_one_edit_is_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "alpha\n").unwrap();
+    std::fs::write(dir.path().join("b.txt"), "beta\n").unwrap();
+    let ledger = ReadLedger::new();
+    let reader = ReadFileTool::new().with_ledger(ledger.clone());
+    read_files(&reader, dir.path(), &["a.txt", "b.txt"]).await;
+    let tool = ApplyEditsTool::new(trash(dir.path())).with_ledger(ledger);
+    let mut edit = ToolArgs::new();
+    edit.insert("paths", string_list(&["a.txt", "b.txt"]));
+    edit.insert("old", string_list(&["alpha", "missing"]));
+    edit.insert("new", string_list(&["ALPHA", "BETA"]));
+
+    let result = tool.call(edit, &ctx(dir.path())).await;
+
+    assert_eq!(
+        result.error().map(|error| error.code),
+        Some(ErrorCode::NotFound)
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "alpha\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("b.txt")).unwrap(),
+        "beta\n"
+    );
+}
+
+#[tokio::test]
+async fn apply_edits_applies_two_edits_to_one_file() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "one two\n").unwrap();
+    let ledger = ReadLedger::new();
+    let reader = ReadFileTool::new().with_ledger(ledger.clone());
+    read_files(&reader, dir.path(), &["a.txt"]).await;
+    let tool = ApplyEditsTool::new(trash(dir.path())).with_ledger(ledger);
+    let mut edit = ToolArgs::new();
+    edit.insert("paths", string_list(&["a.txt", "a.txt"]));
+    edit.insert("old", string_list(&["one", "two"]));
+    edit.insert("new", string_list(&["1", "2"]));
+
+    let result = tool.call(edit, &ctx(dir.path())).await;
+
+    assert!(result.is_success(), "{result:?}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "1 2\n"
+    );
+}
+
+#[tokio::test]
+async fn apply_edits_requires_a_read() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "alpha\n").unwrap();
+    let tool = ApplyEditsTool::new(trash(dir.path())).with_ledger(ReadLedger::new());
+    let mut edit = ToolArgs::new();
+    edit.insert("paths", string_list(&["a.txt"]));
+    edit.insert("old", string_list(&["alpha"]));
+    edit.insert("new", string_list(&["ALPHA"]));
+
+    let result = tool.call(edit, &ctx(dir.path())).await;
+
+    assert_eq!(
+        result.error().map(|error| error.code),
+        Some(ErrorCode::InvalidArguments)
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "alpha\n"
+    );
+}
+
+#[tokio::test]
+async fn apply_edits_rejects_mismatched_lists() {
+    let dir = tempfile::tempdir().unwrap();
+    let tool = ApplyEditsTool::new(trash(dir.path())).with_ledger(ReadLedger::new());
+    let mut edit = ToolArgs::new();
+    edit.insert("paths", string_list(&["a.txt", "b.txt"]));
+    edit.insert("old", string_list(&["alpha"]));
+    edit.insert("new", string_list(&["ALPHA"]));
+
+    let result = tool.call(edit, &ctx(dir.path())).await;
+
+    assert_eq!(
+        result.error().map(|error| error.code),
+        Some(ErrorCode::InvalidArguments)
+    );
 }
 
 #[tokio::test]
