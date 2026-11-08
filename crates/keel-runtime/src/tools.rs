@@ -576,6 +576,15 @@ const MAX_SEARCH_FILE_BYTES: u64 = 1024 * 1024;
 const MAX_SEARCH_DEPTH: usize = 32;
 const MAX_SEARCH_LINE_CHARS: usize = 240;
 const MAX_SEARCH_OUTPUT_BYTES: usize = 32 * 1024;
+const MAX_SEARCH_CONTEXT: usize = 5;
+
+struct SearchMatch {
+    path: String,
+    line: usize,
+    text: String,
+    before: Vec<(usize, String)>,
+    after: Vec<(usize, String)>,
+}
 
 #[async_trait]
 impl Tool for ListDirTool {
@@ -730,6 +739,11 @@ impl Tool for CodeSearchTool {
                     kind: ParamKind::Boolean,
                     required: false,
                 },
+                ParamSpec {
+                    name: "context".to_owned(),
+                    kind: ParamKind::Integer,
+                    required: false,
+                },
             ],
         }
     }
@@ -846,10 +860,23 @@ impl Tool for CodeSearchTool {
             }
             None => DEFAULT_SEARCH_RESULTS as usize,
         };
+        let context = match args.get("context") {
+            Some(keel_core::ArgValue::Integer(value)) => {
+                (*value).clamp(0, MAX_SEARCH_CONTEXT as i64) as usize
+            }
+            Some(_) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "code_search",
+                    ToolError::invalid_arguments("argument `context` must be integer"),
+                )
+            }
+            None => 0,
+        };
         let root = resolve_path(&ctx.workspace_root, Path::new(path));
 
         let mut stack = vec![(root.clone(), 0usize)];
-        let mut matches: Vec<String> = Vec::new();
+        let mut matches: Vec<SearchMatch> = Vec::new();
         let mut truncated = false;
         while let Some((directory, depth)) = stack.pop() {
             if matches.len() >= limit {
@@ -906,7 +933,8 @@ impl Tool for CodeSearchTool {
                 if text.contains('\0') {
                     continue;
                 }
-                for (index, line) in text.lines().enumerate() {
+                let lines: Vec<&str> = text.lines().collect();
+                for (index, line) in lines.iter().enumerate() {
                     if matches.len() >= limit {
                         truncated = true;
                         break;
@@ -922,12 +950,40 @@ impl Tool for CodeSearchTool {
                         }
                     };
                     if matched {
-                        let line = truncate_chars(line.trim(), MAX_SEARCH_LINE_CHARS);
-                        matches.push(format!(
-                            "{}:{}: {line}",
-                            display_relative(relative),
-                            index + 1
-                        ));
+                        let text = truncate_chars(line.trim(), MAX_SEARCH_LINE_CHARS);
+                        let before = if context == 0 {
+                            Vec::new()
+                        } else {
+                            let start = index.saturating_sub(context);
+                            (start..index)
+                                .map(|line| {
+                                    (
+                                        line + 1,
+                                        truncate_chars(lines[line].trim(), MAX_SEARCH_LINE_CHARS),
+                                    )
+                                })
+                                .collect()
+                        };
+                        let after = if context == 0 {
+                            Vec::new()
+                        } else {
+                            let end = (index + context + 1).min(lines.len());
+                            (index + 1..end)
+                                .map(|line| {
+                                    (
+                                        line + 1,
+                                        truncate_chars(lines[line].trim(), MAX_SEARCH_LINE_CHARS),
+                                    )
+                                })
+                                .collect()
+                        };
+                        matches.push(SearchMatch {
+                            path: display_relative(relative).to_owned(),
+                            line: index + 1,
+                            text,
+                            before,
+                            after,
+                        });
                     }
                 }
                 if truncated {
@@ -936,8 +992,30 @@ impl Tool for CodeSearchTool {
             }
         }
 
-        matches.sort();
-        let mut output = matches.join("\n");
+        matches.sort_by(|left, right| left.path.cmp(&right.path).then(left.line.cmp(&right.line)));
+        let mut output = if context == 0 {
+            matches
+                .iter()
+                .map(|found| format!("{}:{}: {}", found.path, found.line, found.text))
+                .collect::<Vec<_>>()
+                .join("\n")
+        } else {
+            matches
+                .iter()
+                .map(|found| {
+                    let mut block = String::new();
+                    for (line, text) in &found.before {
+                        block.push_str(&format!("{}:{line}- {text}\n", found.path));
+                    }
+                    block.push_str(&format!("{}:{}: {}\n", found.path, found.line, found.text));
+                    for (line, text) in &found.after {
+                        block.push_str(&format!("{}:{line}- {text}\n", found.path));
+                    }
+                    block.trim_end().to_owned()
+                })
+                .collect::<Vec<_>>()
+                .join("\n--\n")
+        };
         if output.len() > MAX_SEARCH_OUTPUT_BYTES {
             output.truncate(char_boundary(&output, MAX_SEARCH_OUTPUT_BYTES));
             truncated = true;

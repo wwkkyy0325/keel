@@ -299,6 +299,57 @@ async fn code_search_rejects_an_invalid_regex() {
 }
 
 #[tokio::test]
+async fn code_search_context_includes_neighbors() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("main.rs"), "one\ntwo\nthree\nfour\n").unwrap();
+    let tool = CodeSearchTool::new();
+    let mut args = ToolArgs::new();
+    args.insert("query", ArgValue::String("three".to_owned()));
+    args.insert("context", ArgValue::Integer(1));
+
+    let result = tool.call(args, &ctx(dir.path())).await;
+
+    assert!(result.is_success());
+    let content = result.content().unwrap();
+    assert!(content.contains("main.rs:2- two"), "{content}");
+    assert!(content.contains("main.rs:3: three"), "{content}");
+    assert!(content.contains("main.rs:4- four"), "{content}");
+}
+
+#[tokio::test]
+async fn code_search_without_context_keeps_only_the_match() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("main.rs"), "one\ntwo\nthree\n").unwrap();
+    let tool = CodeSearchTool::new();
+    let mut args = ToolArgs::new();
+    args.insert("query", ArgValue::String("two".to_owned()));
+
+    let result = tool.call(args, &ctx(dir.path())).await;
+
+    assert!(result.is_success());
+    let content = result.content().unwrap();
+    assert!(content.contains("main.rs:2: two"), "{content}");
+    assert!(!content.contains("main.rs:1-"), "{content}");
+    assert!(!content.contains("main.rs:3-"), "{content}");
+}
+
+#[tokio::test]
+async fn code_search_rejects_a_non_integer_context() {
+    let dir = tempfile::tempdir().unwrap();
+    let tool = CodeSearchTool::new();
+    let mut args = ToolArgs::new();
+    args.insert("query", ArgValue::String("two".to_owned()));
+    args.insert("context", ArgValue::String("1".to_owned()));
+
+    let result = tool.call(args, &ctx(dir.path())).await;
+
+    assert_eq!(
+        result.error().map(|error| error.code),
+        Some(ErrorCode::InvalidArguments)
+    );
+}
+
+#[tokio::test]
 async fn shell_runs_allowlisted_programs_without_a_shell() {
     let dir = tempfile::tempdir().unwrap();
     let tool = ShellTool::new(vec!["rustc".to_owned()]);
