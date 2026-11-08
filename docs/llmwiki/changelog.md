@@ -2307,3 +2307,14 @@
   contract.
 - Three contract tests: a pattern match, the case flag in regex mode and an
   invalid pattern. The literal and glob tests are unchanged.
+
+### Denied calls keep their arguments (2026-11-08)
+
+- `ToolDispatcher::reject` takes the redacted args preview. Invisible,
+  unknown, invalid-argument and permission-denied calls now emit a
+  `ToolStarted` event with that preview instead of `None`, so the transcript
+  shows the command a user denied (or the arguments that were invalid).
+- The preview is the same `compact_args` + `redact_secrets` value used for a
+  prepared call. A dispatch test asserts `text=hi` survives a denial.
+- Found by Keelson's real-task run on a copied GameVault core: every denied
+  `shell` row had an empty argument column.

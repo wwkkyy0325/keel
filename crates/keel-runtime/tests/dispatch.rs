@@ -431,7 +431,7 @@ async fn unknown_tool_returns_not_found() {
 async fn invisible_tool_is_permission_denied() {
     let dir = tempfile::tempdir().unwrap();
     let registry = registry(vec![Arc::new(EchoTool::new())]);
-    let (dispatcher, _events) = dispatcher(
+    let (dispatcher, events) = dispatcher(
         registry,
         dir.path(),
         Duration::from_secs(1),
@@ -452,6 +452,20 @@ async fn invisible_tool_is_permission_denied() {
     assert_eq!(
         results[0].error().map(|error| error.code),
         Some(ErrorCode::PermissionDenied)
+    );
+    let started = events
+        .snapshot()
+        .into_iter()
+        .find_map(|record| match record.event {
+            Event::ToolStarted {
+                tool, args_preview, ..
+            } if tool == "echo" => Some(args_preview),
+            _ => None,
+        });
+    assert_eq!(
+        started.flatten().as_deref(),
+        Some("text=hi"),
+        "a denied call keeps its arguments in the transcript"
     );
 }
 

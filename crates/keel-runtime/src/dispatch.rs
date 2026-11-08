@@ -98,6 +98,10 @@ impl ToolDispatcher {
             let risk = tool
                 .as_ref()
                 .map_or(RiskLevel::Dangerous, |tool| tool.schema().risk);
+            // A rejected call still needs its arguments in the transcript. In
+            // particular a denied `shell` must show the command the user was
+            // asked to approve.
+            let args_preview = redact_secrets(&crate::summary::compact_args(&call.args));
 
             if !visible.contains(&call.name) {
                 results[index] = Some(self.reject(
@@ -105,6 +109,7 @@ impl ToolDispatcher {
                     call.id,
                     call.name.clone(),
                     risk,
+                    Some(args_preview.clone()),
                     ToolError::permission_denied(format!(
                         "tool `{}` is not visible for this turn",
                         call.name
@@ -119,6 +124,7 @@ impl ToolDispatcher {
                     call.id,
                     call.name.clone(),
                     risk,
+                    Some(args_preview.clone()),
                     ToolError::not_found(format!("tool `{}` is not registered", call.name)),
                 ));
                 continue;
@@ -126,8 +132,14 @@ impl ToolDispatcher {
 
             let schema = tool.schema();
             if let Err(error) = schema.validate(&call.args) {
-                results[index] =
-                    Some(self.reject(turn_id, call.id, call.name.clone(), schema.risk, error));
+                results[index] = Some(self.reject(
+                    turn_id,
+                    call.id,
+                    call.name.clone(),
+                    schema.risk,
+                    Some(args_preview.clone()),
+                    error,
+                ));
                 continue;
             }
 
@@ -135,8 +147,14 @@ impl ToolDispatcher {
                 .check_permissions(turn_id, call.id, &call.name, &tool, &call.args, cancel)
                 .await
             {
-                results[index] =
-                    Some(self.reject(turn_id, call.id, call.name.clone(), schema.risk, error));
+                results[index] = Some(self.reject(
+                    turn_id,
+                    call.id,
+                    call.name.clone(),
+                    schema.risk,
+                    Some(args_preview.clone()),
+                    error,
+                ));
                 continue;
             }
 
@@ -145,7 +163,7 @@ impl ToolDispatcher {
                 tool,
                 call_id: call.id,
                 name: call.name,
-                args_preview: redact_secrets(&crate::summary::compact_args(&call.args)),
+                args_preview,
                 args: call.args,
                 risk: schema.risk,
             };
@@ -463,6 +481,7 @@ impl ToolDispatcher {
         call_id: ToolCallId,
         name: String,
         risk: RiskLevel,
+        args_preview: Option<String>,
         error: ToolError,
     ) -> ToolResult {
         self.events.append(Event::ToolStarted {
@@ -470,7 +489,7 @@ impl ToolDispatcher {
             call_id,
             tool: name.clone(),
             risk,
-            args_preview: None,
+            args_preview,
         });
         let result = ToolResult::failure(call_id, name, error);
         self.events.append(Event::ToolFinished {
