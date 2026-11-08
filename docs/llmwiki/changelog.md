@@ -2279,3 +2279,31 @@
   depth. Files only, newest first, bounded. ADR 0021 records the contract.
 - Five tool tests and three ledger tests; ADR 0020 records read-before-write
   and ADR 0018 gains the line-ending amendment.
+
+### Atomic multi-edit (2026-11-08)
+
+- `MultiEditTool`: `multi_edit { path, old: string_list, new: string_list,
+  replace_all? }`. The parallel lists must have the same length. Each pair is
+  applied in order to an in-memory copy; a missing or ambiguous snippet fails
+  the whole call before any backup or write.
+- Matching is the `edit_file` contract: literal, exact first, line-ending
+  normalized fallback, read ledger checked once. One trash backup and one
+  write for the batch.
+- Six unit tests: success, atomic failure with no backup, unequal lists, the
+  read guard, line-ending fallback and `replace_all`. ADR 0022 records the
+  contract.
+
+### Regex content search (2026-11-08)
+
+- `CodeSearchTool` accepts `regex: boolean`, default false. The literal
+  substring path is unchanged. In regex mode `case_sensitive` sets the
+  builder's `case_insensitive(!case_sensitive)`, so the default stays
+  case-insensitive.
+- The pattern is compiled once per call; an invalid pattern is
+  `InvalidArguments` before the walk starts. Matching is line-oriented, with
+  the existing file-size, depth, result and line-length limits.
+- New `regex` 1.13 dependency (MIT OR Apache-2.0); `cargo deny check
+  licenses` passes and the audit table records it. ADR 0023 records the
+  contract.
+- Three contract tests: a pattern match, the case flag in regex mode and an
+  invalid pattern. The literal and glob tests are unchanged.

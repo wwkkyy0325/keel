@@ -50,7 +50,8 @@ pub use summarizer::{
 };
 pub use tools::{
     CodeSearchTool, DeleteFileTool, EchoTool, EditFileTool, GlobTool, ListDirTool, ListTrashTool,
-    MakeDirTool, MoveFileTool, ReadFileTool, RestoreFileTool, ShellTool, TodoTool, WriteFileTool,
+    MakeDirTool, MoveFileTool, MultiEditTool, ReadFileTool, RestoreFileTool, ShellTool, TodoTool,
+    WriteFileTool,
 };
 pub use trash::{LocalTrashStore, TrashEntry, TrashStore};
 pub use verification::AcceptanceVerifier;

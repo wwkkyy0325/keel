@@ -26,6 +26,7 @@ Direct dependencies and their declared licenses:
 |---|---|---|
 | async-trait | 0.1.92 | MIT OR Apache-2.0 |
 | dotenvy | 0.15.7 | MIT |
+| regex | 1.13.1 | MIT OR Apache-2.0 |
 | reqwest | 0.12.28 | MIT OR Apache-2.0 |
 | rusqlite | 0.32.1 | MIT |
 | serde | 1.0.229 | MIT OR Apache-2.0 |

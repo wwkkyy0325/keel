@@ -694,8 +694,8 @@ impl Tool for CodeSearchTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "code_search".to_owned(),
-            description: "Search UTF-8 files for a substring, optionally case-sensitive and \
-                          filtered by a file-name glob."
+            description: "Search UTF-8 files for a substring or regex, optionally case-sensitive \
+                          and filtered by a file-name glob."
                 .to_owned(),
             risk: RiskLevel::ReadOnly,
             params: vec![
@@ -722,6 +722,11 @@ impl Tool for CodeSearchTool {
                 ParamSpec {
                     name: "glob".to_owned(),
                     kind: ParamKind::String,
+                    required: false,
+                },
+                ParamSpec {
+                    name: "regex".to_owned(),
+                    kind: ParamKind::Boolean,
                     required: false,
                 },
             ],
@@ -771,6 +776,34 @@ impl Tool for CodeSearchTool {
                 )
             }
             None => false,
+        };
+        let use_regex = match args.get("regex") {
+            Some(keel_core::ArgValue::Boolean(value)) => *value,
+            Some(_) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "code_search",
+                    ToolError::invalid_arguments("argument `regex` must be boolean"),
+                )
+            }
+            None => false,
+        };
+        let pattern = if use_regex {
+            match regex::RegexBuilder::new(query)
+                .case_insensitive(!case_sensitive)
+                .build()
+            {
+                Ok(pattern) => Some(pattern),
+                Err(error) => {
+                    return ToolResult::failure(
+                        ctx.call_id,
+                        "code_search",
+                        ToolError::invalid_arguments(format!("invalid regex: {error}")),
+                    )
+                }
+            }
+        } else {
+            None
         };
         let needle = if case_sensitive {
             query.to_owned()
@@ -877,10 +910,15 @@ impl Tool for CodeSearchTool {
                         truncated = true;
                         break;
                     }
-                    let matched = if case_sensitive {
-                        line.contains(query)
-                    } else {
-                        line.to_lowercase().contains(&needle)
+                    let matched = match &pattern {
+                        Some(pattern) => pattern.is_match(line),
+                        None => {
+                            if case_sensitive {
+                                line.contains(query)
+                            } else {
+                                line.to_lowercase().contains(&needle)
+                            }
+                        }
                     };
                     if matched {
                         let line = truncate_chars(line.trim(), MAX_SEARCH_LINE_CHARS);
@@ -1656,54 +1694,9 @@ impl Tool for EditFileTool {
         };
 
         let resolved = resolve_path(&ctx.workspace_root, Path::new(path));
-        let metadata = match tokio::fs::metadata(&resolved).await {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return ToolResult::failure(
-                    ctx.call_id,
-                    "edit_file",
-                    ToolError::not_found(format!("`{}` does not exist", resolved.display())),
-                )
-            }
-            Err(error) => {
-                return ToolResult::failure(ctx.call_id, "edit_file", io_error(&error));
-            }
-        };
-        if !metadata.is_file() {
-            return ToolResult::failure(
-                ctx.call_id,
-                "edit_file",
-                ToolError::invalid_arguments(format!(
-                    "`{}` is not a regular file",
-                    resolved.display()
-                )),
-            );
-        }
-        if metadata.len() > MAX_READ_FILE_BYTES {
-            return ToolResult::failure(
-                ctx.call_id,
-                "edit_file",
-                ToolError::invalid_arguments(format!(
-                    "`{}` is larger than the edit limit",
-                    resolved.display()
-                )),
-            );
-        }
-        let content = match tokio::fs::read_to_string(&resolved).await {
+        let content = match read_editable(ctx, "edit_file", &resolved).await {
             Ok(content) => content,
-            Err(error) if error.kind() == std::io::ErrorKind::InvalidData => {
-                return ToolResult::failure(
-                    ctx.call_id,
-                    "edit_file",
-                    ToolError::invalid_arguments(format!(
-                        "`{}` is not UTF-8 text",
-                        resolved.display()
-                    )),
-                )
-            }
-            Err(error) => {
-                return ToolResult::failure(ctx.call_id, "edit_file", io_error(&error));
-            }
+            Err(result) => return result,
         };
         if let Some(ledger) = &self.ledger {
             if let Err(reason) = ledger.check(&resolved, content.as_bytes()) {
@@ -1719,66 +1712,50 @@ impl Tool for EditFileTool {
             }
         }
 
-        let eol = if content.contains("\r\n") {
-            "\r\n"
-        } else {
-            "\n"
-        };
-        let mut needle = std::borrow::Cow::Borrowed(old);
-        let mut matches = content.match_indices(needle.as_ref()).count();
-        let mut normalized = false;
-        if matches == 0 {
-            let candidate = with_line_ending(old, eol);
-            if candidate != old {
-                let count = content.match_indices(&candidate).count();
-                if count > 0 {
-                    needle = std::borrow::Cow::Owned(candidate);
-                    matches = count;
-                    normalized = true;
-                }
+        let (edited, replaced, normalized) = match apply_edit(&content, old, new, replace_all) {
+            Ok(result) => result,
+            Err(EditError::Empty) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "edit_file",
+                    ToolError::invalid_arguments("`old` must not be empty"),
+                )
             }
-        }
-        if matches == 0 {
-            return ToolResult::failure(
-                ctx.call_id,
-                "edit_file",
-                ToolError::not_found(format!("snippet not found in `{}`", resolved.display())),
-            );
-        }
-        if matches > 1 && !replace_all {
-            return ToolResult::failure(
-                ctx.call_id,
-                "edit_file",
-                ToolError::invalid_arguments(format!(
-                    "snippet occurs {matches} times in `{}`; pass replace_all or a longer snippet",
+            Err(EditError::Unchanged) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "edit_file",
+                    ToolError::invalid_arguments("`old` and `new` are identical"),
+                )
+            }
+            Err(EditError::Missing) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "edit_file",
+                    ToolError::not_found(format!("snippet not found in `{}`", resolved.display())),
+                )
+            }
+            Err(EditError::Ambiguous(count)) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "edit_file",
+                    ToolError::invalid_arguments(format!(
+                    "snippet occurs {count} times in `{}`; pass replace_all or a longer snippet",
                     resolved.display()
                 )),
-            );
-        }
-        let replacement = with_line_ending(new, eol);
-        if needle.as_ref() == replacement {
-            return ToolResult::failure(
-                ctx.call_id,
-                "edit_file",
-                ToolError::invalid_arguments("`old` and `new` are identical"),
-            );
-        }
+                )
+            }
+        };
 
         let entry = match self.trash.backup(&resolved).await {
             Ok(entry) => entry,
             Err(error) => return ToolResult::failure(ctx.call_id, "edit_file", error),
-        };
-        let edited = if replace_all {
-            content.replace(needle.as_ref(), &replacement)
-        } else {
-            content.replacen(needle.as_ref(), &replacement, 1)
         };
         match tokio::fs::write(&resolved, &edited).await {
             Ok(()) => {
                 if let Some(ledger) = &self.ledger {
                     ledger.record(&resolved, edited.as_bytes());
                 }
-                let replaced = if replace_all { matches } else { 1 };
                 let note = if normalized {
                     " (line endings normalized)"
                 } else {
@@ -1799,6 +1776,108 @@ impl Tool for EditFileTool {
     }
 }
 
+enum EditError {
+    Empty,
+    Unchanged,
+    Missing,
+    Ambiguous(usize),
+}
+
+/// Applies one literal replacement to `content`. Exact match wins; a
+/// line-ending-normalized match is the fallback. Returns the new content, the
+/// number of replacements and whether the fallback was used.
+fn apply_edit(
+    content: &str,
+    old: &str,
+    new: &str,
+    replace_all: bool,
+) -> Result<(String, usize, bool), EditError> {
+    if old.is_empty() {
+        return Err(EditError::Empty);
+    }
+    if old == new {
+        return Err(EditError::Unchanged);
+    }
+    let eol = if content.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let mut needle = std::borrow::Cow::Borrowed(old);
+    let mut matches = content.match_indices(needle.as_ref()).count();
+    let mut normalized = false;
+    if matches == 0 {
+        let candidate = with_line_ending(old, eol);
+        if candidate != old {
+            let count = content.match_indices(&candidate).count();
+            if count > 0 {
+                needle = std::borrow::Cow::Owned(candidate);
+                matches = count;
+                normalized = true;
+            }
+        }
+    }
+    if matches == 0 {
+        return Err(EditError::Missing);
+    }
+    if matches > 1 && !replace_all {
+        return Err(EditError::Ambiguous(matches));
+    }
+    let replacement = with_line_ending(new, eol);
+    if needle.as_ref() == replacement {
+        return Err(EditError::Unchanged);
+    }
+    let edited = if replace_all {
+        content.replace(needle.as_ref(), &replacement)
+    } else {
+        content.replacen(needle.as_ref(), &replacement, 1)
+    };
+    Ok((edited, if replace_all { matches } else { 1 }, normalized))
+}
+
+/// Reads an editable UTF-8 file, refusing a missing path, a non-file, a file
+/// over the edit limit and invalid UTF-8. The failure is already enveloped
+/// for the tool named by `tool`.
+async fn read_editable(ctx: &ToolCtx, tool: &str, resolved: &Path) -> Result<String, ToolResult> {
+    let metadata = match tokio::fs::metadata(resolved).await {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(ToolResult::failure(
+                ctx.call_id,
+                tool,
+                ToolError::not_found(format!("`{}` does not exist", resolved.display())),
+            ))
+        }
+        Err(error) => return Err(ToolResult::failure(ctx.call_id, tool, io_error(&error))),
+    };
+    if !metadata.is_file() {
+        return Err(ToolResult::failure(
+            ctx.call_id,
+            tool,
+            ToolError::invalid_arguments(format!("`{}` is not a regular file", resolved.display())),
+        ));
+    }
+    if metadata.len() > MAX_READ_FILE_BYTES {
+        return Err(ToolResult::failure(
+            ctx.call_id,
+            tool,
+            ToolError::invalid_arguments(format!(
+                "`{}` is larger than the edit limit",
+                resolved.display()
+            )),
+        ));
+    }
+    match tokio::fs::read_to_string(resolved).await {
+        Ok(content) => Ok(content),
+        Err(error) if error.kind() == std::io::ErrorKind::InvalidData => Err(ToolResult::failure(
+            ctx.call_id,
+            tool,
+            ToolError::invalid_arguments(format!("`{}` is not UTF-8 text", resolved.display())),
+        )),
+        Err(error) => Err(ToolResult::failure(ctx.call_id, tool, io_error(&error))),
+    }
+}
+
 /// Converts every line ending in `text` to `eol`'s style.
 fn with_line_ending(text: &str, eol: &str) -> String {
     let normalized = text.replace("\r\n", "\n");
@@ -1806,6 +1885,244 @@ fn with_line_ending(text: &str, eol: &str) -> String {
         normalized.replace('\n', "\r\n")
     } else {
         normalized
+    }
+}
+
+/// Applies several exact replacements to one file atomically.
+///
+/// Every replacement is validated against the evolving text in memory; a
+/// missing or ambiguous snippet fails the whole call without writing. The
+/// previous version is backed up once.
+pub struct MultiEditTool {
+    trash: Arc<dyn TrashStore>,
+    ledger: Option<ReadLedger>,
+}
+
+impl MultiEditTool {
+    pub fn new(trash: Arc<dyn TrashStore>) -> Self {
+        Self {
+            trash,
+            ledger: None,
+        }
+    }
+
+    /// Requires a current read of the file before the edit (ADR 0022).
+    pub fn with_ledger(mut self, ledger: ReadLedger) -> Self {
+        self.ledger = Some(ledger);
+        self
+    }
+}
+
+#[async_trait]
+impl Tool for MultiEditTool {
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "multi_edit".to_owned(),
+            description: "Apply several exact replacements to one UTF-8 file atomically. `old` \
+                          and `new` are parallel lists; every edit is validated before the single \
+                          write."
+                .to_owned(),
+            risk: RiskLevel::Mutating,
+            params: vec![
+                ParamSpec {
+                    name: "path".to_owned(),
+                    kind: ParamKind::String,
+                    required: true,
+                },
+                ParamSpec {
+                    name: "old".to_owned(),
+                    kind: ParamKind::StringList,
+                    required: true,
+                },
+                ParamSpec {
+                    name: "new".to_owned(),
+                    kind: ParamKind::StringList,
+                    required: true,
+                },
+                ParamSpec {
+                    name: "replace_all".to_owned(),
+                    kind: ParamKind::Boolean,
+                    required: false,
+                },
+            ],
+        }
+    }
+
+    fn permission_requests(&self, args: &ToolArgs) -> Result<Vec<PermissionRequest>, ToolError> {
+        let path = args.require_str("path")?;
+        Ok(vec![PermissionRequest {
+            tool: "multi_edit".to_owned(),
+            access: AccessKind::Write,
+            path: Some(PathBuf::from(path)),
+            detail: None,
+        }])
+    }
+
+    async fn call(&self, args: ToolArgs, ctx: &ToolCtx) -> ToolResult {
+        if ctx.cancel.is_cancelled() {
+            return ToolResult::failure(ctx.call_id, "multi_edit", ToolError::cancelled());
+        }
+        let path = match args.require_str("path") {
+            Ok(path) => path,
+            Err(error) => return ToolResult::failure(ctx.call_id, "multi_edit", error),
+        };
+        let olds = match args.get("old") {
+            Some(ArgValue::StringList(values)) if !values.is_empty() => values,
+            Some(_) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "multi_edit",
+                    ToolError::invalid_arguments("argument `old` must be a non-empty string list"),
+                )
+            }
+            None => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "multi_edit",
+                    ToolError::invalid_arguments("argument `old` is required"),
+                )
+            }
+        };
+        let news = match args.get("new") {
+            Some(ArgValue::StringList(values)) if !values.is_empty() => values,
+            Some(_) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "multi_edit",
+                    ToolError::invalid_arguments("argument `new` must be a non-empty string list"),
+                )
+            }
+            None => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "multi_edit",
+                    ToolError::invalid_arguments("argument `new` is required"),
+                )
+            }
+        };
+        if olds.len() != news.len() {
+            return ToolResult::failure(
+                ctx.call_id,
+                "multi_edit",
+                ToolError::invalid_arguments(format!(
+                    "`old` and `new` must have the same length ({} vs {})",
+                    olds.len(),
+                    news.len()
+                )),
+            );
+        }
+        let replace_all = match args.get("replace_all") {
+            None => false,
+            Some(ArgValue::Boolean(value)) => *value,
+            Some(_) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "multi_edit",
+                    ToolError::invalid_arguments("argument `replace_all` must be boolean"),
+                )
+            }
+        };
+
+        let resolved = resolve_path(&ctx.workspace_root, Path::new(path));
+        let content = match read_editable(ctx, "multi_edit", &resolved).await {
+            Ok(content) => content,
+            Err(result) => return result,
+        };
+        if let Some(ledger) = &self.ledger {
+            if let Err(reason) = ledger.check(&resolved, content.as_bytes()) {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "multi_edit",
+                    ToolError::new(
+                        ErrorCode::InvalidArguments,
+                        format!("{}: {reason}", resolved.display()),
+                        true,
+                    ),
+                );
+            }
+        }
+
+        let mut edited = content;
+        let mut replaced = 0usize;
+        let mut normalized = false;
+        for (index, (old, new)) in olds.iter().zip(news.iter()).enumerate() {
+            let position = index + 1;
+            match apply_edit(&edited, old, new, replace_all) {
+                Ok((next, count, fell_back)) => {
+                    edited = next;
+                    replaced = replaced.saturating_add(count);
+                    normalized |= fell_back;
+                }
+                Err(EditError::Empty) => {
+                    return ToolResult::failure(
+                        ctx.call_id,
+                        "multi_edit",
+                        ToolError::invalid_arguments(format!(
+                            "edit {position}: `old` must not be empty"
+                        )),
+                    )
+                }
+                Err(EditError::Unchanged) => {
+                    return ToolResult::failure(
+                        ctx.call_id,
+                        "multi_edit",
+                        ToolError::invalid_arguments(format!(
+                            "edit {position}: `old` and `new` are identical"
+                        )),
+                    )
+                }
+                Err(EditError::Missing) => {
+                    return ToolResult::failure(
+                        ctx.call_id,
+                        "multi_edit",
+                        ToolError::not_found(format!(
+                            "edit {position}: snippet not found in `{}`",
+                            resolved.display()
+                        )),
+                    )
+                }
+                Err(EditError::Ambiguous(count)) => {
+                    return ToolResult::failure(
+                        ctx.call_id,
+                        "multi_edit",
+                        ToolError::invalid_arguments(format!(
+                            "edit {position}: snippet occurs {count} times in `{}`; pass \
+                             replace_all or a longer snippet",
+                            resolved.display()
+                        )),
+                    )
+                }
+            }
+        }
+
+        let entry = match self.trash.backup(&resolved).await {
+            Ok(entry) => entry,
+            Err(error) => return ToolResult::failure(ctx.call_id, "multi_edit", error),
+        };
+        match tokio::fs::write(&resolved, &edited).await {
+            Ok(()) => {
+                if let Some(ledger) = &self.ledger {
+                    ledger.record(&resolved, edited.as_bytes());
+                }
+                let note = if normalized {
+                    " (line endings normalized)"
+                } else {
+                    ""
+                };
+                ToolResult::success(
+                    ctx.call_id,
+                    "multi_edit",
+                    format!(
+                        "edited {}: {replaced} replacement(s) across {} edit(s){note} \
+                         (previous version in trash as {})",
+                        resolved.display(),
+                        olds.len(),
+                        entry.id
+                    ),
+                )
+            }
+            Err(error) => ToolResult::failure(ctx.call_id, "multi_edit", io_error(&error)),
+        }
     }
 }
 
@@ -2654,5 +2971,158 @@ mod file_tool_tests {
             .call(args(&[("pattern", "*.md")]), &ctx(dir.path()))
             .await;
         assert!(content(&by_name).contains("README.md"));
+    }
+
+    fn list_args(path: &str, olds: &[&str], news: &[&str]) -> ToolArgs {
+        let mut args = ToolArgs::new();
+        args.insert("path", ArgValue::String(path.to_owned()));
+        args.insert(
+            "old",
+            ArgValue::StringList(olds.iter().map(|value| (*value).to_owned()).collect()),
+        );
+        args.insert(
+            "new",
+            ArgValue::StringList(news.iter().map(|value| (*value).to_owned()).collect()),
+        );
+        args
+    }
+
+    #[tokio::test]
+    async fn multi_edit_applies_all_edits_atomically() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notes.txt");
+        std::fs::write(&path, "one\ntwo\nthree\n").unwrap();
+        let ledger = ReadLedger::new();
+        ReadFileTool::new()
+            .with_ledger(ledger.clone())
+            .call(args(&[("path", "notes.txt")]), &ctx(dir.path()))
+            .await;
+        let store = Arc::new(crate::trash::LocalTrashStore::new(dir.path().join("trash")));
+        let tool = MultiEditTool::new(store.clone()).with_ledger(ledger);
+
+        let result = tool
+            .call(
+                list_args("notes.txt", &["one", "three"], &["ONE", "THREE"]),
+                &ctx(dir.path()),
+            )
+            .await;
+
+        let text = content(&result);
+        assert!(text.contains("2 replacement"), "{text}");
+        assert!(text.contains("2 edit"), "{text}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "ONE\ntwo\nTHREE\n");
+        assert_eq!(store.list(10).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn multi_edit_writes_nothing_when_an_edit_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notes.txt");
+        std::fs::write(&path, "one\ntwo\n").unwrap();
+        let ledger = ReadLedger::new();
+        ReadFileTool::new()
+            .with_ledger(ledger.clone())
+            .call(args(&[("path", "notes.txt")]), &ctx(dir.path()))
+            .await;
+        let store = Arc::new(crate::trash::LocalTrashStore::new(dir.path().join("trash")));
+        let tool = MultiEditTool::new(store.clone()).with_ledger(ledger);
+
+        let result = tool
+            .call(
+                list_args("notes.txt", &["one", "missing"], &["ONE", "X"]),
+                &ctx(dir.path()),
+            )
+            .await;
+
+        assert_eq!(
+            result.error().map(|error| error.code),
+            Some(keel_core::ErrorCode::NotFound)
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "one\ntwo\n");
+        assert!(store.list(10).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn multi_edit_rejects_unequal_lists() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("notes.txt"), "a\n").unwrap();
+        let tool = MultiEditTool::new(trash(dir.path()));
+
+        let result = tool
+            .call(
+                list_args("notes.txt", &["a"], &["A", "B"]),
+                &ctx(dir.path()),
+            )
+            .await;
+
+        assert_eq!(
+            result.error().map(|error| error.code),
+            Some(keel_core::ErrorCode::InvalidArguments)
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("notes.txt")).unwrap(),
+            "a\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn multi_edit_requires_a_read() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("notes.txt"), "abc").unwrap();
+        let tool = MultiEditTool::new(trash(dir.path())).with_ledger(ReadLedger::new());
+
+        let result = tool
+            .call(list_args("notes.txt", &["a"], &["z"]), &ctx(dir.path()))
+            .await;
+
+        assert_eq!(
+            result.error().map(|error| error.code),
+            Some(keel_core::ErrorCode::InvalidArguments)
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("notes.txt")).unwrap(),
+            "abc"
+        );
+    }
+
+    #[tokio::test]
+    async fn multi_edit_normalizes_line_endings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("crlf.txt");
+        std::fs::write(&path, "one\r\ntwo\r\nthree\r\n").unwrap();
+        let ledger = ReadLedger::new();
+        ReadFileTool::new()
+            .with_ledger(ledger.clone())
+            .call(args(&[("path", "crlf.txt")]), &ctx(dir.path()))
+            .await;
+        let tool = MultiEditTool::new(trash(dir.path())).with_ledger(ledger);
+
+        let result = tool
+            .call(
+                list_args("crlf.txt", &["two\nthree"], &["TWO\nTHREE"]),
+                &ctx(dir.path()),
+            )
+            .await;
+
+        assert!(content(&result).contains("line endings normalized"));
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "one\r\nTWO\r\nTHREE\r\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn multi_edit_can_replace_all() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notes.txt");
+        std::fs::write(&path, "x\nx\n").unwrap();
+        let tool = MultiEditTool::new(trash(dir.path()));
+
+        let mut args = list_args("notes.txt", &["x"], &["y"]);
+        args.insert("replace_all", ArgValue::Boolean(true));
+        let result = tool.call(args, &ctx(dir.path())).await;
+
+        assert!(content(&result).contains("2 replacement"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "y\ny\n");
     }
 }

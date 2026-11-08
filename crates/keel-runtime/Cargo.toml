@@ -10,6 +10,7 @@ description = "Turn driver, tool dispatch, permissions and context for the Keel 
 async-trait.workspace = true
 keel-core.workspace = true
 keel-policy.workspace = true
+regex.workspace = true
 serde.workspace = true
 sha2.workspace = true
 tokio.workspace = true

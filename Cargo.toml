@@ -25,6 +25,7 @@ keel-model-openai = { version = "0.1.0", path = "crates/keel-model-openai" }
 keel-policy = { version = "0.1.0", path = "crates/keel-policy" }
 keel-runtime = { version = "0.1.0", path = "crates/keel-runtime" }
 keel-testkit = { version = "0.1.0", path = "crates/keel-testkit" }
+regex = "1"
 reqwest = { version = "0.12", default-features = false, features = [
   "json",
   "stream",

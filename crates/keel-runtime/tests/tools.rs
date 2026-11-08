@@ -240,6 +240,65 @@ async fn code_search_rejects_a_non_boolean_case_flag() {
 }
 
 #[tokio::test]
+async fn code_search_supports_regex() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::write(
+        dir.path().join("src").join("main.rs"),
+        "fn main() {\n    let value = 1;\n}\n",
+    )
+    .unwrap();
+    let tool = CodeSearchTool::new();
+    let mut args = ToolArgs::new();
+    args.insert("query", ArgValue::String(r"fn\s+\w+".to_owned()));
+    args.insert("regex", ArgValue::Boolean(true));
+
+    let result = tool.call(args, &ctx(dir.path())).await;
+
+    assert!(result.is_success());
+    let content = result.content().unwrap();
+    assert!(content.contains("src/main.rs:1:"), "{content}");
+}
+
+#[tokio::test]
+async fn code_search_applies_the_case_flag_to_regex() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("main.rs"), "HELLO\n").unwrap();
+    let tool = CodeSearchTool::new();
+
+    let mut insensitive = ToolArgs::new();
+    insensitive.insert("query", ArgValue::String("hello".to_owned()));
+    insensitive.insert("regex", ArgValue::Boolean(true));
+    let result = tool.call(insensitive, &ctx(dir.path())).await;
+    assert!(result.is_success());
+    assert!(result.content().unwrap().contains("main.rs:1:"));
+
+    let mut sensitive = ToolArgs::new();
+    sensitive.insert("query", ArgValue::String("hello".to_owned()));
+    sensitive.insert("regex", ArgValue::Boolean(true));
+    sensitive.insert("case_sensitive", ArgValue::Boolean(true));
+    let result = tool.call(sensitive, &ctx(dir.path())).await;
+    assert!(result.is_success());
+    assert_eq!(result.content(), Some("no matches"));
+}
+
+#[tokio::test]
+async fn code_search_rejects_an_invalid_regex() {
+    let dir = tempfile::tempdir().unwrap();
+    let tool = CodeSearchTool::new();
+    let mut args = ToolArgs::new();
+    args.insert("query", ArgValue::String("(".to_owned()));
+    args.insert("regex", ArgValue::Boolean(true));
+
+    let result = tool.call(args, &ctx(dir.path())).await;
+
+    assert_eq!(
+        result.error().map(|error| error.code),
+        Some(ErrorCode::InvalidArguments)
+    );
+}
+
+#[tokio::test]
 async fn shell_runs_allowlisted_programs_without_a_shell() {
     let dir = tempfile::tempdir().unwrap();
     let tool = ShellTool::new(vec!["rustc".to_owned()]);
