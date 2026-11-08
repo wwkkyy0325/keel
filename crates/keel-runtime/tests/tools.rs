@@ -127,6 +127,39 @@ async fn read_file_reads_a_normal_file() {
 }
 
 #[tokio::test]
+async fn read_file_line_numbers_are_absolute() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("notes.txt"), "one\ntwo\nthree\n").unwrap();
+    let tool = ReadFileTool::new();
+    let mut args = ToolArgs::new();
+    args.insert("path", ArgValue::String("notes.txt".to_owned()));
+    args.insert("offset", ArgValue::Integer(2));
+    args.insert("limit", ArgValue::Integer(1));
+    args.insert("line_numbers", ArgValue::Boolean(true));
+
+    let result = tool.call(args, &ctx(dir.path())).await;
+
+    assert!(result.is_success());
+    assert_eq!(result.content(), Some("    2 | two\n"));
+}
+
+#[tokio::test]
+async fn read_file_rejects_a_non_boolean_line_numbers() {
+    let dir = tempfile::tempdir().unwrap();
+    let tool = ReadFileTool::new();
+    let mut args = ToolArgs::new();
+    args.insert("path", ArgValue::String("notes.txt".to_owned()));
+    args.insert("line_numbers", ArgValue::String("true".to_owned()));
+
+    let result = tool.call(args, &ctx(dir.path())).await;
+
+    assert_eq!(
+        result.error().map(|error| error.code),
+        Some(ErrorCode::InvalidArguments)
+    );
+}
+
+#[tokio::test]
 async fn read_file_truncates_a_file_over_the_limit() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("huge.log");

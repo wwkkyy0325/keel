@@ -94,7 +94,8 @@ impl Tool for ReadFileTool {
         ToolSchema {
             name: "read_file".to_owned(),
             description: "Read a UTF-8 text file from the workspace. `offset` is a 1-based line \
-                          number; `limit` is a line count."
+                          number; `limit` is a line count. `line_numbers` prefixes each line \
+                          with its number; the numbers are not part of the file."
                 .to_owned(),
             risk: RiskLevel::ReadOnly,
             params: vec![
@@ -111,6 +112,11 @@ impl Tool for ReadFileTool {
                 ParamSpec {
                     name: "limit".to_owned(),
                     kind: ParamKind::Integer,
+                    required: false,
+                },
+                ParamSpec {
+                    name: "line_numbers".to_owned(),
+                    kind: ParamKind::Boolean,
                     required: false,
                 },
             ],
@@ -171,6 +177,17 @@ impl Tool for ReadFileTool {
             }
             None => None,
         };
+        let line_numbers = match args.get("line_numbers") {
+            Some(keel_core::ArgValue::Boolean(value)) => *value,
+            Some(_) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "read_file",
+                    ToolError::invalid_arguments("argument `line_numbers` must be boolean"),
+                )
+            }
+            None => false,
+        };
         let resolved = resolve_path(&ctx.workspace_root, Path::new(path));
         // Bounded read: a log or archive larger than the limit yields its head
         // and a marker instead of an error, so the model can still work with
@@ -218,12 +235,14 @@ impl Tool for ReadFileTool {
                 ledger.record(&resolved, content.as_bytes(), full);
             }
         }
-        if truncated {
-            content.push_str(&format!(
+        let marker = if truncated {
+            format!(
                 "\n\n[truncated: the file is {len} bytes; showing the first \
                  {MAX_READ_FILE_BYTES} bytes]"
-            ));
-        }
+            )
+        } else {
+            String::new()
+        };
         if offset.is_some() || limit.is_some() {
             let start_line = offset.unwrap_or(1);
             let total = content.split_inclusive('\n').count();
@@ -247,6 +266,22 @@ impl Tool for ReadFileTool {
             }
             content = content[start..end].to_owned();
         }
+        if line_numbers {
+            let first = offset.unwrap_or(1);
+            let ends_with_newline = content.ends_with('\n');
+            let rendered = content
+                .lines()
+                .enumerate()
+                .map(|(index, line)| format!("{:>5} | {line}", first + index))
+                .collect::<Vec<_>>()
+                .join("\n");
+            content = if ends_with_newline && !rendered.is_empty() {
+                format!("{rendered}\n")
+            } else {
+                rendered
+            };
+        }
+        content.push_str(&marker);
         ToolResult::success(ctx.call_id, "read_file", content)
     }
 }
