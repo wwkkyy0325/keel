@@ -971,64 +971,46 @@ impl Tool for CodeSearchTool {
             None => 0,
         };
         let root = resolve_path(&ctx.workspace_root, Path::new(path));
-
-        let mut stack = vec![(root.clone(), 0usize)];
-        let mut matches: Vec<SearchMatch> = Vec::new();
-        let mut truncated = false;
-        while let Some((directory, depth)) = stack.pop() {
-            if matches.len() >= limit {
-                truncated = true;
-                break;
-            }
-            let mut entries = match tokio::fs::read_dir(&directory).await {
-                Ok(entries) => entries,
-                Err(_) => continue,
-            };
-            while let Ok(Some(entry)) = entries.next_entry().await {
-                if ctx.cancel.is_cancelled() {
-                    return ToolResult::failure(ctx.call_id, "code_search", ToolError::cancelled());
+        let workspace_root = ctx.workspace_root.clone();
+        let query = query.to_owned();
+        let needle = needle.clone();
+        let glob = glob.map(str::to_owned);
+        let cancel = ctx.cancel.clone();
+        let search = tokio::task::spawn_blocking(move || {
+            let mut matches: Vec<SearchMatch> = Vec::new();
+            let mut truncated = false;
+            let mut cancelled = false;
+            walk_workspace(&root, |entry_path| {
+                if cancel.is_cancelled() {
+                    cancelled = true;
+                    return false;
                 }
-                let file_type = match entry.file_type().await {
-                    Ok(file_type) => file_type,
-                    Err(_) => continue,
-                };
-                if file_type.is_symlink() {
-                    continue;
-                }
-                let entry_path = entry.path();
-                if file_type.is_dir() {
-                    if depth < MAX_SEARCH_DEPTH && !is_skipped_directory(&entry_path) {
-                        stack.push((entry_path, depth + 1));
-                    }
-                    continue;
-                }
-                if !file_type.is_file() {
-                    continue;
+                if matches.len() >= limit {
+                    truncated = true;
+                    return false;
                 }
                 let relative = entry_path
-                    .strip_prefix(&ctx.workspace_root)
-                    .unwrap_or(&entry_path);
-                if let Some(pattern) = glob {
-                    if !glob_matches(pattern, relative) {
-                        continue;
+                    .strip_prefix(&workspace_root)
+                    .unwrap_or(entry_path);
+                if let Some(glob) = &glob {
+                    if !glob_matches(glob, relative) {
+                        return true;
                     }
                 }
-                let metadata = match entry.metadata().await {
-                    Ok(metadata) => metadata,
-                    Err(_) => continue,
+                let Ok(metadata) = std::fs::metadata(entry_path) else {
+                    return true;
                 };
                 if metadata.len() > MAX_SEARCH_FILE_BYTES {
-                    continue;
+                    return true;
                 }
-                let bytes = match tokio::fs::read(&entry_path).await {
-                    Ok(bytes) => bytes,
-                    Err(_) => continue,
+                let Ok(bytes) = std::fs::read(entry_path) else {
+                    return true;
                 };
                 let Ok(text) = std::str::from_utf8(&bytes) else {
-                    continue;
+                    return true;
                 };
                 if text.contains('\0') {
-                    continue;
+                    return true;
                 }
                 let lines: Vec<&str> = text.lines().collect();
                 for (index, line) in lines.iter().enumerate() {
@@ -1040,7 +1022,7 @@ impl Tool for CodeSearchTool {
                         Some(pattern) => pattern.is_match(line),
                         None => {
                             if case_sensitive {
-                                line.contains(query)
+                                line.contains(query.as_str())
                             } else {
                                 line.to_lowercase().contains(&needle)
                             }
@@ -1083,10 +1065,23 @@ impl Tool for CodeSearchTool {
                         });
                     }
                 }
-                if truncated {
-                    break;
-                }
+                !truncated
+            });
+            (matches, truncated, cancelled)
+        })
+        .await;
+        let (mut matches, truncated, cancelled) = match search {
+            Ok(result) => result,
+            Err(_) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "code_search",
+                    ToolError::new(ErrorCode::Internal, "the search task failed", false),
+                )
             }
+        };
+        if cancelled {
+            return ToolResult::failure(ctx.call_id, "code_search", ToolError::cancelled());
         }
 
         matches.sort_by(|left, right| left.path.cmp(&right.path).then(left.line.cmp(&right.line)));
@@ -1226,66 +1221,59 @@ impl Tool for GlobTool {
             None => DEFAULT_GLOB_LIMIT,
         };
         let root = resolve_path(&ctx.workspace_root, Path::new(path));
-
-        let mut stack = vec![(root, 0usize)];
-        let mut found: Vec<(std::time::SystemTime, String)> = Vec::new();
-        let mut overflow = false;
-        while let Some((directory, depth)) = stack.pop() {
-            let mut entries = match tokio::fs::read_dir(&directory).await {
-                Ok(entries) => entries,
-                Err(_) => continue,
-            };
-            while let Ok(Some(entry)) = entries.next_entry().await {
-                if ctx.cancel.is_cancelled() {
-                    return ToolResult::failure(ctx.call_id, "glob", ToolError::cancelled());
-                }
-                let file_type = match entry.file_type().await {
-                    Ok(file_type) => file_type,
-                    Err(_) => continue,
-                };
-                if file_type.is_symlink() {
-                    continue;
-                }
-                let entry_path = entry.path();
-                if file_type.is_dir() {
-                    if depth < MAX_SEARCH_DEPTH && !is_skipped_directory(&entry_path) {
-                        stack.push((entry_path, depth + 1));
-                    }
-                    continue;
-                }
-                if !file_type.is_file() {
-                    continue;
+        let workspace_root = ctx.workspace_root.clone();
+        let cancel = ctx.cancel.clone();
+        let pattern_for_walk = pattern.clone();
+        let walk = tokio::task::spawn_blocking(move || {
+            let mut found: Vec<(std::time::SystemTime, String)> = Vec::new();
+            let mut overflow = false;
+            let mut cancelled = false;
+            walk_workspace(&root, |entry_path| {
+                if cancel.is_cancelled() {
+                    cancelled = true;
+                    return false;
                 }
                 let relative = entry_path
-                    .strip_prefix(&ctx.workspace_root)
-                    .unwrap_or(&entry_path);
+                    .strip_prefix(&workspace_root)
+                    .unwrap_or(entry_path);
                 let relative_text = relative.to_string_lossy().replace('\\', "/");
-                let matched = if pattern.contains('/') {
-                    glob_path_match(&pattern, &relative_text)
+                let matched = if pattern_for_walk.contains('/') {
+                    glob_path_match(&pattern_for_walk, &relative_text)
                 } else {
                     relative
                         .file_name()
                         .and_then(|name| name.to_str())
-                        .is_some_and(|name| wildcard_match(&pattern, name))
+                        .is_some_and(|name| wildcard_match(&pattern_for_walk, name))
                 };
                 if !matched {
-                    continue;
+                    return true;
                 }
-                let modified = entry
-                    .metadata()
-                    .await
+                let modified = std::fs::metadata(entry_path)
                     .ok()
                     .and_then(|metadata| metadata.modified().ok())
                     .unwrap_or(std::time::UNIX_EPOCH);
                 found.push((modified, relative_text));
                 if found.len() >= MAX_GLOB_COLLECTED {
                     overflow = true;
-                    break;
+                    return false;
                 }
+                true
+            });
+            (found, overflow, cancelled)
+        })
+        .await;
+        let (mut found, overflow, cancelled) = match walk {
+            Ok(result) => result,
+            Err(_) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "glob",
+                    ToolError::new(ErrorCode::Internal, "the glob task failed", false),
+                )
             }
-            if overflow {
-                break;
-            }
+        };
+        if cancelled {
+            return ToolResult::failure(ctx.call_id, "glob", ToolError::cancelled());
         }
 
         found.sort_by(|left, right| right.0.cmp(&left.0).then(left.1.cmp(&right.1)));
@@ -1349,6 +1337,41 @@ fn is_skipped_directory(path: &Path) -> bool {
                 | ".vscode"
         )
     )
+}
+
+/// Visits each regular file under `root`, skipping build directories and
+/// honouring `.gitignore`, `.ignore` and global git excludes. The visitor
+/// returns false to stop the walk.
+fn walk_workspace<F>(root: &Path, mut visit: F)
+where
+    F: FnMut(&Path) -> bool,
+{
+    let root_for_filter = root.to_path_buf();
+    let walker = ignore::WalkBuilder::new(root)
+        .hidden(false)
+        .git_ignore(true)
+        .git_global(true)
+        .git_exclude(true)
+        .ignore(true)
+        .require_git(false)
+        .max_depth(Some(MAX_SEARCH_DEPTH))
+        .sort_by_file_name(|left, right| left.cmp(right))
+        .filter_entry(move |entry| {
+            entry.path() == root_for_filter || !is_skipped_directory(entry.path())
+        })
+        .build();
+    for result in walker {
+        let Ok(entry) = result else {
+            continue;
+        };
+        if entry
+            .file_type()
+            .is_some_and(|file_type| file_type.is_file())
+            && !visit(entry.path())
+        {
+            break;
+        }
+    }
 }
 
 /// A glob without a separator matches the file name; one with a separator
