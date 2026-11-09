@@ -141,7 +141,10 @@ async fn read_file_line_numbers_are_absolute() {
     let result = tool.call(args, &ctx(dir.path())).await;
 
     assert!(result.is_success());
-    assert_eq!(result.content(), Some("    2 | two\n"));
+    assert_eq!(
+        result.content(),
+        Some("[file: 3 lines; showing 2-2]\n    2 | two\n")
+    );
 }
 
 #[tokio::test]
@@ -198,7 +201,95 @@ async fn read_file_returns_a_line_range_without_changing_its_bytes() {
     let result = tool.call(args, &ctx(dir.path())).await;
 
     assert!(result.is_success());
-    assert_eq!(result.content(), Some("two\r\nthree\r\n"));
+    assert_eq!(
+        result.content(),
+        Some("[file: 4 lines; showing 2-3]\ntwo\r\nthree\r\n")
+    );
+}
+
+#[tokio::test]
+async fn read_file_caps_a_long_default_read_and_names_the_rest() {
+    let dir = tempfile::tempdir().unwrap();
+    let text: String = (1..=1200).map(|line| format!("line {line}\n")).collect();
+    std::fs::write(dir.path().join("long.txt"), text).unwrap();
+    let ledger = ReadLedger::new();
+    let tool = ReadFileTool::new().with_ledger(ledger.clone());
+    let mut args = ToolArgs::new();
+    args.insert("path", ArgValue::String("long.txt".to_owned()));
+
+    let result = tool.call(args, &ctx(dir.path())).await;
+
+    assert!(result.is_success());
+    let content = result.content().unwrap();
+    assert!(content.starts_with("line 1\n"), "{content}");
+    assert!(content.contains("line 1000\n"), "the cap keeps 1000 lines");
+    assert!(
+        !content.contains("line 1001\n"),
+        "the cap stops at 1000 lines"
+    );
+    assert!(
+        content.contains("[showing lines 1-1000 of 1200; use offset=1001 to continue]"),
+        "{content}"
+    );
+    // The capped read is still a current read for an edit, but not a full
+    // read for a whole-file overwrite.
+    let bytes = std::fs::read(dir.path().join("long.txt")).unwrap();
+    let path = dir.path().join("long.txt");
+    assert_eq!(ledger.check(&path, &bytes), Ok(()));
+    assert!(ledger.check_full(&path, &bytes).is_err());
+}
+
+#[tokio::test]
+async fn a_long_file_read_in_ranges_can_be_rewritten() {
+    let dir = tempfile::tempdir().unwrap();
+    let text: String = (1..=1200).map(|line| format!("line {line}\n")).collect();
+    std::fs::write(dir.path().join("long.txt"), &text).unwrap();
+    let ledger = ReadLedger::new();
+    let read = ReadFileTool::new().with_ledger(ledger.clone());
+    let write = WriteFileTool::new(Arc::new(LocalTrashStore::new(dir.path().to_path_buf())))
+        .with_ledger(ledger.clone());
+
+    let mut first = ToolArgs::new();
+    first.insert("path", ArgValue::String("long.txt".to_owned()));
+    assert!(read.call(first, &ctx(dir.path())).await.is_success());
+    let blocked = write
+        .call(args("long.txt", "rewritten"), &ctx(dir.path()))
+        .await;
+    assert_eq!(
+        blocked.error().map(|error| error.code),
+        Some(ErrorCode::InvalidArguments)
+    );
+
+    let mut second = ToolArgs::new();
+    second.insert("path", ArgValue::String("long.txt".to_owned()));
+    second.insert("offset", ArgValue::Integer(1001));
+    assert!(read.call(second, &ctx(dir.path())).await.is_success());
+
+    let allowed = write
+        .call(args("long.txt", "rewritten"), &ctx(dir.path()))
+        .await;
+    assert!(allowed.is_success(), "{:?}", allowed.error());
+}
+
+#[tokio::test]
+async fn read_file_says_how_many_lines_the_file_has() {
+    let dir = tempfile::tempdir().unwrap();
+    let text: String = (1..=1200).map(|line| format!("line {line}\n")).collect();
+    std::fs::write(dir.path().join("long.txt"), text).unwrap();
+    let tool = ReadFileTool::new();
+    let mut args = ToolArgs::new();
+    args.insert("path", ArgValue::String("long.txt".to_owned()));
+    args.insert("offset", ArgValue::Integer(1001));
+
+    let result = tool.call(args, &ctx(dir.path())).await;
+
+    assert!(result.is_success());
+    let content = result.content().unwrap();
+    assert!(
+        content.starts_with("[file: 1200 lines; showing 1001-1200]\n"),
+        "{content}"
+    );
+    assert!(content.contains("line 1001\n"), "{content}");
 }
 
 #[tokio::test]

@@ -64,6 +64,10 @@ impl Tool for EchoTool {
 /// Files above this size are refused instead of being read into memory.
 const MAX_READ_FILE_BYTES: u64 = 8 * 1024 * 1024;
 
+/// A default read stops at this many lines. A long file would otherwise fill
+/// the working set in one call; the marker says how to read the rest.
+const MAX_READ_LINES: usize = 1000;
+
 /// Reads a UTF-8 text file from the workspace.
 pub struct ReadFileTool {
     ledger: Option<ReadLedger>,
@@ -95,7 +99,10 @@ impl Tool for ReadFileTool {
             name: "read_file".to_owned(),
             description: "Read a UTF-8 text file from the workspace. `offset` is a 1-based line \
                           number; `limit` is a line count. `line_numbers` prefixes each line \
-                          with its number; the numbers are not part of the file."
+                          with its number; the numbers are not part of the file. A read without \
+                          `offset` returns at most 1000 lines and names the range; a ranged read \
+                          starts with a `[file: N lines; showing a-b]` header. The header and the \
+                          numbers are not part of the file."
                 .to_owned(),
             risk: RiskLevel::ReadOnly,
             params: vec![
@@ -229,21 +236,57 @@ impl Tool for ReadFileTool {
                 );
             }
         };
+        // A default read is capped by lines as well as bytes. The whole loaded
+        // text is still what the ledger records: the coverage flag, not the
+        // digest, is what marks the read as partial.
+        let loaded_lines = content.split_inclusive('\n').count();
+        let ranged = offset.is_some() || limit.is_some();
+        let line_truncated = !ranged && loaded_lines > MAX_READ_LINES;
         if let Some(ledger) = &self.ledger {
-            if !lossy {
-                let full = offset.is_none() && limit.is_none() && !truncated;
-                ledger.record(&resolved, content.as_bytes(), full);
+            if !lossy && !ranged {
+                if truncated {
+                    ledger.record(&resolved, content.as_bytes(), false);
+                } else if line_truncated {
+                    ledger.record_range(
+                        &resolved,
+                        content.as_bytes(),
+                        1,
+                        MAX_READ_LINES,
+                        loaded_lines,
+                    );
+                } else {
+                    ledger.record(&resolved, content.as_bytes(), true);
+                }
             }
         }
-        let marker = if truncated {
-            format!(
+        if line_truncated {
+            let kept: usize = content
+                .split_inclusive('\n')
+                .take(MAX_READ_LINES)
+                .map(str::len)
+                .sum();
+            content.truncate(kept);
+        }
+        let mut marker = String::new();
+        if truncated {
+            marker.push_str(&format!(
                 "\n\n[truncated: the file is {len} bytes; showing the first \
                  {MAX_READ_FILE_BYTES} bytes]"
-            )
-        } else {
-            String::new()
-        };
-        if offset.is_some() || limit.is_some() {
+            ));
+        }
+        if line_truncated {
+            let total = if truncated {
+                format!("at least {loaded_lines}")
+            } else {
+                loaded_lines.to_string()
+            };
+            marker.push_str(&format!(
+                "\n\n[showing lines 1-{MAX_READ_LINES} of {total}; use offset={} to continue]",
+                MAX_READ_LINES + 1
+            ));
+        }
+        let mut header = String::new();
+        if ranged {
             let start_line = offset.unwrap_or(1);
             let total = content.split_inclusive('\n').count();
             if start_line > total && !content.is_empty() {
@@ -258,13 +301,39 @@ impl Tool for ReadFileTool {
                 start += segment.len();
             }
             let mut end = start;
+            let mut taken_lines = 0usize;
             for (taken, segment) in content[start..].split_inclusive('\n').enumerate() {
                 if limit.is_some_and(|max| taken >= max) {
                     break;
                 }
                 end += segment.len();
+                taken_lines += 1;
+            }
+            if let Some(ledger) = &self.ledger {
+                if !lossy && !truncated && taken_lines > 0 {
+                    ledger.record_range(
+                        &resolved,
+                        content.as_bytes(),
+                        start_line,
+                        start_line + taken_lines - 1,
+                        total,
+                    );
+                } else {
+                    ledger.record(&resolved, content.as_bytes(), false);
+                }
             }
             content = content[start..end].to_owned();
+            if taken_lines > 0 {
+                let total = if truncated {
+                    format!("at least {total}")
+                } else {
+                    total.to_string()
+                };
+                header = format!(
+                    "[file: {total} lines; showing {start_line}-{}]\n",
+                    start_line + taken_lines - 1
+                );
+            }
         }
         if line_numbers {
             let first = offset.unwrap_or(1);
@@ -280,6 +349,9 @@ impl Tool for ReadFileTool {
             } else {
                 rendered
             };
+        }
+        if !header.is_empty() {
+            content.insert_str(0, &header);
         }
         content.push_str(&marker);
         ToolResult::success(ctx.call_id, "read_file", content)

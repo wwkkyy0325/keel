@@ -137,12 +137,14 @@ impl AcceptanceVerifier {
             cwd: &self.root,
             timeout: COMMAND_TIMEOUT,
         };
+        let started = std::time::Instant::now();
         let output = match command::run(spec, &CancelToken::new()).await {
             Ok(output) => output,
             Err(error) => return failed(item_id, verifier, error.to_string()),
         };
+        let elapsed = started.elapsed().as_secs_f64();
         let expected = expected_exit.unwrap_or(0);
-        if output.exit_code == Some(expected) {
+        let mut evidence = if output.exit_code == Some(expected) {
             Evidence {
                 item_id: item_id.to_owned(),
                 verifier: verifier.to_owned(),
@@ -158,7 +160,13 @@ impl AcceptanceVerifier {
                     output.exit_code, output.output
                 ),
             )
-        }
+        };
+        // A check's cost is part of its report: it tells a host whether the
+        // full suite is affordable on this workspace.
+        evidence
+            .detail
+            .push_str(&format!("\n[duration: {elapsed:.2} s]"));
+        evidence
     }
 
     async fn verify_file_hash(&self, item_id: &str, path: &Path, expected: &str) -> Evidence {

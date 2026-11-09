@@ -2350,3 +2350,18 @@
   refused. ADR 0030 records the contract.
 - The shell allowlist is unchanged; only the acceptance verifier accepts a
   workspace path.
+
+### Read paging and check timing (2026-11-09)
+
+- `read_file` without `offset` returns at most 1000 lines and names the rest
+  (`[showing lines 1-1000 of N; use offset=1001 to continue]`). A ranged read
+  starts with a display-only `[file: N lines; showing a-b]` header.
+- The read ledger records 1-based line ranges; ranges that cover every line
+  count as a full read, so a long file can be paged and then rewritten.
+  Overlapping ranges merge, an edit drops them unless the read was full, and a
+  byte-truncated read never contributes. ADR 0031.
+- A command or test item reports its own run time as
+  `[duration: 0.42 s]` in the evidence detail, on pass and on failure. ADR
+  0032.
+- The schema description and the tool tests cover both; the ledger gained four
+  range tests and the tools two paging tests.

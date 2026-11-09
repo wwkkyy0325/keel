@@ -153,6 +153,13 @@ async fn command_and_test_items_run_allowlisted_programs() {
     assert_eq!(report.evidence[1].outcome, EvidenceOutcome::Passed);
     assert_eq!(report.evidence[2].outcome, EvidenceOutcome::Failed);
     assert_eq!(report.required_failed, vec!["wrong-exit".to_owned()]);
+    for evidence in &report.evidence {
+        assert!(
+            evidence.detail.contains("[duration: "),
+            "{}",
+            evidence.detail
+        );
+    }
 }
 
 #[tokio::test]
