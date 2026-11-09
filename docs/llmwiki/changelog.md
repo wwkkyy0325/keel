@@ -2376,3 +2376,13 @@
   b.txt`.
 - Two tests: a 1.2 MB file is searched, and a 9 MiB file is named while a
   small file still matches.
+
+### The read cap covers every read (2026-11-09)
+
+- The 1000-line guard only applied to a read without `offset`. `read_file`
+  with `offset: 1` and no `limit` returned the whole file, so the guard was
+  one parameter away from being bypassed.
+- Every read now stops at 1000 lines. A range that runs past the cap ends with
+  `[stopped after 1000 lines; use offset=N to continue]`, and a `limit` above
+  1000 is capped the same way.
+- One test covers both an absent and an oversized `limit`.

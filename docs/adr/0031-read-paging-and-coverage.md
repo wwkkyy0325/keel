@@ -17,9 +17,12 @@ never be rewritten even after reading all of it in ranges.
 
 ## Decision
 
-1. A read without `offset` returns at most 1000 lines. The marker names the
-   range and the next offset: `[showing lines 1-1000 of 4213; use offset=1001
-   to continue]`.
+1. Any read returns at most 1000 lines. A read without `offset` stops at the
+   cap and names the next offset: `[showing lines 1-1000 of 4213; use
+   offset=1001 to continue]`. A range with no `limit`, or with a `limit` above
+   1000, stops at the same cap with
+   `[stopped after 1000 lines; use offset=1001 to continue]`, so the guard
+   cannot be bypassed by passing an offset.
 2. A ranged read starts with a display-only header:
    `[file: 4213 lines; showing 1001-1200]`. When the file was cut at the byte
    limit the count reads `at least N`.

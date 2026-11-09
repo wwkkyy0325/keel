@@ -302,13 +302,16 @@ impl Tool for ReadFileTool {
             }
             let mut end = start;
             let mut taken_lines = 0usize;
+            // The cap is a guard, not a suggestion: a range with no `limit`, or
+            // one that asks for more, stops at the same 1000 lines.
             for (taken, segment) in content[start..].split_inclusive('\n').enumerate() {
-                if limit.is_some_and(|max| taken >= max) {
+                if taken >= MAX_READ_LINES || limit.is_some_and(|max| taken >= max) {
                     break;
                 }
                 end += segment.len();
                 taken_lines += 1;
             }
+            let cut = taken_lines == MAX_READ_LINES && start_line + taken_lines - 1 < total;
             if let Some(ledger) = &self.ledger {
                 if !lossy && !truncated && taken_lines > 0 {
                     ledger.record_range(
@@ -323,6 +326,12 @@ impl Tool for ReadFileTool {
                 }
             }
             content = content[start..end].to_owned();
+            if cut {
+                marker.push_str(&format!(
+                    "\n\n[stopped after {MAX_READ_LINES} lines; use offset={} to continue]",
+                    start_line + taken_lines
+                ));
+            }
             if taken_lines > 0 {
                 let total = if truncated {
                     format!("at least {total}")

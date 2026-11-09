@@ -343,6 +343,31 @@ async fn code_search_searches_a_file_over_one_megabyte() {
 }
 
 #[tokio::test]
+async fn a_range_cannot_bypass_the_line_cap() {
+    let dir = tempfile::tempdir().unwrap();
+    let text: String = (1..=1200).map(|line| format!("line {line}\n")).collect();
+    std::fs::write(dir.path().join("long.txt"), text).unwrap();
+    let tool = ReadFileTool::new();
+
+    for limit in [None, Some(5000)] {
+        let mut args = ToolArgs::new();
+        args.insert("path", ArgValue::String("long.txt".to_owned()));
+        args.insert("offset", ArgValue::Integer(1));
+        if let Some(limit) = limit {
+            args.insert("limit", ArgValue::Integer(limit));
+        }
+        let result = tool.call(args, &ctx(dir.path())).await;
+        let content = result.content().unwrap();
+        assert!(content.contains("line 1000\n"), "{content}");
+        assert!(!content.contains("line 1001\n"), "{content}");
+        assert!(
+            content.contains("[stopped after 1000 lines; use offset=1001 to continue]"),
+            "{content}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn read_file_says_how_many_lines_the_file_has() {
     let dir = tempfile::tempdir().unwrap();
     let text: String = (1..=1200).map(|line| format!("line {line}\n")).collect();
