@@ -150,6 +150,10 @@ fn control_tool_json() -> Value {
                         "required": ["id", "label"]
                     }
                 },
+                "recommended": {
+                    "type": "string",
+                    "description": "id of the option you recommend, when you have one"
+                },
                 "timeout_ms": { "type": "integer" }
             },
             "required": ["kind", "prompt"]
@@ -241,6 +245,14 @@ pub fn parse_interaction_json(value: &Value) -> Result<InteractionRequest, Model
                 .map(str::to_owned);
             request.options.push(parsed);
         }
+    }
+    if let Some(recommended) = value.get("recommended") {
+        request.recommended = Some(
+            recommended
+                .as_str()
+                .ok_or_else(|| invalid("interaction recommendation must be a string"))?
+                .to_owned(),
+        );
     }
     if let Some(timeout) = value.get("timeout_ms") {
         request.timeout_ms = Some(
@@ -621,7 +633,7 @@ mod tests {
                 "index": 0,
                 "delta": {
                     "type": "input_json_delta",
-                    "partial_json": "{\"kind\":\"clarify\",\"prompt\":\"which?\"}"
+                    "partial_json": "{\"kind\":\"clarify\",\"prompt\":\"which?\",\"recommended\":\"a\"}"
                 }
             }))
             .unwrap();
@@ -632,6 +644,7 @@ mod tests {
             ModelChunk::Interaction(request) => {
                 assert_eq!(request.kind, InteractionKind::Clarify);
                 assert_eq!(request.prompt, "which?");
+                assert_eq!(request.recommended.as_deref(), Some("a"));
             }
             other => panic!("unexpected chunk: {other:?}"),
         }

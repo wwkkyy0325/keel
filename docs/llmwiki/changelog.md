@@ -2386,3 +2386,14 @@
   `[stopped after 1000 lines; use offset=N to continue]`, and a `limit` above
   1000 is capped the same way.
 - One test covers both an absent and an oversized `limit`.
+
+### A choice can name its recommended option (2026-11-09)
+
+- `InteractionRequest` carried a `default` field that no provider parsed and no
+  host read. It is now `recommended: Option<String>`, the id of the option the
+  model would pick.
+- The control tool accepts `recommended`; both providers parse it and advertise
+  it in the schema. A typo'd id marks nothing rather than failing the call.
+- Keelson's desktop marks the option with a badge; the answer is one click
+  instead of a read of every label. ADR 0033.
+- Tests: the OpenAI and Anthropic parse tests assert the field.

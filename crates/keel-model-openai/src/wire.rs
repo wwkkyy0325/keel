@@ -107,6 +107,14 @@ pub fn parse_interaction_json(value: &Value) -> Result<InteractionRequest, Model
             request.options.push(parsed);
         }
     }
+    if let Some(recommended) = value.get("recommended") {
+        request.recommended = Some(
+            recommended
+                .as_str()
+                .ok_or_else(|| invalid("interaction recommendation must be a string"))?
+                .to_owned(),
+        );
+    }
     if let Some(timeout) = value.get("timeout_ms") {
         request.timeout_ms = Some(
             timeout
@@ -276,6 +284,10 @@ fn control_tool_json() -> Value {
                             },
                             "required": ["id", "label"]
                         }
+                    },
+                    "recommended": {
+                        "type": "string",
+                        "description": "id of the option you recommend, when you have one"
                     },
                     "timeout_ms": { "type": "integer" }
                 },

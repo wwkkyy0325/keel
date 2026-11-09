@@ -102,7 +102,9 @@ pub struct InteractionRequest {
     pub kind: InteractionKind,
     pub prompt: String,
     pub options: Vec<InteractionOption>,
-    pub default: Option<String>,
+    /// Id of the option the model recommends, when it has one. Hosts mark it
+    /// so the answer is one click rather than a read of every label.
+    pub recommended: Option<String>,
     pub timeout_ms: Option<u64>,
     pub correlation: Option<ToolCallId>,
     /// Path the permission request applies to, when the request has one. Hosts
@@ -118,7 +120,7 @@ impl InteractionRequest {
             kind,
             prompt: prompt.into(),
             options: Vec::new(),
-            default: None,
+            recommended: None,
             timeout_ms: None,
             correlation: None,
             path: None,

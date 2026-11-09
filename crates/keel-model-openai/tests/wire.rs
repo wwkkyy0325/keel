@@ -182,6 +182,7 @@ fn control_payload_maps_to_an_interaction() {
             { "id": "one", "label": "One" },
             { "id": "two", "label": "Two", "description": "the second" }
         ],
+        "recommended": "two",
         "timeout_ms": 5000
     }))
     .unwrap();
@@ -192,6 +193,7 @@ fn control_payload_maps_to_an_interaction() {
         interaction.options[1].description.as_deref(),
         Some("the second")
     );
+    assert_eq!(interaction.recommended.as_deref(), Some("two"));
     assert_eq!(interaction.timeout_ms, Some(5000));
 }
 
