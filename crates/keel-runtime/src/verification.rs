@@ -91,6 +91,31 @@ impl AcceptanceVerifier {
         }
     }
 
+    /// Whether a check may run `program`. A bare name must be on the
+    /// allowlist. A project interpreter is named by an absolute path inside
+    /// the workspace: the workspace owns the file, and the file name still has
+    /// to be allowlisted, so `.venv/bin/python` runs but `.venv/bin/anything`
+    /// does not.
+    fn program_allowed(&self, program: &str) -> bool {
+        if command::is_allowed(program, &self.allowlist) {
+            return true;
+        }
+        let path = Path::new(program);
+        if !path.is_absolute()
+            || path
+                .components()
+                .any(|component| component == Component::ParentDir)
+            || !path.starts_with(&self.root)
+            || !path.is_file()
+        {
+            return false;
+        }
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            return false;
+        };
+        command::is_allowed(name, &self.allowlist)
+    }
+
     async fn verify_command(
         &self,
         item_id: &str,
@@ -99,7 +124,7 @@ impl AcceptanceVerifier {
         args: &[String],
         expected_exit: Option<i32>,
     ) -> Evidence {
-        if !command::is_allowed(program, &self.allowlist) {
+        if !self.program_allowed(program) {
             return failed(
                 item_id,
                 verifier,

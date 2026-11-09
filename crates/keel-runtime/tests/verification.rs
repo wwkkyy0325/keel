@@ -175,6 +175,82 @@ async fn commands_outside_the_allowlist_are_rejected() {
     assert!(report.evidence[0].detail.contains("not allowlisted"));
 }
 
+/// Paths used by the workspace-program tests. The copied test binary stands in
+/// for a project interpreter: it exists, it is executable and `--help` exits 0.
+fn interpreter_name() -> &'static str {
+    if cfg!(windows) {
+        "python.exe"
+    } else {
+        "python"
+    }
+}
+
+#[tokio::test]
+async fn a_workspace_program_path_runs_when_its_name_is_allowlisted() {
+    let dir = tempfile::tempdir().unwrap();
+    let program = dir.path().join(interpreter_name());
+    std::fs::copy(std::env::current_exe().unwrap(), &program).unwrap();
+    let verifier = AcceptanceVerifier::new(dir.path());
+    let items = vec![item(
+        "venv",
+        true,
+        VerifySpec::Test {
+            program: program.to_string_lossy().into_owned(),
+            args: vec!["--help".to_owned()],
+        },
+    )];
+
+    let report = verifier.verify(&items).await;
+
+    assert_eq!(report.evidence[0].outcome, EvidenceOutcome::Passed);
+    assert!(report.required_failed.is_empty());
+}
+
+#[tokio::test]
+async fn a_program_path_outside_the_workspace_is_rejected() {
+    let workspace = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let program = outside.path().join(interpreter_name());
+    std::fs::copy(std::env::current_exe().unwrap(), &program).unwrap();
+    let verifier = AcceptanceVerifier::new(workspace.path());
+    let items = vec![item(
+        "escape",
+        true,
+        VerifySpec::Test {
+            program: program.to_string_lossy().into_owned(),
+            args: vec!["--help".to_owned()],
+        },
+    )];
+
+    let report = verifier.verify(&items).await;
+
+    assert_eq!(report.required_failed, vec!["escape".to_owned()]);
+    assert!(report.evidence[0].detail.contains("not allowlisted"));
+}
+
+#[tokio::test]
+async fn a_workspace_program_path_with_other_name_is_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let program = dir
+        .path()
+        .join(if cfg!(windows) { "ruby.exe" } else { "ruby" });
+    std::fs::copy(std::env::current_exe().unwrap(), &program).unwrap();
+    let verifier = AcceptanceVerifier::new(dir.path());
+    let items = vec![item(
+        "unlisted",
+        true,
+        VerifySpec::Test {
+            program: program.to_string_lossy().into_owned(),
+            args: vec!["--help".to_owned()],
+        },
+    )];
+
+    let report = verifier.verify(&items).await;
+
+    assert_eq!(report.required_failed, vec!["unlisted".to_owned()]);
+    assert!(report.evidence[0].detail.contains("not allowlisted"));
+}
+
 #[tokio::test]
 async fn human_and_unverifiable_items_remain_unverified() {
     let dir = tempfile::tempdir().unwrap();

@@ -2334,3 +2334,19 @@
   prepared call. A dispatch test asserts `text=hi` survives a denial.
 - Found by Keelson's real-task run on a copied GameVault core: every denied
   `shell` row had an empty argument column.
+
+### Workspace interpreter paths run (2026-11-09)
+
+- A check may name its program by an absolute path inside the workspace when
+  the file name alone is allowlisted, with no `..` component. A project venv's
+  `.venv/bin/python` now runs; a path outside the workspace, a relative path
+  and an unlisted file name are still refused.
+- Found while auditing Keelson's coding rig: the Python check preferred the
+  project venv, `is_allowed` rejected every path, and every turn in a project
+  with a venv failed a required check with `not allowlisted` before the code
+  was considered.
+- Three contract tests: a workspace path whose name is allowlisted runs, a
+  path outside the workspace is refused, a workspace path with another name is
+  refused. ADR 0030 records the contract.
+- The shell allowlist is unchanged; only the acceptance verifier accepts a
+  workspace path.
