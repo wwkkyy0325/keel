@@ -680,7 +680,9 @@ const MAX_DIR_ENTRIES: i64 = 1000;
 const MAX_DIR_OUTPUT_BYTES: usize = 32 * 1024;
 const DEFAULT_SEARCH_RESULTS: i64 = 100;
 const MAX_SEARCH_RESULTS: i64 = 500;
-const MAX_SEARCH_FILE_BYTES: u64 = 1024 * 1024;
+/// Same ceiling as `read_file`: a file that cannot be read cannot be
+/// searched, and a skipped file is named in the output instead of vanishing.
+const MAX_SEARCH_FILE_BYTES: u64 = MAX_READ_FILE_BYTES;
 const MAX_SEARCH_DEPTH: usize = 32;
 const MAX_SEARCH_LINE_CHARS: usize = 240;
 const MAX_SEARCH_OUTPUT_BYTES: usize = 32 * 1024;
@@ -875,7 +877,8 @@ impl Tool for CodeSearchTool {
             name: "code_search".to_owned(),
             description: "Search UTF-8 files for a substring or regex, optionally case-sensitive \
                           and filtered by a file-name glob. `.gitignore` and common build \
-                          directories are skipped."
+                          directories are skipped. A file above 8 MiB is not searched and is \
+                          named in the output, like `read_file`."
                 .to_owned(),
             risk: RiskLevel::ReadOnly,
             params: vec![
@@ -1053,6 +1056,7 @@ impl Tool for CodeSearchTool {
             let mut matches: Vec<SearchMatch> = Vec::new();
             let mut truncated = false;
             let mut cancelled = false;
+            let mut skipped: Vec<String> = Vec::new();
             walk_workspace(&root, |entry_path| {
                 if cancel.is_cancelled() {
                     cancelled = true;
@@ -1074,6 +1078,7 @@ impl Tool for CodeSearchTool {
                     return true;
                 };
                 if metadata.len() > MAX_SEARCH_FILE_BYTES {
+                    skipped.push(display_relative(relative).to_owned());
                     return true;
                 }
                 let Ok(bytes) = std::fs::read(entry_path) else {
@@ -1140,10 +1145,10 @@ impl Tool for CodeSearchTool {
                 }
                 !truncated
             });
-            (matches, truncated, cancelled)
+            (matches, truncated, cancelled, skipped)
         })
         .await;
-        let (mut matches, truncated, cancelled) = match search {
+        let (mut matches, truncated, cancelled, skipped) = match search {
             Ok(result) => result,
             Err(_) => {
                 return ToolResult::failure(
@@ -1179,6 +1184,19 @@ impl Tool for CodeSearchTool {
             output.push_str(&format!("\n... stopped after {limit} matches"));
         } else if output_truncated {
             output.push_str("\n... output truncated at the byte limit");
+        }
+        if !skipped.is_empty() {
+            let named: Vec<&str> = skipped.iter().take(3).map(String::as_str).collect();
+            output.push_str(&format!(
+                "\n... {} files above {MAX_SEARCH_FILE_BYTES} bytes were not searched: {}{}",
+                skipped.len(),
+                named.join(", "),
+                if skipped.len() > named.len() {
+                    ", ..."
+                } else {
+                    ""
+                }
+            ));
         }
         ToolResult::success(ctx.call_id, "code_search", output)
     }

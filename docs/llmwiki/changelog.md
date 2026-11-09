@@ -2365,3 +2365,14 @@
   0032.
 - The schema description and the tool tests cover both; the ledger gained four
   range tests and the tools two paging tests.
+
+### Search reaches the files a read can reach (2026-11-09)
+
+- `code_search` skipped every file above 1 MiB without saying so. A 40,000-line
+  module is about 1.2 MB, so the model could read and edit it but could not
+  search it, and a search that found nothing there looked like an empty file.
+- The limit is now the same 8 MiB as `read_file`, and a skipped file is named
+  in the output: `... N files above 8388608 bytes were not searched: a.txt,
+  b.txt`.
+- Two tests: a 1.2 MB file is searched, and a 9 MiB file is named while a
+  small file still matches.

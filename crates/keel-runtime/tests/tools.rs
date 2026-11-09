@@ -6,9 +6,9 @@ use keel_core::{
     AccessKind, ArgValue, CancelToken, ErrorCode, Tool, ToolArgs, ToolCallId, ToolCtx, TurnId,
 };
 use keel_runtime::{
-    ApplyEditsTool, CodeSearchTool, GlobTool, ListDirTool, ListTrashTool, LocalBackgroundTasks,
-    LocalTrashStore, ReadFileTool, ReadLedger, RestoreFileTool, ShellTool, TrashStore,
-    WriteFileTool,
+    ApplyEditsTool, CodeSearchTool, EditFileTool, GlobTool, ListDirTool, ListTrashTool,
+    LocalBackgroundTasks, LocalTrashStore, ReadFileTool, ReadLedger, RestoreFileTool, ShellTool,
+    TrashStore, WriteFileTool,
 };
 
 fn ctx(root: &Path) -> ToolCtx {
@@ -269,6 +269,77 @@ async fn a_long_file_read_in_ranges_can_be_rewritten() {
         .call(args("long.txt", "rewritten"), &ctx(dir.path()))
         .await;
     assert!(allowed.is_success(), "{:?}", allowed.error());
+}
+
+#[tokio::test]
+async fn a_long_file_can_be_read_in_a_range_and_edited() {
+    let dir = tempfile::tempdir().unwrap();
+    let text: String = (1..=40_000).map(|line| format!("line {line}\n")).collect();
+    std::fs::write(dir.path().join("legacy.txt"), text).unwrap();
+    let ledger = ReadLedger::new();
+    let read = ReadFileTool::new().with_ledger(ledger.clone());
+    let edit = EditFileTool::new(Arc::new(LocalTrashStore::new(dir.path().to_path_buf())))
+        .with_ledger(ledger.clone());
+
+    let mut range = ToolArgs::new();
+    range.insert("path", ArgValue::String("legacy.txt".to_owned()));
+    range.insert("offset", ArgValue::Integer(20_000));
+    range.insert("limit", ArgValue::Integer(50));
+    let result = read.call(range, &ctx(dir.path())).await;
+    let content = result.content().unwrap();
+    assert!(
+        content.starts_with("[file: 40000 lines; showing 20000-20049]\n"),
+        "{}",
+        &content[..80]
+    );
+    assert!(content.contains("line 20010\n"), "the range is returned");
+
+    let mut replacement = ToolArgs::new();
+    replacement.insert("path", ArgValue::String("legacy.txt".to_owned()));
+    replacement.insert("old", ArgValue::String("line 20010\n".to_owned()));
+    replacement.insert("new", ArgValue::String("edited 20010\n".to_owned()));
+    let result = edit.call(replacement, &ctx(dir.path())).await;
+
+    assert!(result.is_success(), "{:?}", result.error());
+    let text = std::fs::read_to_string(dir.path().join("legacy.txt")).unwrap();
+    assert!(text.contains("edited 20010\n"));
+    assert_eq!(text.lines().count(), 40_000);
+}
+
+#[tokio::test]
+async fn code_search_names_a_file_above_the_size_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = std::fs::File::create(dir.path().join("huge.txt")).unwrap();
+    file.set_len(9 * 1024 * 1024).unwrap();
+    drop(file);
+    std::fs::write(dir.path().join("small.txt"), "needle\n").unwrap();
+    let tool = CodeSearchTool::new();
+    let mut args = ToolArgs::new();
+    args.insert("query", ArgValue::String("needle".to_owned()));
+
+    let result = tool.call(args, &ctx(dir.path())).await;
+
+    let content = result.content().unwrap();
+    assert!(content.contains("small.txt:1:"), "{content}");
+    assert!(content.contains("huge.txt"), "{content}");
+    assert!(content.contains("were not searched"), "{content}");
+}
+
+#[tokio::test]
+async fn code_search_searches_a_file_over_one_megabyte() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut text = "x".repeat(1_200_000);
+    text.push_str("\nthe needle is here\n");
+    std::fs::write(dir.path().join("legacy.txt"), text).unwrap();
+    let tool = CodeSearchTool::new();
+    let mut args = ToolArgs::new();
+    args.insert("query", ArgValue::String("needle".to_owned()));
+
+    let result = tool.call(args, &ctx(dir.path())).await;
+
+    let content = result.content().unwrap();
+    assert!(content.contains("legacy.txt:2:"), "{content}");
+    assert!(!content.contains("were not searched"), "{content}");
 }
 
 #[tokio::test]
