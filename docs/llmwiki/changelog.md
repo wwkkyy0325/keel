@@ -2480,3 +2480,28 @@
   unchanged.
 - Test: a large same-topic segment seals before the turn cap. ADR 0038;
   released as 0.2.1.
+
+### Session control, background views and acceptance start (2026-11-10)
+
+- A closed task list resets at the next user turn instead of rejecting the
+  session's second task (ADR 0040); execute inside a write root runs without
+  a prompt under `workspace_auto` (ADR 0041); the base permission level is
+  runtime-mutable and a switch drops session grants.
+- `verification_started` precedes the acceptance plan (ADR 0042) so a host can
+  show a waiting state after the answer is written.
+- The shell takes a per-call `timeout_ms` clamped to two hours (ADR 0043), and
+  `LocalBackgroundTasks::snapshot` gives a host a non-consuming view of
+  running and unreported background commands (ADR 0044).
+- Aggregate tool-result elision was measured and rejected; ADR 0039 records
+  the replay data (higher failure rate, 2.4x wall time).
+- Verification: full workspace tests, clippy and fmt pass; released as 0.2.2.
+
+### A rewrite keeps line endings (2026-11-10)
+
+- `write_file` now writes in the existing file's line-ending style when the
+  file contains a CRLF pair, reusing `with_line_ending` from the edit tools
+  (ADR 0045). A live turn's six-line change had shown as +142/-139 because the
+  model wrote LF into a CRLF file.
+- An LF file and a new file are written as given.
+- Tests: a CRLF file keeps CRLF for LF content; an LF file stays LF.
+  Released as 0.2.3.

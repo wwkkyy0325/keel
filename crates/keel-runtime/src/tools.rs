@@ -1748,7 +1748,8 @@ the command continues in the background; its result arrives before the next mode
 ///
 /// When the target already exists, the previous version is copied into the
 /// trash first. A failed backup aborts the write; there is no hard-delete
-/// fallback.
+/// fallback. A uniformly CRLF file keeps CRLF when the new content has plain
+/// LF newlines (ADR 0045).
 pub struct WriteFileTool {
     trash: Arc<dyn TrashStore>,
     ledger: Option<ReadLedger>,
@@ -1886,7 +1887,20 @@ impl Tool for WriteFileTool {
             }
         }
 
-        match tokio::fs::write(&resolved, content).await {
+        // A rewrite of a CRLF file keeps CRLF, so the diff shows the lines
+        // that changed instead of the whole file.
+        let content = match tokio::fs::read(&resolved).await {
+            Ok(existing)
+                if existing
+                    .windows(2)
+                    .any(|pair| pair[0] == b'\r' && pair[1] == b'\n') =>
+            {
+                with_line_ending(content, "\r\n")
+            }
+            _ => content.to_owned(),
+        };
+
+        match tokio::fs::write(&resolved, &content).await {
             Ok(()) => {
                 if let Some(ledger) = &self.ledger {
                     ledger.record(&resolved, content.as_bytes(), true);
@@ -3490,6 +3504,41 @@ mod file_tool_tests {
             std::fs::read_to_string(dir.path().join("fresh.txt")).unwrap(),
             "new"
         );
+    }
+
+    #[tokio::test]
+    async fn write_file_keeps_a_crlf_file_crlf() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notes.txt");
+        std::fs::write(&path, "one\r\ntwo\r\n").unwrap();
+        let tool = WriteFileTool::new(trash(dir.path()));
+
+        let written = tool
+            .call(
+                args(&[("path", "notes.txt"), ("content", "one\ntwo\nthree\n")]),
+                &ctx(dir.path()),
+            )
+            .await;
+        assert!(content(&written).contains("wrote"));
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "one\r\ntwo\r\nthree\r\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn write_file_leaves_an_lf_file_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notes.txt");
+        std::fs::write(&path, "one\ntwo\n").unwrap();
+        let tool = WriteFileTool::new(trash(dir.path()));
+
+        tool.call(
+            args(&[("path", "notes.txt"), ("content", "one\ntwo\nthree\n")]),
+            &ctx(dir.path()),
+        )
+        .await;
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "one\ntwo\nthree\n");
     }
 
     #[tokio::test]

@@ -3,6 +3,22 @@
 Kernel crates and the reference host share the workspace version. A derived
 project pins a version and updates deliberately; see `docs/kernel-contract.md`.
 
+## 0.2.3 — 2026-11-10
+
+### Kernel
+
+- `write_file` writes in the existing file's line-ending style when the file
+  contains a CRLF pair (ADR 0045), using the same `with_line_ending` the edit
+  tools already use. An LF file and a new file are written as given, so a
+  rewrite of a CRLF file no longer reads as a whole-file change.
+
+### Evidence
+
+- A live turn changed six lines of a CRLF file and the checkpoint reported
+  +142/−139; the content was right, the endings were LF.
+- New tests: a CRLF file keeps CRLF when the content is LF; an LF file is
+  written unchanged.
+
 ## 0.2.2 — 2026-11-10
 
 ### Kernel
