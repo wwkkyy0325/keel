@@ -11,7 +11,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 rust-version = "1.80"
 license = "Apache-2.0"
@@ -23,12 +23,12 @@ categories = ["development-tools", "command-line-utilities"]
 [workspace.dependencies]
 async-trait = "0.1"
 dotenvy = "0.15"
-keel-core = { version = "0.2.1", path = "crates/keel-core" }
-keel-model-anthropic = { version = "0.2.1", path = "crates/keel-model-anthropic" }
-keel-model-openai = { version = "0.2.1", path = "crates/keel-model-openai" }
-keel-policy = { version = "0.2.1", path = "crates/keel-policy" }
-keel-runtime = { version = "0.2.1", path = "crates/keel-runtime" }
-keel-testkit = { version = "0.2.1", path = "crates/keel-testkit" }
+keel-core = { version = "0.2.2", path = "crates/keel-core" }
+keel-model-anthropic = { version = "0.2.2", path = "crates/keel-model-anthropic" }
+keel-model-openai = { version = "0.2.2", path = "crates/keel-model-openai" }
+keel-policy = { version = "0.2.2", path = "crates/keel-policy" }
+keel-runtime = { version = "0.2.2", path = "crates/keel-runtime" }
+keel-testkit = { version = "0.2.2", path = "crates/keel-testkit" }
 regex = "1"
 reqwest = { version = "0.12", default-features = false, features = [
   "json",

@@ -28,7 +28,8 @@ pub struct PermissionEngine {
     /// Directory whose files are readable so the model can follow a spill
     /// marker. Defaults to `<workspace>/.keel/outputs`.
     outputs: PathBuf,
-    base_level: PermissionLevel,
+    /// Runtime-mutable so a host can switch level without reopening.
+    base_level: Mutex<PermissionLevel>,
     grants: Mutex<Vec<Grant>>,
 }
 
@@ -66,7 +67,7 @@ impl PermissionEngine {
             root,
             extra_roots: Mutex::new(Vec::new()),
             outputs,
-            base_level: level,
+            base_level: Mutex::new(level),
             grants: Mutex::new(Vec::new()),
         })
     }
@@ -164,8 +165,20 @@ impl PermissionEngine {
         if grants.iter().any(is_full_auto_grant) {
             PermissionLevel::FullAuto
         } else {
-            self.base_level
+            *self
+                .base_level
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
         }
+    }
+
+    /// Switches the base level for the rest of the session. Session grants
+    /// are unaffected; a host that wants a strict downgrade revokes them.
+    pub fn set_base_level(&self, level: PermissionLevel) {
+        *self
+            .base_level
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = level;
     }
 
     /// Session-level escalation approved by the user through an interaction.
@@ -304,13 +317,14 @@ impl PermissionGate for PermissionEngine {
             return PermissionDecision::Allow;
         }
 
-        match self.base_level {
+        let base_level = *self
+            .base_level
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match base_level {
             PermissionLevel::FullAuto => PermissionDecision::Allow,
             PermissionLevel::WorkspaceAuto => match scope_access {
                 Some(access) if permits(access, request.access) => PermissionDecision::Allow,
-                Some(_) if request.access == AccessKind::Execute => PermissionDecision::Confirm {
-                    reason: "execution requires confirmation".to_owned(),
-                },
                 Some(_) => PermissionDecision::Confirm {
                     reason: format!("`{}` is read-only in this root", resolved.display()),
                 },
@@ -325,13 +339,14 @@ impl PermissionGate for PermissionEngine {
     }
 }
 
-/// A read root allows reads only; a write root allows reads and writes.
-/// Execution is always a confirmation, wherever the path is.
+/// A read root allows reads only; a write root allows reads, writes and
+/// execution. The workspace root is a write root, so `workspace_auto` runs a
+/// command inside the workspace without a prompt; a read-only extra root and
+/// anything outside every root still confirm.
 fn permits(scope: AccessKind, requested: AccessKind) -> bool {
     match requested {
         AccessKind::Read => true,
-        AccessKind::Write => scope == AccessKind::Write,
-        AccessKind::Execute => false,
+        AccessKind::Write | AccessKind::Execute => scope == AccessKind::Write,
     }
 }
 
@@ -669,11 +684,47 @@ mod tests {
     }
 
     #[test]
-    fn execute_inside_requires_confirmation() {
+    fn execute_inside_a_write_root_is_allowed() {
         let (engine, dir) = engine(PermissionLevel::WorkspaceAuto);
         let inside = resolve_path(engine.root(), &dir.path().join("script.sh"));
-        assert!(matches!(
+        assert_eq!(
             engine.check(&request(AccessKind::Execute, &inside)),
+            PermissionDecision::Allow
+        );
+    }
+
+    #[test]
+    fn switching_the_level_applies_to_the_next_check() {
+        let (engine, _dir) = engine(PermissionLevel::WorkspaceAuto);
+        let outside = engine.root().join("..").join("outside.txt");
+        assert!(matches!(
+            engine.check(&request(AccessKind::Write, &outside)),
+            PermissionDecision::Confirm { .. }
+        ));
+        engine.set_base_level(PermissionLevel::FullAuto);
+        assert_eq!(
+            engine.check(&request(AccessKind::Write, &outside)),
+            PermissionDecision::Allow
+        );
+        engine.set_base_level(PermissionLevel::WorkspaceAuto);
+        assert!(matches!(
+            engine.check(&request(AccessKind::Write, &outside)),
+            PermissionDecision::Confirm { .. }
+        ));
+    }
+
+    #[test]
+    fn execution_in_a_read_only_root_requires_confirmation() {
+        let workspace = test_dir();
+        let extra = test_dir();
+        let engine = PermissionEngine::new(workspace.path(), PermissionLevel::WorkspaceAuto)
+            .unwrap()
+            .with_root(extra.path(), AccessKind::Read)
+            .unwrap();
+        let path = extra.path().join("script.sh");
+
+        assert!(matches!(
+            engine.check(&request(AccessKind::Execute, &path)),
             PermissionDecision::Confirm { .. }
         ));
     }
@@ -874,7 +925,7 @@ mod root_scope_tests {
     }
 
     #[test]
-    fn execution_in_an_extra_root_still_requires_confirmation() {
+    fn execution_in_an_extra_write_root_is_allowed() {
         let workspace = test_dir();
         let extra = test_dir();
         let engine = PermissionEngine::new(workspace.path(), PermissionLevel::WorkspaceAuto)
@@ -883,10 +934,10 @@ mod root_scope_tests {
             .unwrap();
         let path = extra.path().join("script.sh");
 
-        assert!(matches!(
+        assert_eq!(
             engine.check(&request(AccessKind::Execute, &path)),
-            PermissionDecision::Confirm { .. }
-        ));
+            PermissionDecision::Allow
+        );
     }
 
     #[test]

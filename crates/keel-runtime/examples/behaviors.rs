@@ -263,6 +263,7 @@ async fn command_activity(
             args: &printing,
             cwd: root,
             timeout: Duration::from_millis(400),
+            max_duration: None,
         },
         &CancelToken::new(),
     )
@@ -288,6 +289,7 @@ async fn command_activity(
             args: &silent,
             cwd: root,
             timeout: Duration::from_millis(300),
+            max_duration: None,
         },
         &CancelToken::new(),
     )

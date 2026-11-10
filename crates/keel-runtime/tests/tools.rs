@@ -992,6 +992,39 @@ async fn shell_stops_at_its_own_timeout() {
 }
 
 #[tokio::test]
+async fn shell_honours_a_per_call_timeout() {
+    let python = std::process::Command::new("python")
+        .arg("--version")
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false);
+    if !python {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let tool = ShellTool::new(vec!["python".to_owned()]);
+    let mut args = ToolArgs::new();
+    args.insert("program", ArgValue::String("python".to_owned()));
+    args.insert(
+        "args",
+        ArgValue::StringList(vec![
+            "-c".to_owned(),
+            "import time; time.sleep(30)".to_owned(),
+        ]),
+    );
+    args.insert("timeout_ms", ArgValue::Integer(300));
+
+    let started = Instant::now();
+    let result = tool.call(args, &ctx(dir.path())).await;
+
+    assert_eq!(
+        result.error().map(|error| error.code),
+        Some(ErrorCode::Timeout)
+    );
+    assert!(started.elapsed() < Duration::from_secs(10));
+}
+
+#[tokio::test]
 async fn failed_backup_aborts_the_write() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("notes.txt"), "old").unwrap();

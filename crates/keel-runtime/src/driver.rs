@@ -448,6 +448,18 @@ impl<M: ModelProvider> TurnDriver<M> {
         });
     }
 
+    /// Switches the permission level for the rest of the session. Session
+    /// grants are dropped, so a downgrade takes effect immediately.
+    pub fn set_permission_level(&self, level: keel_core::PermissionLevel) {
+        self.dispatcher.set_permission_level(level);
+        self.revoke_permission_grants();
+    }
+
+    /// The effective level, including an active full-auto grant.
+    pub fn permission_level(&self) -> keel_core::PermissionLevel {
+        self.dispatcher.permission_level()
+    }
+
     /// Adds a scope for the rest of the session. Unlike a grant, it survives a
     /// full-auto toggle and lives until the process exits.
     pub fn add_root(
@@ -506,6 +518,32 @@ impl<M: ModelProvider> TurnDriver<M> {
                 turn_id,
                 kind: kind.as_str().to_owned(),
             });
+        }
+
+        // A list that closed with the previous turn recorded a finished task;
+        // the next user input is new work and gets a fresh list. A host lock
+        // is never cleared here.
+        if let Some(todos) = &self.todos {
+            let reset = {
+                let mut todos = todos
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if todos.state.is_closed() && !todos.locked {
+                    todos.reset();
+                    Some((todos.revision, todos.state.as_str().to_owned()))
+                } else {
+                    None
+                }
+            };
+            if let Some((revision, state)) = reset {
+                self.events.append(Event::TodoUpdated {
+                    turn_id,
+                    revision,
+                    items: 0,
+                    in_progress: None,
+                    state,
+                });
+            }
         }
 
         let deadline = tokio::time::Instant::now() + self.limits.turn_timeout;
@@ -1721,6 +1759,12 @@ impl<M: ModelProvider> TurnDriver<M> {
                         });
                         self.step(fsm, turn_id, TurnEvent::DoneSignal)?;
                     } else {
+                        // The answer is written; the checks may run for a
+                        // while, and a host shows a waiting state from here.
+                        self.events.append(Event::VerificationStarted {
+                            turn_id,
+                            checks: items.len() as u32,
+                        });
                         let verifier = AcceptanceVerifier::new(&self.workspace_root);
                         let report = verifier.verify(&items).await;
                         let failures = verification_failures(&report);

@@ -277,6 +277,7 @@ pub fn event_names_contract() -> Vec<String> {
         "turn_started",
         "secret_warning",
         "reasoning_escalated",
+        "verification_started",
         "verification_finished",
         "state_changed",
         "context_built",

@@ -1855,6 +1855,40 @@ async fn a_turn_continues_while_the_task_list_has_unfinished_items() {
 }
 
 #[tokio::test]
+async fn a_closed_task_list_resets_when_the_next_turn_starts() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&["echo"], 4, PermissionLevel::WorkspaceAuto);
+    let todos = Arc::new(Mutex::new(TodoList::new()));
+    {
+        let mut list = todos
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let id = list.add_model("the previous task").unwrap();
+        list.update_status(id, TodoStatus::Completed).unwrap();
+        assert_eq!(list.state, keel_core::TodoState::Completed);
+    }
+    let model = MockModel::new(vec![MockStep::Text("new task".to_owned())]);
+    let driver = common::build_driver_with_todos(
+        model,
+        config,
+        events,
+        dir.path(),
+        common::test_limits(),
+        todos.clone(),
+    );
+
+    let outcome = driver.run("now do this instead", CancelToken::new()).await;
+
+    assert!(outcome.is_done(), "{outcome:?}");
+    let list = todos
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    assert_eq!(list.state, keel_core::TodoState::Active);
+    assert!(list.items.is_empty(), "the fresh list starts empty");
+}
+
+#[tokio::test]
 async fn the_turn_budget_forces_the_final_call_without_telling_the_model() {
     let dir = tempfile::tempdir().unwrap();
     let events = Arc::new(EventLog::new());

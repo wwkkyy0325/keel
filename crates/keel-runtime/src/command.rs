@@ -51,6 +51,10 @@ pub struct CommandSpec<'a> {
     /// Inactivity window: the command is stopped after this long without
     /// output, not this long after it started.
     pub timeout: Duration,
+    /// Wall-clock limit for the whole command, if the caller set one. The
+    /// inactivity window still applies; this caps a command that keeps
+    /// printing.
+    pub max_duration: Option<Duration>,
 }
 
 /// Captured command result.
@@ -130,6 +134,11 @@ pub async fn run(spec: CommandSpec<'_>, cancel: &CancelToken) -> Result<CommandO
                 );
                 if idle >= spec.timeout {
                     return Err(ToolError::timeout(spec.timeout));
+                }
+                if let Some(max) = spec.max_duration {
+                    if started.elapsed() >= max {
+                        return Err(ToolError::timeout(max));
+                    }
                 }
                 if started.elapsed() >= HARD_TIMEOUT {
                     return Err(ToolError::timeout(HARD_TIMEOUT));

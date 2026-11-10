@@ -40,6 +40,12 @@ pub enum Event {
         to: String,
         reason: String,
     },
+    /// The acceptance plan is about to run. The answer is already written;
+    /// a host can show a waiting state until `VerificationFinished`.
+    VerificationStarted {
+        turn_id: TurnId,
+        checks: u32,
+    },
     VerificationFinished {
         turn_id: TurnId,
         passed: bool,
@@ -347,6 +353,7 @@ impl Event {
             Self::TurnStarted { turn_id, .. }
             | Self::SecretWarning { turn_id, .. }
             | Self::ReasoningEscalated { turn_id, .. }
+            | Self::VerificationStarted { turn_id, .. }
             | Self::VerificationFinished { turn_id, .. }
             | Self::StateChanged { turn_id, .. }
             | Self::ContextBuilt { turn_id, .. }
@@ -398,6 +405,7 @@ impl Event {
             Self::TurnStarted { .. } => "turn_started",
             Self::SecretWarning { .. } => "secret_warning",
             Self::ReasoningEscalated { .. } => "reasoning_escalated",
+            Self::VerificationStarted { .. } => "verification_started",
             Self::VerificationFinished { .. } => "verification_finished",
             Self::StateChanged { .. } => "state_changed",
             Self::ContextBuilt { .. } => "context_built",

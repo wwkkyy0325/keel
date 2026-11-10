@@ -3,6 +3,44 @@
 Kernel crates and the reference host share the workspace version. A derived
 project pins a version and updates deliberately; see `docs/kernel-contract.md`.
 
+## 0.2.2 — 2026-11-10
+
+### Kernel
+
+- A closed task list resets at the start of the next user turn (ADR 0040).
+  The reset clears the items, sets the state to active, bumps the revision
+  and emits `TodoUpdated`; ids stay monotonic and a host lock is left alone.
+  A session can use the todo tool for a second task again.
+- `workspace_auto` runs a command inside a write root without a prompt
+  (ADR 0041). `Execute` now follows the root's access: the workspace root and
+  write extra roots allow it, a read-only root and anything outside still
+  confirm. `FullAuto`, the secret-path checks and the shell program allowlist
+  are unchanged.
+- The base level is runtime-mutable (`set_base_level`;
+  `TurnDriver::set_permission_level` also drops session grants), so a host can
+  switch level without reopening the session.
+- `verification_started` is emitted before the acceptance checks run, so a
+  host can show a waiting state while the answer is already written
+  (ADR 0042). The event is additive; the event format version stays 1.
+- The shell tool accepts `timeout_ms`, a wall-clock bound clamped to two
+  hours (ADR 0043). `CommandSpec.max_duration` is honored by the foreground
+  runner and by background tasks; without it the inactivity window and the
+  hard cap remain the only limits.
+- `LocalBackgroundTasks::snapshot` reports running and finished-but-undrained
+  commands to a host without consuming them (ADR 0044); the driver's drain
+  still owns the result.
+
+### Evidence
+
+- A live session's second task lost every `todo add` (`todo list is closed`,
+  `invalid_arguments`, under a millisecond) because the previous list had
+  completed.
+- The same session asked once for the first `shell` call, and the approval
+  escalated to `full_auto` for eight hours; the level the user selected
+  (`workspace_auto`) should have run that command.
+- New tests: a closed list resets on the next turn; execute inside a write
+  root is allowed, and a read-only root still confirms.
+
 ## 0.2.1 — 2026-11-09
 
 ### Kernel

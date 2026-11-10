@@ -25,7 +25,7 @@ pub mod tools;
 pub mod trash;
 pub mod verification;
 
-pub use background::{BackgroundResult, BackgroundTasks, LocalBackgroundTasks};
+pub use background::{BackgroundResult, BackgroundSnapshot, BackgroundTasks, LocalBackgroundTasks};
 pub use context::{
     render_covered_index, BuiltContext, ContextBuilder, HistoryStage, LatestStage, MemoryStage,
     SystemStage, TaskStateStage,

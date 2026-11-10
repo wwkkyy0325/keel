@@ -136,6 +136,7 @@ impl AcceptanceVerifier {
             args,
             cwd: &self.root,
             timeout: COMMAND_TIMEOUT,
+            max_duration: None,
         };
         let started = std::time::Instant::now();
         let output = match command::run(spec, &CancelToken::new()).await {

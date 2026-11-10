@@ -1538,6 +1538,10 @@ fn display_relative(path: &Path) -> String {
 }
 
 /// Runs an allowlisted program without a shell.
+/// Upper bound for a per-call `timeout_ms`, so a model cannot ask for an
+/// unbounded command.
+const MAX_TOOL_DURATION: Duration = Duration::from_secs(2 * 60 * 60);
+
 pub struct ShellTool {
     allowlist: Vec<String>,
     timeout: Duration,
@@ -1581,7 +1585,10 @@ impl Tool for ShellTool {
             description: "Run a program with a fixed argument list; no shell. Common developer \
                           programs are standard; any other program still runs after the user \
                           confirms it. Set `mutates` to true when the command writes to the \
-                          workspace, so the turn is verified."
+                          workspace, so the turn is verified. `background: \"true\"` starts the \
+                          command and returns at once; its result arrives before the next model \
+                          call. `timeout_ms` caps the whole run (at most two hours); without it a \
+                          silent hang is stopped after the inactivity window."
                 .to_owned(),
             risk: RiskLevel::Dangerous,
             params: vec![
@@ -1608,6 +1615,11 @@ impl Tool for ShellTool {
                 ParamSpec {
                     name: "mutates".to_owned(),
                     kind: ParamKind::Boolean,
+                    required: false,
+                },
+                ParamSpec {
+                    name: "timeout_ms".to_owned(),
+                    kind: ParamKind::Integer,
                     required: false,
                 },
             ],
@@ -1676,11 +1688,30 @@ impl Tool for ShellTool {
             }
             None => ctx.workspace_root.clone(),
         };
+        let max_duration = match args.get("timeout_ms") {
+            Some(keel_core::ArgValue::Integer(ms)) => {
+                let ms = u64::try_from(*ms).unwrap_or(0);
+                if ms == 0 {
+                    None
+                } else {
+                    Some(Duration::from_millis(ms).min(MAX_TOOL_DURATION))
+                }
+            }
+            Some(_) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "shell",
+                    ToolError::invalid_arguments("argument `timeout_ms` must be an integer"),
+                )
+            }
+            None => None,
+        };
         let spec = CommandSpec {
             program,
             args: &command_args,
             cwd: &cwd,
             timeout: self.timeout,
+            max_duration,
         };
         let background = matches!(
             args.get("background"),

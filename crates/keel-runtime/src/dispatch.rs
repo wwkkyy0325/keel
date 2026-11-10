@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 use keel_core::{
     redact_secrets, resolve_path, simplify_path, AccessKind, CancelToken, ErrorCode, Event,
     GrantScope, InteractionKind, InteractionOption, InteractionRequest, InteractionResponse,
-    PermissionDecision, PermissionGate, PermissionRequest, RiskLevel, Tool, ToolArgs, ToolCallId,
-    ToolCallRequest, ToolCtx, ToolError, ToolResult, TurnId,
+    PermissionDecision, PermissionGate, PermissionLevel, PermissionRequest, RiskLevel, Tool,
+    ToolArgs, ToolCallId, ToolCallRequest, ToolCtx, ToolError, ToolResult, TurnId,
 };
 use tokio::task::JoinSet;
 
@@ -69,6 +69,16 @@ impl ToolDispatcher {
     /// Drops session grants and returns to the configured base level.
     pub fn revoke_grants(&self) {
         self.permission.revoke_all();
+    }
+
+    /// Switches the base level without reopening the session.
+    pub fn set_permission_level(&self, level: PermissionLevel) {
+        self.permission.set_base_level(level);
+    }
+
+    /// The effective level, including an active full-auto grant.
+    pub fn permission_level(&self) -> PermissionLevel {
+        self.permission.level()
     }
 
     /// Adds a session scope for the rest of the session (host `/add-dir`).

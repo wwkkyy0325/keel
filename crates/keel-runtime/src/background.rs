@@ -45,12 +45,25 @@ struct Running {
     child: Child,
     started: Instant,
     output: PathBuf,
+    max_duration: Option<Duration>,
 }
 
 #[derive(Default)]
 struct State {
     next_id: u32,
     tasks: Vec<Running>,
+}
+
+/// One background command as a host reads it without draining the result.
+#[derive(Clone, Debug)]
+pub struct BackgroundSnapshot {
+    pub id: String,
+    pub program: String,
+    pub pid: u32,
+    pub running: bool,
+    pub exit_code: Option<i32>,
+    pub duration_ms: u64,
+    pub output_path: String,
 }
 
 /// Local backend: one OS process per task, output in `outputs`.
@@ -84,6 +97,34 @@ impl LocalBackgroundTasks {
             .tasks
             .len()
     }
+
+    /// Reports running and finished-but-not-drained commands without
+    /// consuming them. The driver's `drain` still owns the result.
+    pub fn snapshot(&self) -> Vec<BackgroundSnapshot> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state
+            .tasks
+            .iter_mut()
+            .map(|task| {
+                let (running, exit_code) = match task.child.try_wait() {
+                    Ok(Some(status)) => (false, status.code()),
+                    _ => (true, None),
+                };
+                BackgroundSnapshot {
+                    id: format!("bg-{}", task.id),
+                    program: task.program.clone(),
+                    pid: task.pid,
+                    running,
+                    exit_code,
+                    duration_ms: task.started.elapsed().as_millis() as u64,
+                    output_path: task.output.display().to_string(),
+                }
+            })
+            .collect()
+    }
 }
 
 impl BackgroundTasks for LocalBackgroundTasks {
@@ -112,6 +153,7 @@ impl BackgroundTasks for LocalBackgroundTasks {
             child,
             started: Instant::now(),
             output: output.clone(),
+            max_duration: spec.max_duration,
         });
         if let Some(events) = &self.events {
             events.append(Event::BackgroundStarted {
@@ -139,6 +181,15 @@ impl BackgroundTasks for LocalBackgroundTasks {
             let done = match &status {
                 Ok(Some(_)) => true,
                 Err(_) => {
+                    command::kill_tree(task.pid);
+                    let _ = task.child.wait();
+                    true
+                }
+                Ok(None)
+                    if task
+                        .max_duration
+                        .is_some_and(|max| task.started.elapsed() >= max) =>
+                {
                     command::kill_tree(task.pid);
                     let _ = task.child.wait();
                     true
@@ -236,6 +287,7 @@ mod tests {
             args: &args,
             cwd: dir.path(),
             timeout: Duration::from_secs(5),
+            max_duration: None,
         };
         let started = tasks.start(TurnId::new(1), &spec).unwrap();
         assert!(started.contains("bg-1"), "{started}");
@@ -267,6 +319,7 @@ mod tests {
             args: &args,
             cwd: dir.path(),
             timeout: Duration::from_secs(5),
+            max_duration: None,
         };
         for _ in 0..LIMIT {
             tasks.start(TurnId::new(1), &spec).unwrap();
@@ -305,6 +358,7 @@ mod tests {
             args: &args,
             cwd: dir.path(),
             timeout: Duration::from_secs(5),
+            max_duration: None,
         };
         tasks.start(TurnId::new(1), &spec).unwrap();
         // Let the leader spawn its child before the registry goes away.
@@ -332,6 +386,7 @@ mod tests {
             args: &args,
             cwd: dir.path(),
             timeout: Duration::from_secs(5),
+            max_duration: None,
         };
         tasks.start(TurnId::new(7), &spec).unwrap();
 

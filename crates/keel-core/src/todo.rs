@@ -168,6 +168,15 @@ impl TodoList {
         Self::default()
     }
 
+    /// Starts a fresh list after the previous one closed. The id sequence
+    /// stays monotonic, so event consumers never see two items with the same
+    /// id. A host lock is left alone: the host owns that decision.
+    pub fn reset(&mut self) {
+        self.items.clear();
+        self.state = TodoState::Active;
+        self.revision = self.revision.saturating_add(1);
+    }
+
     /// Adds an immutable host-seeded task.
     pub fn add_host(&mut self, text: &str) -> Result<u32, TodoError> {
         self.push(text, TodoSource::Host)

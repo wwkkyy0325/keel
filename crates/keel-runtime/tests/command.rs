@@ -32,6 +32,7 @@ async fn a_large_output_is_truncated_and_bounded() {
             args: &args,
             cwd: dir.path(),
             timeout: Duration::from_secs(10),
+            max_duration: None,
         },
         &CancelToken::new(),
     )
@@ -66,6 +67,7 @@ async fn a_windows_command_shim_is_resolved() {
             args: &args,
             cwd: dir.path(),
             timeout: Duration::from_secs(60),
+            max_duration: None,
         },
         &CancelToken::new(),
     )
@@ -90,6 +92,7 @@ async fn a_timeout_returns_without_waiting_for_the_command() {
             args: &args,
             cwd: dir.path(),
             timeout: Duration::from_millis(300),
+            max_duration: None,
         },
         &CancelToken::new(),
     )
@@ -125,6 +128,7 @@ async fn a_timeout_takes_the_descendants_with_it() {
             args: &args,
             cwd: dir.path(),
             timeout: Duration::from_secs(3),
+            max_duration: None,
         },
         &CancelToken::new(),
     )
@@ -196,6 +200,7 @@ async fn a_command_that_keeps_printing_outlives_the_inactivity_window() {
             cwd: dir.path(),
             // Shorter than the command's total run time.
             timeout: Duration::from_millis(400),
+            max_duration: None,
         },
         &CancelToken::new(),
     )
