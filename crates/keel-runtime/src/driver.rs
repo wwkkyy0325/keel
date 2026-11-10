@@ -618,9 +618,10 @@ impl<M: ModelProvider> TurnDriver<M> {
                 .record_pending(format!("interaction {} was deferred", interaction.get()));
         }
         stats.answer.verification = stats.verification.clone();
-        // A cancelled turn keeps the text it streamed, so the view does not
-        // lose it and the next message can see where the turn stopped.
-        if state == TurnState::Cancelled
+        // A turn that was cancelled or failed after streaming keeps that
+        // text, so the view does not lose it and the record shows where the
+        // turn stopped.
+        if (state == TurnState::Cancelled || error.is_some())
             && stats.answer.body.trim().is_empty()
             && !text.trim().is_empty()
         {

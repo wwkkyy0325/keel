@@ -307,6 +307,7 @@ pub struct StreamDecoder {
     tools: BTreeMap<u64, PartialTool>,
     usage: TokenUsage,
     stopped: bool,
+    stop_reason: Option<String>,
 }
 
 impl StreamDecoder {
@@ -384,12 +385,13 @@ impl StreamDecoder {
                 if let Some(usage) = event.get("usage") {
                     self.update_usage(usage);
                 }
-                if event
+                if let Some(reason) = event
                     .get("delta")
                     .and_then(|delta| delta.get("stop_reason"))
-                    .is_some_and(|reason| !reason.is_null())
+                    .and_then(Value::as_str)
                 {
                     self.stopped = true;
+                    self.stop_reason = Some(reason.to_owned());
                 }
             }
             Some("message_stop") => self.stopped = true,
@@ -411,6 +413,14 @@ impl StreamDecoder {
     }
 
     pub fn finish(&mut self) -> Result<Vec<ModelChunk>, ModelError> {
+        // A response that hit the output limit is cut wherever it was,
+        // usually inside a tool call's JSON. Say so instead of reporting the
+        // parse error.
+        if self.stop_reason.as_deref() == Some("max_tokens") {
+            return Err(invalid(
+                "the model response hit the output token limit before it finished;                  the answer or tool call is incomplete",
+            ));
+        }
         let mut chunks = Vec::new();
         for (_, partial) in std::mem::take(&mut self.tools) {
             if partial.name.is_empty() {

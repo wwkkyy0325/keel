@@ -3,6 +3,27 @@
 Kernel crates and the reference host share the workspace version. A derived
 project pins a version and updates deliberately; see `docs/kernel-contract.md`.
 
+## 0.2.9 — 2026-11-10
+
+### Kernel
+
+- A response cut by the output limit is reported as such (ADR 0050): both
+  adapters record the provider's finish reason (`length` / `max_tokens`) and
+  return an `invalid_response` error naming the limit instead of a JSON
+  parse error from a truncated tool call. A text-only answer cut the same
+  way is no longer delivered as complete.
+- Text streamed before a model error stays in the turn's answer body, as a
+  cancelled turn already does.
+
+### Evidence
+
+- A live turn failed with `invalid tool arguments: EOF while parsing a string
+  at line 1 column 7170` after 50 s; the profile's 8192-token output cap had
+  cut the tool-call JSON mid-string, and the earlier JSON error hid that.
+- Tests: an OpenAI `finish_reason: length` stream and an Anthropic
+  `stop_reason: max_tokens` stream both report the output limit and still
+  forward the text that was streamed.
+
 ## 0.2.8 — 2026-11-10
 
 ### Kernel

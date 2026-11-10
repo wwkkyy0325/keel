@@ -2548,3 +2548,11 @@
   the cancelled question. Cancelled turns are now recorded: the input, the
   streamed partial answer with an interruption marker, and their tool
   summaries. ADR 0049; released as 0.2.8.
+
+### A response cut by the output limit says so (2026-11-10)
+
+- Both model adapters now read the provider's finish reason. A response that
+  hit the output token limit returns an error naming the limit instead of a
+  JSON parse error from a truncated tool call; a cut text answer is no
+  longer delivered as complete. Text streamed before the error stays in the
+  turn. ADR 0050; released as 0.2.9.

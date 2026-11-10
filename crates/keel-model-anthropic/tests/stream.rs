@@ -131,3 +131,50 @@ async fn the_provider_streams_text_usage_and_headers() {
         .to_ascii_lowercase()
         .contains("anthropic-version: 2023-06-01"));
 }
+
+#[tokio::test]
+async fn an_output_limit_stop_is_reported_as_such() {
+    let body = concat!(
+        "event: content_block_start\n",
+        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+        "event: content_block_delta\n",
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hel\"}}\n\n",
+        "event: message_delta\n",
+        "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"max_tokens\"},\"usage\":{\"output_tokens\":2}}\n\n",
+        "event: message_stop\n",
+        "data: {\"type\":\"message_stop\"}\n\n",
+    )
+    .to_owned();
+    let captured = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let url = spawn_server(body, captured).await;
+    let provider = AnthropicProvider::new(AnthropicConfig {
+        base_url: url,
+        api_key: "test-key".to_owned(),
+        model: "fallback".to_owned(),
+        max_retries: 0,
+    })
+    .unwrap();
+
+    let mut stream = provider
+        .stream(request(), &CancelToken::new())
+        .await
+        .unwrap();
+    let mut chunks = Vec::new();
+    while let Ok(Some(chunk)) = tokio::time::timeout(Duration::from_secs(5), stream.recv()).await {
+        chunks.push(chunk);
+    }
+
+    assert!(chunks.iter().any(|chunk| matches!(
+        chunk,
+        Ok(ModelChunk::TextDelta(text)) if text == "Hel"
+    )));
+    let error = chunks
+        .iter()
+        .find_map(|chunk| chunk.as_ref().err())
+        .expect("a truncation error");
+    assert!(
+        error.message.contains("output token limit"),
+        "{}",
+        error.message
+    );
+}

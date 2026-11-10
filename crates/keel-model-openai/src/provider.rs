@@ -160,6 +160,7 @@ async fn read_stream(
     let mut accumulator = ToolCallAccumulator::default();
     let mut usage = TokenUsage::default();
     let mut saw_finish = false;
+    let mut finish_reason: Option<String> = None;
 
     loop {
         let chunk = tokio::select! {
@@ -174,12 +175,20 @@ async fn read_stream(
                 }
                 while let Some(index) = buffer.find("\n\n") {
                     let event: String = buffer.drain(..index + 2).collect();
-                    match process_event(&event, &tx, &mut accumulator, &mut usage, &mut saw_finish)
-                        .await
+                    match process_event(
+                        &event,
+                        &tx,
+                        &mut accumulator,
+                        &mut usage,
+                        &mut saw_finish,
+                        &mut finish_reason,
+                    )
+                    .await
                     {
                         EventOutcome::Continue => {}
                         EventOutcome::Done => {
-                            emit_finished(&tx, &mut accumulator, usage).await;
+                            emit_finished(&tx, &mut accumulator, usage, finish_reason.as_deref())
+                                .await;
                             return;
                         }
                         EventOutcome::Failed => return,
@@ -202,9 +211,18 @@ async fn read_stream(
     }
 
     if !buffer.trim().is_empty() {
-        match process_event(&buffer, &tx, &mut accumulator, &mut usage, &mut saw_finish).await {
+        match process_event(
+            &buffer,
+            &tx,
+            &mut accumulator,
+            &mut usage,
+            &mut saw_finish,
+            &mut finish_reason,
+        )
+        .await
+        {
             EventOutcome::Done => {
-                emit_finished(&tx, &mut accumulator, usage).await;
+                emit_finished(&tx, &mut accumulator, usage, finish_reason.as_deref()).await;
                 return;
             }
             EventOutcome::Failed => return,
@@ -213,7 +231,7 @@ async fn read_stream(
     }
 
     if saw_finish {
-        emit_finished(&tx, &mut accumulator, usage).await;
+        emit_finished(&tx, &mut accumulator, usage, finish_reason.as_deref()).await;
     } else {
         let _ = tx
             .send(Err(ModelError::stream_cut(
@@ -229,6 +247,7 @@ async fn process_event(
     accumulator: &mut ToolCallAccumulator,
     usage: &mut TokenUsage,
     saw_finish: &mut bool,
+    finish_reason: &mut Option<String>,
 ) -> EventOutcome {
     for line in event.lines() {
         let Some(data) = line.strip_prefix("data:") else {
@@ -295,11 +314,9 @@ async fn process_event(
             }
         }
 
-        if choice
-            .get("finish_reason")
-            .is_some_and(|reason| !reason.is_null())
-        {
+        if let Some(reason) = choice.get("finish_reason").and_then(Value::as_str) {
             *saw_finish = true;
+            *finish_reason = Some(reason.to_owned());
         }
     }
     EventOutcome::Continue
@@ -333,7 +350,20 @@ async fn emit_finished(
     tx: &mpsc::Sender<Result<ModelChunk, ModelError>>,
     accumulator: &mut ToolCallAccumulator,
     usage: TokenUsage,
+    finish_reason: Option<&str>,
 ) {
+    // A response that hit the output limit is cut wherever it was, usually
+    // inside a tool call's JSON. Say so instead of reporting the parse error.
+    if finish_reason == Some("length") {
+        let _ = tx
+            .send(Err(ModelError::new(
+                ErrorCode::InvalidResponse,
+                "the model response hit the output token limit before it finished;                  the answer or tool call is incomplete",
+                true,
+            )))
+            .await;
+        return;
+    }
     let calls = match std::mem::take(accumulator).finish() {
         Ok(calls) => calls,
         Err(error) => {

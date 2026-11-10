@@ -342,3 +342,34 @@ async fn cancellation_before_send_is_cancelled() {
     let error = provider(url).stream(request(), &cancel).await.unwrap_err();
     assert_eq!(error.code, ErrorCode::Cancelled);
 }
+
+#[tokio::test]
+async fn an_output_limit_stop_is_reported_as_such() {
+    let url = spawn_server(
+        "200 OK",
+        "text/event-stream",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"hel\"},\"finish_reason\":null}]}\n\n\
+         data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\n\n\
+         data: [DONE]\n\n",
+    )
+    .await;
+    let stream = provider(url)
+        .stream(request(), &CancelToken::new())
+        .await
+        .unwrap();
+    let chunks = collect(stream).await;
+
+    assert!(chunks.iter().any(|chunk| matches!(
+        chunk,
+        Ok(ModelChunk::TextDelta(text)) if text == "hel"
+    )));
+    let error = chunks
+        .iter()
+        .find_map(|chunk| chunk.as_ref().err())
+        .expect("a truncation error");
+    assert!(
+        error.message.contains("output token limit"),
+        "{}",
+        error.message
+    );
+}
