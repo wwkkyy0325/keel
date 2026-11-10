@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use keel_core::{AcceptanceItem, EvidenceOutcome, VerifySpec};
+use keel_core::{AcceptanceItem, CancelToken, EvidenceOutcome, VerifySpec};
 use keel_runtime::AcceptanceVerifier;
 
 fn item(id: &str, required: bool, verify: VerifySpec) -> AcceptanceItem {
@@ -35,7 +35,7 @@ async fn compute_items_pass_or_fail_on_real_arithmetic() {
         ),
     ];
 
-    let report = verifier.verify(&items).await;
+    let report = verifier.verify(&items, &CancelToken::new()).await;
 
     assert!(!report.passed());
     assert_eq!(report.required_failed, vec!["wrong".to_owned()]);
@@ -68,7 +68,7 @@ async fn file_hash_checks_the_real_file_contents() {
         ),
     ];
 
-    let report = verifier.verify(&items).await;
+    let report = verifier.verify(&items, &CancelToken::new()).await;
 
     assert_eq!(report.required_failed, vec!["hash-bad".to_owned()]);
     assert_eq!(report.evidence[0].outcome, EvidenceOutcome::Passed);
@@ -88,7 +88,7 @@ async fn file_hash_paths_may_not_escape_the_workspace() {
         },
     )];
 
-    let report = verifier.verify(&items).await;
+    let report = verifier.verify(&items, &CancelToken::new()).await;
 
     assert!(!report.passed());
     assert_eq!(report.required_unverified.len(), 0);
@@ -108,10 +108,33 @@ async fn optional_failures_do_not_block_the_report() {
         },
     )];
 
-    let report = verifier.verify(&items).await;
+    let report = verifier.verify(&items, &CancelToken::new()).await;
 
     assert!(report.passed());
     assert_eq!(report.optional_failed, vec!["nice-to-have".to_owned()]);
+}
+
+#[tokio::test]
+async fn a_cancelled_turn_skips_the_checks() {
+    let dir = tempfile::tempdir().unwrap();
+    let verifier = AcceptanceVerifier::new(dir.path());
+    let items = vec![item(
+        "version",
+        true,
+        VerifySpec::Command {
+            program: "rustc".to_owned(),
+            args: vec!["--version".to_owned()],
+            expected_exit: 0,
+        },
+    )];
+    let cancel = CancelToken::new();
+    cancel.cancel();
+
+    let report = verifier.verify(&items, &cancel).await;
+
+    assert_eq!(report.evidence[0].outcome, EvidenceOutcome::Unverified);
+    assert!(report.evidence[0].detail.contains("cancelled"));
+    assert_eq!(report.required_unverified, vec!["version".to_owned()]);
 }
 
 #[tokio::test]
@@ -147,7 +170,7 @@ async fn command_and_test_items_run_allowlisted_programs() {
         ),
     ];
 
-    let report = verifier.verify(&items).await;
+    let report = verifier.verify(&items, &CancelToken::new()).await;
 
     assert_eq!(report.evidence[0].outcome, EvidenceOutcome::Passed);
     assert_eq!(report.evidence[1].outcome, EvidenceOutcome::Passed);
@@ -176,7 +199,7 @@ async fn commands_outside_the_allowlist_are_rejected() {
         },
     )];
 
-    let report = verifier.verify(&items).await;
+    let report = verifier.verify(&items, &CancelToken::new()).await;
 
     assert_eq!(report.required_failed, vec!["dangerous".to_owned()]);
     assert!(report.evidence[0].detail.contains("not allowlisted"));
@@ -207,7 +230,7 @@ async fn a_workspace_program_path_runs_when_its_name_is_allowlisted() {
         },
     )];
 
-    let report = verifier.verify(&items).await;
+    let report = verifier.verify(&items, &CancelToken::new()).await;
 
     assert_eq!(report.evidence[0].outcome, EvidenceOutcome::Passed);
     assert!(report.required_failed.is_empty());
@@ -229,7 +252,7 @@ async fn a_program_path_outside_the_workspace_is_rejected() {
         },
     )];
 
-    let report = verifier.verify(&items).await;
+    let report = verifier.verify(&items, &CancelToken::new()).await;
 
     assert_eq!(report.required_failed, vec!["escape".to_owned()]);
     assert!(report.evidence[0].detail.contains("not allowlisted"));
@@ -252,7 +275,7 @@ async fn a_workspace_program_path_with_other_name_is_rejected() {
         },
     )];
 
-    let report = verifier.verify(&items).await;
+    let report = verifier.verify(&items, &CancelToken::new()).await;
 
     assert_eq!(report.required_failed, vec!["unlisted".to_owned()]);
     assert!(report.evidence[0].detail.contains("not allowlisted"));
@@ -279,7 +302,7 @@ async fn human_and_unverifiable_items_remain_unverified() {
         ),
     ];
 
-    let report = verifier.verify(&items).await;
+    let report = verifier.verify(&items, &CancelToken::new()).await;
 
     assert!(!report.passed());
     assert_eq!(report.required_unverified, vec!["human".to_owned()]);

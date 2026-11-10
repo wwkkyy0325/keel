@@ -2533,3 +2533,10 @@
 - `PermissionEngine::base_level` and its dispatcher/driver forwards expose
   the configured level, so a host can show the setting and the level in
   force separately. ADR 0047; released as 0.2.6.
+
+### Acceptance checks stop on cancel (2026-11-10)
+
+- The verifier created its own cancel token, so cancelling during
+  "verifying" waited for every check. It now takes the turn's token, skips
+  the remaining items, stops a running command check, and the driver returns
+  `Cancelled` afterwards. ADR 0048; released as 0.2.7.

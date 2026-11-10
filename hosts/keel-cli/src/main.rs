@@ -862,7 +862,7 @@ async fn recovered_by_checklist(
         return false;
     };
     AcceptanceVerifier::new(workspace_root)
-        .verify(items)
+        .verify(items, &CancelToken::new())
         .await
         .passed()
 }

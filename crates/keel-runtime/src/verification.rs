@@ -31,8 +31,14 @@ impl AcceptanceVerifier {
         }
     }
 
-    /// Verifies every item and summarizes the required failures.
-    pub async fn verify(&self, items: &[AcceptanceItem]) -> VerificationReport {
+    /// Verifies every item and summarizes the required failures. A cancelled
+    /// turn stops before the next item and reports the rest as unverified; a
+    /// running check is stopped through the same token.
+    pub async fn verify(
+        &self,
+        items: &[AcceptanceItem],
+        cancel: &CancelToken,
+    ) -> VerificationReport {
         let mut report = VerificationReport {
             evidence: Vec::with_capacity(items.len()),
             required_failed: Vec::new(),
@@ -41,7 +47,11 @@ impl AcceptanceVerifier {
         };
 
         for item in items {
-            let evidence = self.verify_item(item).await;
+            let evidence = if cancel.is_cancelled() {
+                unverified(&item.id, "cancelled", "turn was cancelled")
+            } else {
+                self.verify_item(item, cancel).await
+            };
             match evidence.outcome {
                 EvidenceOutcome::Passed => {}
                 EvidenceOutcome::Failed if item.required => {
@@ -59,7 +69,7 @@ impl AcceptanceVerifier {
         report
     }
 
-    async fn verify_item(&self, item: &AcceptanceItem) -> Evidence {
+    async fn verify_item(&self, item: &AcceptanceItem, cancel: &CancelToken) -> Evidence {
         match &item.verify {
             VerifySpec::Compute {
                 expression,
@@ -73,11 +83,18 @@ impl AcceptanceVerifier {
                 args,
                 expected_exit,
             } => {
-                self.verify_command(&item.id, "command", program, args, Some(*expected_exit))
-                    .await
+                self.verify_command(
+                    &item.id,
+                    "command",
+                    program,
+                    args,
+                    Some(*expected_exit),
+                    cancel,
+                )
+                .await
             }
             VerifySpec::Test { program, args } => {
-                self.verify_command(&item.id, "test", program, args, Some(0))
+                self.verify_command(&item.id, "test", program, args, Some(0), cancel)
                     .await
             }
             VerifySpec::Human { prompt } => unverified(
@@ -123,6 +140,7 @@ impl AcceptanceVerifier {
         program: &str,
         args: &[String],
         expected_exit: Option<i32>,
+        cancel: &CancelToken,
     ) -> Evidence {
         if !self.program_allowed(program) {
             return failed(
@@ -139,7 +157,7 @@ impl AcceptanceVerifier {
             max_duration: None,
         };
         let started = std::time::Instant::now();
-        let output = match command::run(spec, &CancelToken::new()).await {
+        let output = match command::run(spec, cancel).await {
             Ok(output) => output,
             Err(error) => return failed(item_id, verifier, error.to_string()),
         };

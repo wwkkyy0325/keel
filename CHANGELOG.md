@@ -3,6 +3,21 @@
 Kernel crates and the reference host share the workspace version. A derived
 project pins a version and updates deliberately; see `docs/kernel-contract.md`.
 
+## 0.2.7 — 2026-11-10
+
+### Kernel
+
+- Acceptance checks honour the turn's cancel token (ADR 0048): the verifier
+  skips remaining items when the token is set, a running command check is
+  stopped by `command::run`, and the driver returns `Cancelled` afterwards.
+  Cancel during "verifying" no longer waits for the whole plan.
+
+### Evidence
+
+- A user clicked cancel during verification and nothing happened until every
+  check finished; the verifier had created a fresh token.
+- Test: a cancelled token leaves every item unverified and runs nothing.
+
 ## 0.2.6 — 2026-11-10
 
 ### Kernel

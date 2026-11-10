@@ -1771,7 +1771,10 @@ impl<M: ModelProvider> TurnDriver<M> {
                             checks: items.len() as u32,
                         });
                         let verifier = AcceptanceVerifier::new(&self.workspace_root);
-                        let report = verifier.verify(&items).await;
+                        let report = verifier.verify(&items, cancel).await;
+                        if cancel.is_cancelled() {
+                            return Err(KernelError::Cancelled { stage: "verify" });
+                        }
                         let failures = verification_failures(&report);
                         self.events.append(Event::VerificationFinished {
                             turn_id,
