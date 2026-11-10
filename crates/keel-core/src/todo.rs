@@ -115,6 +115,11 @@ pub struct TodoList {
     pub state: TodoState,
     /// A locked list keeps host items fixed; model edits still move statuses.
     pub locked: bool,
+    /// The list closed because its last item became terminal, not because a
+    /// caller asked for that outcome. A model add or status change reopens
+    /// such a list; an explicit `close` makes it terminal (ADR 0046).
+    #[serde(default)]
+    auto_closed: bool,
     next_id: u32,
 }
 
@@ -174,7 +179,24 @@ impl TodoList {
     pub fn reset(&mut self) {
         self.items.clear();
         self.state = TodoState::Active;
+        self.auto_closed = false;
         self.revision = self.revision.saturating_add(1);
+    }
+
+    /// A list that closed itself is open for a model continuation; a list a
+    /// caller closed on purpose stays closed.
+    fn accept_edit(&mut self) -> Result<(), TodoError> {
+        if !self.state.is_closed() {
+            return Ok(());
+        }
+        // A host plan is not the model's to extend, and a deliberate close
+        // is terminal until the next turn.
+        if !self.auto_closed || self.locked {
+            return Err(TodoError::Closed);
+        }
+        self.state = TodoState::Active;
+        self.auto_closed = false;
+        Ok(())
     }
 
     /// Adds an immutable host-seeded task.
@@ -191,9 +213,7 @@ impl TodoList {
     }
 
     fn push(&mut self, text: &str, source: TodoSource) -> Result<u32, TodoError> {
-        if self.state.is_closed() {
-            return Err(TodoError::Closed);
-        }
+        self.accept_edit()?;
         let text = text.trim();
         if text.is_empty() {
             return Err(TodoError::EmptyText);
@@ -218,9 +238,7 @@ impl TodoList {
 
     /// Moves one item's status. Host and model items both allow this.
     pub fn update_status(&mut self, id: u32, status: TodoStatus) -> Result<(), TodoError> {
-        if self.state.is_closed() {
-            return Err(TodoError::Closed);
-        }
+        self.accept_edit()?;
         let index = self
             .items
             .iter()
@@ -256,6 +274,9 @@ impl TodoList {
             return Err(TodoError::InvalidState);
         }
         if self.state == state {
+            // The caller confirmed the outcome the list inferred; from here
+            // the close is deliberate and an add is refused.
+            self.auto_closed = false;
             return Ok(());
         }
         if self.state.is_closed() {
@@ -271,6 +292,7 @@ impl TodoList {
             return Err(TodoError::NotComplete);
         }
         self.state = state;
+        self.auto_closed = false;
         self.revision = self.revision.saturating_add(1);
         Ok(())
     }
@@ -289,6 +311,7 @@ impl TodoList {
             } else {
                 TodoState::Completed
             };
+            self.auto_closed = true;
         }
     }
 
@@ -503,10 +526,48 @@ mod tests {
         todos.update_status(second, TodoStatus::Completed).unwrap();
         assert_eq!(todos.state, TodoState::Completed);
         assert_eq!(todos.render(), "[tasks] completed: 2/2 items\n");
+        // The close was inferred, so a status change reopens the list.
+        todos.update_status(first, TodoStatus::Pending).unwrap();
+        assert_eq!(todos.state, TodoState::Active);
+    }
+
+    #[test]
+    fn an_add_reopens_a_list_that_closed_itself() {
+        let mut todos = TodoList::new();
+        let first = todos.add_host("one").unwrap();
+        let second = todos.add_host("two").unwrap();
+        todos.update_status(first, TodoStatus::Completed).unwrap();
+        todos.update_status(second, TodoStatus::Completed).unwrap();
+        assert_eq!(todos.state, TodoState::Completed);
+
+        let third = todos.add_model("deliver").unwrap();
+        assert_eq!(todos.state, TodoState::Active);
+        assert_eq!(todos.items.len(), 3);
+        assert_eq!(todos.items[2].id, third);
+        assert!(todos.render().contains("deliver"));
+    }
+
+    #[test]
+    fn a_closed_locked_plan_rejects_an_update() {
+        let mut todos = TodoList::new();
+        let first = todos.add_host("one").unwrap();
+        todos.lock();
+        todos.update_status(first, TodoStatus::Completed).unwrap();
+        assert_eq!(todos.state, TodoState::Completed);
         assert_eq!(
             todos.update_status(first, TodoStatus::Pending),
             Err(TodoError::Closed)
         );
+    }
+
+    #[test]
+    fn an_explicitly_closed_list_rejects_an_add() {
+        let mut todos = TodoList::new();
+        let first = todos.add_host("one").unwrap();
+        todos.update_status(first, TodoStatus::Completed).unwrap();
+        // Confirming the inferred outcome makes the close deliberate.
+        todos.close(TodoState::Completed).unwrap();
+        assert_eq!(todos.add_model("more"), Err(TodoError::Closed));
     }
 
     #[test]

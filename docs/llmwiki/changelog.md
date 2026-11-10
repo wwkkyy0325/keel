@@ -2514,3 +2514,12 @@
 - The readers now hold the incomplete trailing bytes until the next chunk;
   invalid bytes still decode to U+FFFD. Unit tests cover both paths.
 - Released as 0.2.4.
+
+### An inferred close is not terminal (2026-11-10)
+
+- A live turn completed its last todo item, the list closed itself, and the
+  model's next `add` and `update` were rejected with `todo list is closed`.
+  The close was inferred by `refresh_state`, not chosen.
+- `TodoList` remembers an inferred close; `add` and `update_status` reopen
+  such a list, while an explicit `close` and a locked host plan stay
+  terminal. ADR 0046; released as 0.2.5.

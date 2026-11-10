@@ -3195,8 +3195,41 @@ mod todo_tool_tests {
         let result = tool.call(update.clone(), &ctx()).await;
         assert!(content(&result).contains("[tasks] completed: 1/1"));
 
+        // The list closed itself, so a further update is accepted (and closes
+        // it again); only an explicit close is terminal.
         let result = tool.call(update, &ctx()).await;
-        assert!(result.error().is_some(), "closed lists reject updates");
+        assert!(
+            result.error().is_none(),
+            "an inferred close accepts an update"
+        );
+        assert!(content(&result).contains("[tasks] completed: 1/1"));
+    }
+
+    #[tokio::test]
+    async fn adding_after_the_list_closed_itself_reopens_it() {
+        let todos = Arc::new(Mutex::new(TodoList::new()));
+        let id = todos
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .add_host("chapter 1")
+            .unwrap();
+        let tool = TodoTool::new(todos);
+
+        let mut update = ToolArgs::new();
+        update.insert("op", ArgValue::String("update".to_owned()));
+        update.insert("id", ArgValue::Integer(id as i64));
+        update.insert("status", ArgValue::String("completed".to_owned()));
+        let _ = tool.call(update, &ctx()).await;
+
+        let mut add = ToolArgs::new();
+        add.insert("op", ArgValue::String("add".to_owned()));
+        add.insert("text", ArgValue::String("deliver".to_owned()));
+        let result = tool.call(add, &ctx()).await;
+        assert!(
+            result.error().is_none(),
+            "the inferred close is not terminal"
+        );
+        assert!(content(&result).contains("deliver"));
     }
 
     #[tokio::test]

@@ -3,6 +3,24 @@
 Kernel crates and the reference host share the workspace version. A derived
 project pins a version and updates deliberately; see `docs/kernel-contract.md`.
 
+## 0.2.5 — 2026-11-10
+
+### Kernel
+
+- A list that closed itself (every item became terminal) reopens when the
+  model adds a task or changes a status (ADR 0046). An explicit `close` stays
+  terminal, a locked host plan is never reopened, and `remove` still refuses
+  a closed list. The list remembers how it closed; snapshots without the
+  field load as opened.
+
+### Evidence
+
+- A live turn completed 2/2 items, then `todo add` and `todo update` were
+  rejected with `todo list is closed` in under a millisecond; the model had
+  not asked to close the list.
+- Tests: an add after an inferred close reopens the list; an explicit close
+  still rejects an add; a closed locked plan still rejects an update.
+
 ## 0.2.4 — 2026-11-10
 
 ### Kernel
