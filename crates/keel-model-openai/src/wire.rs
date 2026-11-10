@@ -30,13 +30,22 @@ pub fn build_request(
     // default while the profile advertises no reasoning support.
     let include_reasoning = reasoning.is_some() || request.thinking_budget > 0;
     // A tool message carries text only in this wire format, so images from a
-    // tool result follow it as a user message with the image content.
+    // tool result follow the whole group of tool messages as one user message.
+    // Inserting it between tool results would break the rule that every
+    // `tool_calls` message is answered by its tool messages first.
     let mut messages: Vec<Value> = Vec::with_capacity(request.messages.len());
+    let mut pending_images: Vec<&ImagePart> = Vec::new();
     for message in &request.messages {
-        messages.push(message_json(message, include_reasoning));
-        if message.role == MessageRole::Tool && !message.images.is_empty() {
-            messages.push(tool_image_message(message));
+        if message.role != MessageRole::Tool && !pending_images.is_empty() {
+            messages.push(image_message(std::mem::take(&mut pending_images)));
         }
+        messages.push(message_json(message, include_reasoning));
+        if message.role == MessageRole::Tool {
+            pending_images.extend(message.images.iter());
+        }
+    }
+    if !pending_images.is_empty() {
+        messages.push(image_message(pending_images));
     }
     let mut tools: Vec<Value> = request.tools.iter().map(tool_json).collect();
     if request.control_tool {
@@ -254,14 +263,14 @@ fn message_json(message: &Message, include_reasoning: bool) -> Value {
     Value::Object(value)
 }
 
-/// Images from a tool result follow it as a user message; this wire format has
-/// no image content on a `tool` message.
-fn tool_image_message(message: &Message) -> Value {
+/// Images from tool results follow the whole group of tool messages as one
+/// user message; this wire format has no image content on a `tool` message.
+fn image_message(images: Vec<&ImagePart>) -> Value {
     let mut parts = vec![json!({
         "type": "text",
-        "text": "Images returned with the tool result above."
+        "text": "Images returned with the tool results above."
     })];
-    parts.extend(message.images.iter().map(image_json));
+    parts.extend(images.into_iter().map(image_json));
     json!({ "role": "user", "content": Value::Array(parts) })
 }
 
@@ -498,6 +507,24 @@ mod tests {
             body["messages"][0]["content"][1]["image_url"]["url"],
             "data:image/png;base64,AQID"
         );
+    }
+
+    #[test]
+    fn tool_images_follow_the_whole_group_of_tool_messages() {
+        let request = image_request(vec![
+            Arc::new(
+                Message::tool_result(ToolCallId::new(10), "screen_capture", "captured")
+                    .with_images(vec![ImagePart::png(vec![1, 2, 3])]),
+            ),
+            Arc::new(Message::tool_result(ToolCallId::new(11), "echo", "ok")),
+        ]);
+
+        let body = build_request(&request, "fallback", None);
+
+        assert_eq!(body["messages"][0]["role"], "tool");
+        assert_eq!(body["messages"][1]["role"], "tool");
+        assert_eq!(body["messages"][2]["role"], "user");
+        assert_eq!(body["messages"][2]["content"][1]["type"], "image_url");
     }
 
     #[test]

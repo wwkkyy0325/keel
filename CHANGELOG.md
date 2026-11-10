@@ -3,6 +3,24 @@
 Kernel crates and the reference host share the workspace version. A derived
 project pins a version and updates deliberately; see `docs/kernel-contract.md`.
 
+## 0.2.11 — 2026-11-10
+
+### Kernel
+
+- Tool images no longer split a group of tool results. When several calls run
+  in one round and one result carries an image, the OpenAI-compatible adapter
+  emits every `tool` message first and then one user message with the images;
+  inserting the image message between tool results violates the rule that a
+  `tool_calls` message is answered by its tool messages.
+
+### Evidence
+
+- A live turn failed with `400 Bad Request: An assistant message with
+  'tool_calls' must be followed by tool messages responding to each
+  'tool_call_id'` while a screenshot was in the same round as another call.
+  Test: two tool results, the first with an image, produce `tool`, `tool`,
+  `user(image)`.
+
 ## 0.2.10 — 2026-11-10
 
 ### Kernel
