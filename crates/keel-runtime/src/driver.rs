@@ -460,6 +460,11 @@ impl<M: ModelProvider> TurnDriver<M> {
         self.dispatcher.permission_level()
     }
 
+    /// The configured level, without a session grant.
+    pub fn base_permission_level(&self) -> keel_core::PermissionLevel {
+        self.dispatcher.base_permission_level()
+    }
+
     /// Adds a scope for the rest of the session. Unlike a grant, it survives a
     /// full-auto toggle and lives until the process exits.
     pub fn add_root(

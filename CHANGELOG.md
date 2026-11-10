@@ -3,6 +3,23 @@
 Kernel crates and the reference host share the workspace version. A derived
 project pins a version and updates deliberately; see `docs/kernel-contract.md`.
 
+## 0.2.6 — 2026-11-10
+
+### Kernel
+
+- `PermissionEngine::base_level` (and its dispatcher and driver forwards)
+  reports the configured level without a session grant; `level` keeps
+  returning the effective one (ADR 0047). No permission check changes.
+
+### Evidence
+
+- A live session's chip read "full auto" from an eight-hour grant while the
+  persisted setting stayed `workspace_auto`; after a restart it read
+  "workspace auto", and choosing full auto had been a no-op because the chip
+  already showed it.
+- Test: a grant leaves `base_level` at the configured level; switching the
+  base level is visible after the grant is revoked.
+
 ## 0.2.5 — 2026-11-10
 
 ### Kernel

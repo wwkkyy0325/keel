@@ -81,6 +81,11 @@ impl ToolDispatcher {
         self.permission.level()
     }
 
+    /// The configured level, without a session grant.
+    pub fn base_permission_level(&self) -> PermissionLevel {
+        self.permission.base_level()
+    }
+
     /// Adds a session scope for the rest of the session (host `/add-dir`).
     pub fn add_root(
         &self,

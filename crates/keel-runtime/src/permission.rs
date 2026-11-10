@@ -165,11 +165,17 @@ impl PermissionEngine {
         if grants.iter().any(is_full_auto_grant) {
             PermissionLevel::FullAuto
         } else {
-            *self
-                .base_level
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
+            self.base_level()
         }
+    }
+
+    /// The configured level, ignoring a session grant. A host shows this as
+    /// the setting and `level` as what is in force now.
+    pub fn base_level(&self) -> PermissionLevel {
+        *self
+            .base_level
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// Switches the base level for the rest of the session. Session grants
@@ -711,6 +717,18 @@ mod tests {
             engine.check(&request(AccessKind::Write, &outside)),
             PermissionDecision::Confirm { .. }
         ));
+    }
+
+    #[test]
+    fn a_grant_does_not_move_the_base_level() {
+        let (engine, _dir) = engine(PermissionLevel::WorkspaceAuto);
+        engine.escalate_full_auto(std::time::Duration::from_secs(60));
+        assert_eq!(engine.level(), PermissionLevel::FullAuto);
+        assert_eq!(engine.base_level(), PermissionLevel::WorkspaceAuto);
+
+        engine.set_base_level(PermissionLevel::FullAuto);
+        engine.revoke_all();
+        assert_eq!(engine.base_level(), PermissionLevel::FullAuto);
     }
 
     #[test]

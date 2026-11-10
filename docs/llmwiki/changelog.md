@@ -2523,3 +2523,13 @@
 - `TodoList` remembers an inferred close; `add` and `update_status` reopen
   such a list, while an explicit `close` and a locked host plan stay
   terminal. ADR 0046; released as 0.2.5.
+
+### The setting is not the grant (2026-11-10)
+
+- A live session's permission chip read "full auto" from an eight-hour
+  `FullAutoSession` grant while the persisted setting stayed
+  `workspace_auto`; after a restart the grant was gone, which looked like a
+  lost setting.
+- `PermissionEngine::base_level` and its dispatcher/driver forwards expose
+  the configured level, so a host can show the setting and the level in
+  force separately. ADR 0047; released as 0.2.6.
