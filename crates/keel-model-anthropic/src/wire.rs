@@ -8,10 +8,11 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use base64::Engine as _;
 use keel_core::{
-    ArgValue, ErrorCode, InteractionKind, InteractionOption, InteractionRequest, Message,
-    MessageRole, ModelChunk, ModelError, ModelRequest, ParamKind, TokenUsage, ToolArgs, ToolCallId,
-    ToolCallRequest, ToolSchema, TurnId,
+    ArgValue, ErrorCode, ImagePart, InteractionKind, InteractionOption, InteractionRequest,
+    Message, MessageRole, ModelChunk, ModelError, ModelRequest, ParamKind, TokenUsage, ToolArgs,
+    ToolCallId, ToolCallRequest, ToolSchema, TurnId,
 };
 use serde_json::{json, Map, Value};
 
@@ -60,8 +61,15 @@ fn messages_json(messages: &[Arc<Message>]) -> Vec<Value> {
         match message.role {
             MessageRole::System => {}
             MessageRole::User => {
-                if !message.content.is_empty() {
-                    out.push(json!({"role": "user", "content": message.content}));
+                if message.images.is_empty() {
+                    if !message.content.is_empty() {
+                        out.push(json!({"role": "user", "content": message.content}));
+                    }
+                } else {
+                    out.push(json!({
+                        "role": "user",
+                        "content": content_blocks(&message.content, &message.images),
+                    }));
                 }
             }
             MessageRole::Assistant => {
@@ -69,6 +77,7 @@ fn messages_json(messages: &[Arc<Message>]) -> Vec<Value> {
                 if !message.content.is_empty() {
                     blocks.push(json!({"type": "text", "text": message.content}));
                 }
+                blocks.extend(message.images.iter().map(image_block));
                 for call in &message.tool_calls {
                     blocks.push(json!({
                         "type": "tool_use",
@@ -82,10 +91,17 @@ fn messages_json(messages: &[Arc<Message>]) -> Vec<Value> {
                 }
             }
             MessageRole::Tool => {
+                // A tool_result accepts blocks, so a screenshot from a tool
+                // travels inside the result itself.
+                let content = if message.images.is_empty() {
+                    json!(message.content)
+                } else {
+                    content_blocks(&message.content, &message.images)
+                };
                 let block = json!({
                     "type": "tool_result",
                     "tool_use_id": message.tool_call_id.map(wire_call_id).unwrap_or_default(),
-                    "content": message.content,
+                    "content": content,
                 });
                 match out.last_mut() {
                     Some(previous)
@@ -104,6 +120,27 @@ fn messages_json(messages: &[Arc<Message>]) -> Vec<Value> {
         }
     }
     out
+}
+
+fn content_blocks(text: &str, images: &[ImagePart]) -> Value {
+    let mut blocks = Vec::new();
+    if !text.is_empty() {
+        blocks.push(json!({"type": "text", "text": text}));
+    }
+    blocks.extend(images.iter().map(image_block));
+    Value::Array(blocks)
+}
+
+fn image_block(image: &ImagePart) -> Value {
+    let data = base64::engine::general_purpose::STANDARD.encode(&image.data);
+    json!({
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": image.media_type,
+            "data": data,
+        }
+    })
 }
 
 fn tool_json(schema: &ToolSchema) -> Value {
@@ -516,6 +553,40 @@ mod tests {
         assert_eq!(body["messages"][2]["role"], "user");
         assert_eq!(body["messages"][2]["content"][0]["type"], "tool_result");
         assert_eq!(body["messages"][2]["content"][0]["tool_use_id"], "call-3");
+    }
+
+    #[test]
+    fn a_tool_image_travels_inside_the_tool_result() {
+        let mut result = Message::new(MessageRole::Tool, "captured 800x600")
+            .with_images(vec![ImagePart::png(vec![1, 2, 3])]);
+        result.tool_call_id = Some(ToolCallId::new(4));
+
+        let mut request = request();
+        request.messages = vec![Arc::new(result)];
+
+        let body = build_request(&request, "fallback");
+
+        let block = &body["messages"][0]["content"][0];
+        assert_eq!(block["type"], "tool_result");
+        assert_eq!(block["tool_use_id"], "call-4");
+        assert_eq!(block["content"][0]["type"], "text");
+        assert_eq!(block["content"][1]["type"], "image");
+        assert_eq!(block["content"][1]["source"]["media_type"], "image/png");
+        assert_eq!(block["content"][1]["source"]["data"], "AQID");
+    }
+
+    #[test]
+    fn a_user_image_becomes_content_blocks() {
+        let mut request = request();
+        request.messages = vec![Arc::new(
+            Message::user("what is this?").with_images(vec![ImagePart::png(vec![1, 2, 3])]),
+        )];
+
+        let body = build_request(&request, "fallback");
+
+        assert_eq!(body["messages"][0]["content"][0]["type"], "text");
+        assert_eq!(body["messages"][0]["content"][1]["type"], "image");
+        assert_eq!(body["messages"][0]["content"][1]["source"]["data"], "AQID");
     }
 
     #[test]

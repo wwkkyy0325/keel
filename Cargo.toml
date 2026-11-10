@@ -11,7 +11,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.9"
+version = "0.2.10"
 edition = "2021"
 rust-version = "1.80"
 license = "Apache-2.0"
@@ -22,6 +22,7 @@ categories = ["development-tools", "command-line-utilities"]
 
 [workspace.dependencies]
 async-trait = "0.1"
+base64 = "0.22"
 dotenvy = "0.15"
 keel-core = { version = "0.2.2", path = "crates/keel-core" }
 keel-model-anthropic = { version = "0.2.2", path = "crates/keel-model-anthropic" }

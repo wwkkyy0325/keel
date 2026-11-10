@@ -3,6 +3,26 @@
 Kernel crates and the reference host share the workspace version. A derived
 project pins a version and updates deliberately; see `docs/kernel-contract.md`.
 
+## 0.2.10 — 2026-11-10
+
+### Kernel
+
+- Messages and tool results can carry images (ADR 0051). `ImagePart` travels
+  in memory only; the session snapshot stores no image bytes, so an image is
+  evidence for the turn that produced it. The driver attaches a result's
+  images to its tool message.
+- The OpenAI-compatible adapter sends user content as an array and follows a
+  tool message carrying images with a user image message; the Anthropic
+  adapter puts images inside `tool_result` blocks and user content blocks.
+  Each image is charged 1024 tokens in the context estimate.
+
+### Evidence
+
+- Tests: a tool returning a PNG reaches the next model request with the image
+  on its tool message; both adapters encode a tool image and a user image,
+  including the `data:image/png;base64,...` URL and the Anthropic base64
+  source block.
+
 ## 0.2.9 — 2026-11-10
 
 ### Kernel

@@ -203,6 +203,9 @@ pub struct ToolResult {
     /// Tokens spent on behalf of this call outside the main model loop (a
     /// sub-agent). The driver adds them to the turn usage.
     pub usage: Option<TokenUsage>,
+    /// Images the model should see with this result, such as a screenshot.
+    /// The driver attaches them to the tool message for the next call.
+    pub images: Vec<crate::message::ImagePart>,
 }
 
 impl ToolResult {
@@ -218,6 +221,7 @@ impl ToolResult {
                 content: content.into(),
             },
             usage: None,
+            images: Vec::new(),
         }
     }
 
@@ -227,12 +231,20 @@ impl ToolResult {
             tool: tool.into(),
             outcome: ToolOutcome::Failure { error },
             usage: None,
+            images: Vec::new(),
         }
     }
 
     /// Records tokens spent by a delegated run so the turn budget sees them.
     pub fn with_usage(mut self, usage: TokenUsage) -> Self {
         self.usage = Some(usage);
+        self
+    }
+
+    /// Attaches images to the result; the driver hands them to the model with
+    /// the tool message.
+    pub fn with_images(mut self, images: Vec<crate::message::ImagePart>) -> Self {
+        self.images = images;
         self
     }
 

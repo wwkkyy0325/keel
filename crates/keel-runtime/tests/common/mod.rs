@@ -9,8 +9,8 @@ use async_trait::async_trait;
 use keel_core::{
     CancelToken, CompactionStep, ContextRecipe, Event, InteractionPolicy, InteractionPort,
     InteractionRequest, InteractionResponse, MemoryMode, MemoryPolicy, ModelProvider, ModelRoute,
-    PermissionLevel, Policy, PromotionMode, RiskLevel, TokenUsage, Tool, ToolArgs, ToolCtx,
-    ToolResult, ToolSchema, TurnId, TurnState, VerificationMode,
+    PermissionLevel, PermissionRequest, Policy, PromotionMode, RiskLevel, TokenUsage, Tool,
+    ToolArgs, ToolCtx, ToolError, ToolResult, ToolSchema, TurnId, TurnState, VerificationMode,
 };
 use keel_runtime::{
     validate_config, CodeSearchTool, ContextBuilder, DeferAllInteractionPort, DeleteFileTool,
@@ -59,9 +59,34 @@ pub fn runtime_config(
     }
 }
 
+/// A tool that returns an image, standing in for a screenshot capture.
+pub struct ImageProbeTool;
+
+#[async_trait]
+impl Tool for ImageProbeTool {
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "image_probe".to_owned(),
+            description: "Returns a tiny PNG.".to_owned(),
+            risk: RiskLevel::ReadOnly,
+            params: Vec::new(),
+        }
+    }
+
+    fn permission_requests(&self, _args: &ToolArgs) -> Result<Vec<PermissionRequest>, ToolError> {
+        Ok(Vec::new())
+    }
+
+    async fn call(&self, _args: ToolArgs, ctx: &ToolCtx) -> ToolResult {
+        ToolResult::success(ctx.call_id, "image_probe", "captured")
+            .with_images(vec![keel_core::ImagePart::png(vec![1, 2, 3])])
+    }
+}
+
 pub fn standard_registry(root: &Path) -> Arc<ToolRegistry> {
     let mut registry = ToolRegistry::new();
     registry.register(Arc::new(EchoTool::new())).unwrap();
+    registry.register(Arc::new(ImageProbeTool)).unwrap();
     registry.register(Arc::new(ReadFileTool::new())).unwrap();
     registry.register(Arc::new(ListDirTool::new())).unwrap();
     registry.register(Arc::new(MakeDirTool::new())).unwrap();

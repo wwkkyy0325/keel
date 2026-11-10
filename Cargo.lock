@@ -831,7 +831,7 @@ dependencies = [
 
 [[package]]
 name = "keel-cli"
-version = "0.2.9"
+version = "0.2.10"
 dependencies = [
  "async-trait",
  "crossterm",
@@ -854,7 +854,7 @@ dependencies = [
 
 [[package]]
 name = "keel-core"
-version = "0.2.9"
+version = "0.2.10"
 dependencies = [
  "async-trait",
  "serde",
@@ -865,9 +865,10 @@ dependencies = [
 
 [[package]]
 name = "keel-model-anthropic"
-version = "0.2.9"
+version = "0.2.10"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "keel-core",
  "reqwest",
  "serde_json",
@@ -876,9 +877,10 @@ dependencies = [
 
 [[package]]
 name = "keel-model-openai"
-version = "0.2.9"
+version = "0.2.10"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "keel-core",
  "reqwest",
  "serde_json",
@@ -887,7 +889,7 @@ dependencies = [
 
 [[package]]
 name = "keel-policy"
-version = "0.2.9"
+version = "0.2.10"
 dependencies = [
  "keel-core",
  "serde",
@@ -896,7 +898,7 @@ dependencies = [
 
 [[package]]
 name = "keel-runtime"
-version = "0.2.9"
+version = "0.2.10"
 dependencies = [
  "async-trait",
  "ignore",
@@ -912,7 +914,7 @@ dependencies = [
 
 [[package]]
 name = "keel-testkit"
-version = "0.2.9"
+version = "0.2.10"
 dependencies = [
  "keel-core",
  "keel-runtime",

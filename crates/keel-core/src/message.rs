@@ -1,6 +1,35 @@
 use crate::ids::ToolCallId;
 use crate::model::ToolCallRequest;
 
+/// One image attached to a message.
+///
+/// The bytes travel with the in-memory conversation only: the session
+/// snapshot stores no image data, so a screenshot is evidence for the turn
+/// that captured it and a later turn must ask for a new one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImagePart {
+    /// MIME type such as `image/png`.
+    pub media_type: String,
+    pub data: Vec<u8>,
+}
+
+/// What one image costs the context budget. Providers resize an image to a
+/// fixed budget, so the byte length is not a token count.
+pub const ESTIMATED_IMAGE_TOKENS: u32 = 1024;
+
+impl ImagePart {
+    pub fn new(media_type: impl Into<String>, data: Vec<u8>) -> Self {
+        Self {
+            media_type: media_type.into(),
+            data,
+        }
+    }
+
+    pub fn png(data: Vec<u8>) -> Self {
+        Self::new("image/png", data)
+    }
+}
+
 /// Role of a message in the model conversation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageRole {
@@ -23,6 +52,9 @@ pub struct Message {
     /// Provider reasoning text that must be echoed back with tool calls for
     /// thinking-mode models such as DeepSeek.
     pub reasoning_content: Option<String>,
+    /// Images this message carries. A tool that captures a screenshot attaches
+    /// it to its result message so the next model call can see it.
+    pub images: Vec<ImagePart>,
 }
 
 impl Message {
@@ -33,6 +65,7 @@ impl Message {
             tool_calls: Vec::new(),
             tool_call_id: None,
             reasoning_content: None,
+            images: Vec::new(),
         }
     }
 
@@ -56,6 +89,7 @@ impl Message {
             tool_calls,
             tool_call_id: None,
             reasoning_content: None,
+            images: Vec::new(),
         }
     }
 
@@ -73,6 +107,7 @@ impl Message {
             tool_calls: Vec::new(),
             tool_call_id: Some(call_id),
             reasoning_content: None,
+            images: Vec::new(),
         }
     }
 
@@ -85,7 +120,14 @@ impl Message {
             tool_calls: Vec::new(),
             tool_call_id: None,
             reasoning_content: None,
+            images: Vec::new(),
         }
+    }
+
+    /// Attaches images the model should see with this message.
+    pub fn with_images(mut self, images: Vec<ImagePart>) -> Self {
+        self.images = images;
+        self
     }
 
     /// Cheap token estimate for budget checks, including tool-call payloads.
@@ -102,6 +144,11 @@ impl Message {
                     total = total.saturating_add(value.estimated_tokens());
                 }
             }
+        }
+        // Providers resize an image to a fixed budget; the byte length is not
+        // a token count, so every image is charged the same estimate.
+        for _ in &self.images {
+            total = total.saturating_add(ESTIMATED_IMAGE_TOKENS);
         }
         total
     }

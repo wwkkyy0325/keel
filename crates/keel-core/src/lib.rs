@@ -44,7 +44,7 @@ pub use interaction::{
     GrantScope, InteractionKind, InteractionOption, InteractionOutcome, InteractionPolicy,
     InteractionPort, InteractionRequest, InteractionResponse, OnTimeout,
 };
-pub use message::{Message, MessageRole};
+pub use message::{ImagePart, Message, MessageRole, ESTIMATED_IMAGE_TOKENS};
 pub use model::{
     ModelChunk, ModelError, ModelProvider, ModelRequest, ModelStream, TokenUsage, ToolCallRequest,
 };

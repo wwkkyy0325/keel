@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
 
+use base64::Engine as _;
 use keel_core::{
-    ArgValue, ErrorCode, InteractionKind, InteractionOption, InteractionRequest, Message,
-    MessageRole, ModelError, ModelRequest, ParamKind, ReasoningLevel, ToolArgs, ToolCallId,
-    ToolCallRequest, ToolSchema, TurnId,
+    ArgValue, ErrorCode, ImagePart, InteractionKind, InteractionOption, InteractionRequest,
+    Message, MessageRole, ModelError, ModelRequest, ParamKind, ReasoningLevel, ToolArgs,
+    ToolCallId, ToolCallRequest, ToolSchema, TurnId,
 };
 use serde_json::{json, Map, Value};
 
@@ -28,11 +29,15 @@ pub fn build_request(
     // carries reasoning is the other, which covers providers that think by
     // default while the profile advertises no reasoning support.
     let include_reasoning = reasoning.is_some() || request.thinking_budget > 0;
-    let messages: Vec<Value> = request
-        .messages
-        .iter()
-        .map(|message| message_json(message, include_reasoning))
-        .collect();
+    // A tool message carries text only in this wire format, so images from a
+    // tool result follow it as a user message with the image content.
+    let mut messages: Vec<Value> = Vec::with_capacity(request.messages.len());
+    for message in &request.messages {
+        messages.push(message_json(message, include_reasoning));
+        if message.role == MessageRole::Tool && !message.images.is_empty() {
+            messages.push(tool_image_message(message));
+        }
+    }
     let mut tools: Vec<Value> = request.tools.iter().map(tool_json).collect();
     if request.control_tool {
         tools.push(control_tool_json());
@@ -206,7 +211,15 @@ impl ToolCallAccumulator {
 fn message_json(message: &Message, include_reasoning: bool) -> Value {
     let mut value = Map::new();
     value.insert("role".to_owned(), json!(role_str(message.role)));
-    value.insert("content".to_owned(), json!(message.content));
+    // A user or assistant message with images becomes a content array. A tool
+    // message keeps a string here; its images follow as a separate message.
+    if message.role != MessageRole::Tool && !message.images.is_empty() {
+        let mut parts = vec![json!({"type": "text", "text": message.content})];
+        parts.extend(message.images.iter().map(image_json));
+        value.insert("content".to_owned(), Value::Array(parts));
+    } else {
+        value.insert("content".to_owned(), json!(message.content));
+    }
     if message.role == MessageRole::Assistant
         && (include_reasoning || message.reasoning_content.is_some())
     {
@@ -239,6 +252,29 @@ fn message_json(message: &Message, include_reasoning: bool) -> Value {
         value.insert("tool_call_id".to_owned(), json!(wire_call_id(call_id)));
     }
     Value::Object(value)
+}
+
+/// Images from a tool result follow it as a user message; this wire format has
+/// no image content on a `tool` message.
+fn tool_image_message(message: &Message) -> Value {
+    let mut parts = vec![json!({
+        "type": "text",
+        "text": "Images returned with the tool result above."
+    })];
+    parts.extend(message.images.iter().map(image_json));
+    json!({ "role": "user", "content": Value::Array(parts) })
+}
+
+fn image_json(image: &ImagePart) -> Value {
+    json!({
+        "type": "image_url",
+        "image_url": { "url": data_url(image) }
+    })
+}
+
+fn data_url(image: &ImagePart) -> String {
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&image.data);
+    format!("data:{};base64,{}", image.media_type, encoded)
 }
 
 fn tool_json(schema: &ToolSchema) -> Value {
@@ -430,5 +466,59 @@ mod tests {
 
         assert!(body.get("reasoning_effort").is_none());
         assert_eq!(body["messages"][0]["reasoning_content"], "looked around");
+    }
+
+    fn image_request(messages: Vec<Arc<Message>>) -> ModelRequest {
+        ModelRequest {
+            messages,
+            tools: Vec::new(),
+            control_tool: false,
+            thinking_budget: 0,
+            max_output_tokens: 128,
+            route: ModelRoute {
+                provider: "openai-compatible".to_owned(),
+                model: "m".to_owned(),
+            },
+            reasoning: ReasoningLevel::Low,
+        }
+    }
+
+    #[test]
+    fn a_user_image_becomes_a_content_array() {
+        let request = image_request(vec![Arc::new(
+            Message::user("what is this?").with_images(vec![ImagePart::png(vec![1, 2, 3])]),
+        )]);
+
+        let body = build_request(&request, "fallback", None);
+
+        assert_eq!(body["messages"][0]["content"][0]["type"], "text");
+        assert_eq!(body["messages"][0]["content"][0]["text"], "what is this?");
+        assert_eq!(body["messages"][0]["content"][1]["type"], "image_url");
+        assert_eq!(
+            body["messages"][0]["content"][1]["image_url"]["url"],
+            "data:image/png;base64,AQID"
+        );
+    }
+
+    #[test]
+    fn a_tool_image_follows_the_tool_message() {
+        let request = image_request(vec![Arc::new(
+            Message::tool_result(ToolCallId::new(9), "screen_capture", "captured 800x600")
+                .with_images(vec![ImagePart::png(vec![1, 2, 3])]),
+        )]);
+
+        let body = build_request(&request, "fallback", None);
+
+        assert_eq!(body["messages"][0]["role"], "tool");
+        assert_eq!(
+            body["messages"][0]["content"],
+            "screen_capture: captured 800x600"
+        );
+        assert_eq!(body["messages"][1]["role"], "user");
+        assert_eq!(body["messages"][1]["content"][1]["type"], "image_url");
+        assert_eq!(
+            body["messages"][1]["content"][1]["image_url"]["url"],
+            "data:image/png;base64,AQID"
+        );
     }
 }

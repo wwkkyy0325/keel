@@ -2083,3 +2083,39 @@ async fn delegated_usage_counts_toward_the_turn() {
         outcome.usage
     );
 }
+
+#[tokio::test]
+async fn a_tool_image_reaches_the_next_model_call() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&["image_probe"], 4, PermissionLevel::WorkspaceAuto);
+    let seen: SeenRequests = Arc::new(Mutex::new(Vec::new()));
+    let model = ToolRecordingModel {
+        inner: MockModel::new(vec![
+            MockStep::ToolCall {
+                name: "image_probe".to_owned(),
+                args: ToolArgs::new(),
+            },
+            MockStep::Text("seen".to_owned()),
+        ]),
+        seen: seen.clone(),
+    };
+    let driver = common::build_driver(model, config, events, dir.path(), common::test_limits());
+
+    let outcome = driver.run("capture", CancelToken::new()).await;
+
+    assert!(outcome.is_done(), "{outcome:?}");
+    let requests = seen.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let messages = &requests.last().expect("the second request").1;
+    let tool_message = messages
+        .iter()
+        .find(|message| message.role == MessageRole::Tool && message.tool_call_id.is_some())
+        .expect("the tool result message");
+    assert_eq!(
+        tool_message.images.len(),
+        1,
+        "the image rides the tool message"
+    );
+    assert_eq!(tool_message.images[0].media_type, "image/png");
+    assert_eq!(tool_message.images[0].data, vec![1, 2, 3]);
+}

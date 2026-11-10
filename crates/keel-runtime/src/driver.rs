@@ -1644,11 +1644,13 @@ impl<M: ModelProvider> TurnDriver<M> {
                     } else {
                         content
                     };
-                    messages.push(Arc::new(Message::tool_result(
-                        result.call_id,
-                        &result.tool,
-                        live,
-                    )));
+                    let mut tool_message = Message::tool_result(result.call_id, &result.tool, live);
+                    // A screenshot rides with the tool message so the next
+                    // model call can see it. The text projection is unchanged.
+                    if !result.images.is_empty() {
+                        tool_message = tool_message.with_images(result.images.clone());
+                    }
+                    messages.push(Arc::new(tool_message));
 
                     if matches!(&result.outcome, ToolOutcome::Success { .. })
                         && call_mutates_workspace(call)
