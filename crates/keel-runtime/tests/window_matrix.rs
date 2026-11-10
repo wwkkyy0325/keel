@@ -76,6 +76,7 @@ fn config_for(window: u32, tools: bool) -> keel_runtime::RuntimeConfig {
     config.max_output_tokens = max_output;
     config.context_window = window;
     config.context.budget_tokens = window.saturating_sub(max_output);
+    config.context.max_budget_tokens = config.context.budget_tokens;
     config
 }
 

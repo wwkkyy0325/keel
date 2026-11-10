@@ -526,6 +526,7 @@ async fn run() -> Result<ExitCode, KernelError> {
         memo: !args.no_memo,
         bounded_tools: !args.unbounded_tools,
         capture_context: args.context_snapshots,
+        ..KernelOptions::default()
     };
     let workspace_root = permissions.root().to_path_buf();
     let roots: Vec<String> = permissions

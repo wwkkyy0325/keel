@@ -31,6 +31,9 @@ pub enum CompactionStep {
 pub struct ContextRecipe {
     pub stages: Vec<String>,
     pub budget_tokens: u32,
+    /// Ceiling for in-session budget escalation. Equal to `budget_tokens`
+    /// when the profile does not ask for a ladder.
+    pub max_budget_tokens: u32,
     pub compaction: Vec<CompactionStep>,
 }
 

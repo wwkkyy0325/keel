@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -15,7 +15,7 @@ use keel_core::{
 };
 
 use crate::background::BackgroundTasks;
-use crate::context::ContextBuilder;
+use crate::context::{render_covered_index, ContextBuilder};
 use crate::dispatch::ToolDispatcher;
 use crate::event_log::EventLog;
 use crate::fsm::TurnFsm;
@@ -25,8 +25,8 @@ use crate::interjection::{InterjectionPush, InterjectionQueue};
 use crate::permission::PermissionEngine;
 use crate::registry::ToolRegistry;
 use crate::summarizer::{
-    clip_to_tokens, memo_budget, transcript_text, trim_to_budget, Summarizer, MEMO_BUDGET_FLOOR,
-    MIN_TRANSCRIPT_TOKENS, SUMMARY_INPUT_MARGIN,
+    clip_to_tokens, memo_budget, split_segment_memo, transcript_text, trim_to_budget, Summarizer,
+    MEMO_BUDGET_FLOOR, MIN_TRANSCRIPT_TOKENS, SUMMARY_INPUT_MARGIN,
 };
 use crate::summary::{compact_args, summarize_output};
 use crate::verification::AcceptanceVerifier;
@@ -34,6 +34,10 @@ use crate::verification::AcceptanceVerifier;
 /// How long a model call may stay silent (connect, or between chunks).
 const MODEL_CALL_TIMEOUT: Duration = Duration::from_secs(300);
 const SUMMARY_TIMEOUT: Duration = Duration::from_secs(30);
+/// Rewrite the rolling summary at most once every this many seals unless the
+/// pressure demands it. Every rewrite changes the history prefix, so a seal
+/// streak otherwise pays a cache miss per turn and discards recent topics.
+const SUMMARY_EVERY_SEALS: u32 = 3;
 /// Bounds how many times one turn restarts itself because the model stopped
 /// while its task list still had unfinished items.
 const MAX_CONTINUATIONS: u32 = 6;
@@ -53,6 +57,9 @@ pub struct KernelOptions {
     /// Keep the turn-start message list in the outcome. Off by default: the
     /// snapshot is large and only a host that persists it needs the copy.
     pub capture_context: bool,
+    /// Rewrite the rolling summary at most once per this many seals, unless
+    /// pressure reaches Amber. The records of skipped seals stay in context.
+    pub summary_every_seals: u32,
 }
 
 impl Default for KernelOptions {
@@ -62,6 +69,7 @@ impl Default for KernelOptions {
             memo: true,
             bounded_tools: true,
             capture_context: false,
+            summary_every_seals: SUMMARY_EVERY_SEALS,
         }
     }
 }
@@ -237,7 +245,13 @@ pub struct TurnDriver<M> {
     session: Mutex<Session>,
     context_window: u32,
     output_reserve: u32,
-    working_set: u32,
+    /// The profile's base budget until a real signal raises it. Monotonic for
+    /// the engine's lifetime, so the history prefix (and its cache) stays
+    /// stable across turns.
+    context_budget: AtomicU32,
+    /// Escalation ceiling: the profile's maximum, bounded by the model
+    /// capacity after the output reserve.
+    context_cap: u32,
     /// Measured difference between reported input tokens and the kernel
     /// estimate: tool schemas and provider template overhead.
     overhead: AtomicU64,
@@ -251,6 +265,10 @@ pub struct TurnDriver<M> {
     /// Pressure read on the previous turn; the summary update happens before
     /// this turn's context is assembled, so this is the freshest signal.
     last_level: Mutex<PressureLevel>,
+    /// Seals since the last summary rewrite. Rewriting on every seal breaks
+    /// the cached prefix and drops still-recent topics; the index and the
+    /// uncovered records cover the gap between rewrites.
+    seals_since_summary: AtomicU32,
     next_turn: AtomicU64,
     /// User messages that arrived mid-turn, delivered at safe points.
     interjections: InterjectionQueue,
@@ -273,7 +291,14 @@ impl<M: ModelProvider> TurnDriver<M> {
             config.limits.tool_timeout,
         )
         .with_interactions(config.interactions.clone());
-        let working_set = policy.context_recipe().budget_tokens;
+        let recipe = policy.context_recipe();
+        let base = recipe.budget_tokens.max(1);
+        let capacity = config
+            .context_window
+            .saturating_sub(config.max_output_tokens);
+        // Never below the base: a model smaller than the profile is a host
+        // configuration problem, not a reason to shrink the ladder below it.
+        let context_cap = recipe.max_budget_tokens.max(base).min(capacity.max(base));
         Self {
             model,
             tools,
@@ -290,7 +315,8 @@ impl<M: ModelProvider> TurnDriver<M> {
             session: Mutex::new(Session::new()),
             context_window: config.context_window,
             output_reserve: config.max_output_tokens,
-            working_set,
+            context_budget: AtomicU32::new(base),
+            context_cap,
             overhead: AtomicU64::new(0),
             summarizer: None,
             outputs_dir: None,
@@ -298,6 +324,7 @@ impl<M: ModelProvider> TurnDriver<M> {
             background: config.background,
             options: config.options,
             last_level: Mutex::new(PressureLevel::Green),
+            seals_since_summary: AtomicU32::new(0),
             next_turn: AtomicU64::new(1),
             interjections: InterjectionQueue::default(),
             active_turn: AtomicU64::new(0),
@@ -308,6 +335,34 @@ impl<M: ModelProvider> TurnDriver<M> {
     pub fn with_summarizer(mut self, summarizer: Arc<dyn Summarizer>) -> Self {
         self.summarizer = Some(summarizer);
         self
+    }
+
+    /// Rewrites the summary every this many seals (at least one) unless the
+    /// pressure reaches Amber. The default is three.
+    pub fn with_summary_cadence(mut self, every_seals: u32) -> Self {
+        self.options.summary_every_seals = every_seals.max(1);
+        self
+    }
+
+    /// Whether this seal should rewrite the rolling summary.
+    ///
+    /// Called once per seal: Amber pressure (or worse) rewrites immediately;
+    /// otherwise every third seal does. A skipped seal leaves its record
+    /// uncovered, so the structured record carries it until the next rewrite.
+    fn summary_due(&self) -> bool {
+        let pressure = *self
+            .last_level
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let seals = self
+            .seals_since_summary
+            .load(Ordering::Relaxed)
+            .saturating_add(1);
+        let due =
+            pressure >= PressureLevel::Amber || seals >= self.options.summary_every_seals.max(1);
+        self.seals_since_summary
+            .store(if due { 0 } else { seals }, Ordering::Relaxed);
+        due
     }
 
     /// Sets where long tool outputs spill. The host should allow reads on this
@@ -591,6 +646,38 @@ impl<M: ModelProvider> TurnDriver<M> {
         }
     }
 
+    fn current_context_budget(&self) -> u32 {
+        self.context_budget.load(Ordering::Relaxed)
+    }
+
+    /// The working set in force, including any ladder escalation. Hosts use
+    /// this for status displays; the base lives in the policy recipe.
+    pub fn working_set(&self) -> u32 {
+        self.current_context_budget()
+    }
+
+    /// Raises the working set when the content genuinely does not fit, up to
+    /// the profile's maximum and the model capacity. Monotonic for the
+    /// engine's lifetime so the history prefix stays cache-friendly.
+    fn escalate_context(&self, turn_id: keel_core::TurnId, reason: &str) -> bool {
+        let from = self.current_context_budget();
+        if from >= self.context_cap {
+            return false;
+        }
+        let to = from.saturating_mul(2).min(self.context_cap);
+        if to <= from {
+            return false;
+        }
+        self.context_budget.store(to, Ordering::Relaxed);
+        self.events.append(Event::ContextEscalated {
+            turn_id,
+            from,
+            to,
+            reason: reason.to_owned(),
+        });
+        true
+    }
+
     fn escalate_reasoning(&self, turn_id: keel_core::TurnId, stats: &mut TurnStats, reason: &str) {
         let from = stats.reasoning;
         let to = from.next();
@@ -633,12 +720,11 @@ impl<M: ModelProvider> TurnDriver<M> {
             .load(Ordering::Relaxed)
             .min(u64::from(u32::MAX)) as u32;
         let mut recipe = self.policy.context_recipe();
-        recipe.budget_tokens = recipe.budget_tokens.saturating_sub(overhead);
-        let governor = ContextGovernor::new(
-            self.context_window,
-            self.working_set.saturating_sub(overhead),
-            self.output_reserve,
-        );
+        // The profile's budget is the base; the ladder may have raised it.
+        let mut working_set = self.current_context_budget().saturating_sub(overhead);
+        recipe.budget_tokens = working_set;
+        let mut governor =
+            ContextGovernor::new(self.context_window, working_set, self.output_reserve);
         let (change, transcript, opened_topic, sealed_record, absorbable, previous_summary) = {
             let mut session = self
                 .session
@@ -704,9 +790,10 @@ impl<M: ModelProvider> TurnDriver<M> {
             });
         }
 
-        // One rewritten summary per seal. The structured records stay the
-        // fallback when the call fails, and open items are never absorbed.
-        if self.options.memo {
+        // A rewritten summary every third seal, or at Amber pressure. The
+        // structured records stay the fallback when the call fails or the
+        // rewrite is deferred, and open items are never absorbed.
+        if self.options.memo && change.sealed.is_some() && self.summary_due() {
             if let (Some(summarizer), Some(segment_id), Some(record), Some(messages)) = (
                 self.summarizer.as_ref(),
                 change.sealed,
@@ -787,11 +874,17 @@ impl<M: ModelProvider> TurnDriver<M> {
                     };
                     match result {
                         Some(Ok(Ok(summary))) => {
+                            // The same call carries a short memo of the
+                            // segment it sealed; recall returns it later.
+                            let (memo, summary_text) = split_segment_memo(&summary.text);
                             let mut session = self
                                 .session
                                 .lock()
                                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-                            let revision = session.set_summary(&summary.text, &covers, budget);
+                            if let Some(memo) = memo {
+                                session.set_segment_memo(segment_id, &memo);
+                            }
+                            let revision = session.set_summary(&summary_text, &covers, budget);
                             drop(session);
                             if let Some(revision) = revision {
                                 stats.usage.input_tokens = stats
@@ -811,7 +904,7 @@ impl<M: ModelProvider> TurnDriver<M> {
                                     turn_id,
                                     revision,
                                     covers,
-                                    chars: summary.text.chars().count() as u32,
+                                    chars: summary_text.chars().count() as u32,
                                     budget,
                                     fallback: false,
                                 });
@@ -865,7 +958,7 @@ impl<M: ModelProvider> TurnDriver<M> {
             }
         }
 
-        let (history, records, facts, summary, recalled, session_growth) = {
+        let (history, records, facts, summary, recalled, session_growth, covered_index) = {
             let session = self
                 .session
                 .lock()
@@ -881,8 +974,19 @@ impl<M: ModelProvider> TurnDriver<M> {
                     Vec::new()
                 },
                 session.last_turn_tokens(),
+                render_covered_index(&session.covered_index()),
             )
         };
+        // The summary is a rewrite and can drop a topic; the index keeps the
+        // covered segments discoverable next to it.
+        let summary_view = summary.map(|summary| {
+            let mut text = summary.text;
+            if !covered_index.trim().is_empty() {
+                text.push_str("\n\n[covered segments]\n");
+                text.push_str(&covered_index);
+            }
+            keel_core::SessionSummary { text, ..summary }
+        });
         let used = estimate_tokens(&self.system_prompt)
             .saturating_add(history.iter().fold(0u32, |total, message| {
                 total.saturating_add(message.estimated_tokens())
@@ -907,7 +1011,7 @@ impl<M: ModelProvider> TurnDriver<M> {
             history: &history,
             records: &records,
             summary: if self.options.memo {
-                summary.as_ref()
+                summary_view.as_ref()
             } else {
                 None
             },
@@ -1059,18 +1163,38 @@ impl<M: ModelProvider> TurnDriver<M> {
             });
             let wrap_up_fits =
                 estimated_tokens.saturating_add(estimate_tokens(WRAP_UP)) <= recipe.budget_tokens;
-            if pressure.level == PressureLevel::Red && !wrapped_up && wrap_up_fits {
-                wrapped_up = true;
-                stats.awaiting_wrap_up = true;
-                messages.push(Arc::new(Message::system(WRAP_UP)));
-                self.events.append(Event::WrapUpInjected {
-                    turn_id,
-                    used: estimated_tokens,
-                    ceiling: pressure.ceiling,
-                });
-                continue 'turn;
+            if pressure.level == PressureLevel::Red && !wrapped_up {
+                // A larger working set beats asking the model to wrap up: try
+                // the ladder first, and only condense when it is at the cap.
+                if self.escalate_context(turn_id, "pressure") {
+                    working_set = self.current_context_budget().saturating_sub(overhead);
+                    recipe.budget_tokens = working_set;
+                    governor =
+                        ContextGovernor::new(self.context_window, working_set, self.output_reserve);
+                    continue 'turn;
+                }
+                if wrap_up_fits {
+                    wrapped_up = true;
+                    stats.awaiting_wrap_up = true;
+                    messages.push(Arc::new(Message::system(WRAP_UP)));
+                    self.events.append(Event::WrapUpInjected {
+                        turn_id,
+                        used: estimated_tokens,
+                        ceiling: pressure.ceiling,
+                    });
+                    continue 'turn;
+                }
             }
             if estimated_tokens > recipe.budget_tokens {
+                // The content no longer fits: raise the working set before
+                // dropping older tool output.
+                if self.escalate_context(turn_id, "overflow") {
+                    working_set = self.current_context_budget().saturating_sub(overhead);
+                    recipe.budget_tokens = working_set;
+                    governor =
+                        ContextGovernor::new(self.context_window, working_set, self.output_reserve);
+                    continue 'turn;
+                }
                 let before = estimated_tokens;
                 let elided = elide_old_tool_results(&mut messages);
                 if elided > 0 {
@@ -1163,6 +1287,9 @@ impl<M: ModelProvider> TurnDriver<M> {
 
             let mut round_text = String::new();
             let mut round_reasoning = String::new();
+            // A thinking provider may return an empty reasoning string; the
+            // wire still has to echo the field on the tool-call message.
+            let mut round_thought = false;
             let mut calls = Vec::new();
             let mut pending_interactions: Vec<InteractionRequest> = Vec::new();
 
@@ -1223,6 +1350,7 @@ impl<M: ModelProvider> TurnDriver<M> {
                         round_text.push_str(&delta);
                     }
                     Ok(Some(Ok(ModelChunk::ThinkingDelta(delta)))) => {
+                        round_thought = true;
                         round_reasoning.push_str(&delta);
                     }
                     Ok(Some(Ok(ModelChunk::ToolCall(call)))) => calls.push(call),
@@ -1393,7 +1521,7 @@ impl<M: ModelProvider> TurnDriver<M> {
 
                 let mut tool_call_message = Message::assistant_tool_calls(calls.clone());
                 tool_call_message.content = round_text;
-                if !round_reasoning.is_empty() {
+                if round_thought {
                     tool_call_message = tool_call_message.with_reasoning(round_reasoning.clone());
                 }
                 messages.push(Arc::new(tool_call_message));

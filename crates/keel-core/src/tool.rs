@@ -94,8 +94,16 @@ impl ToolSchema {
         }
         for name in args.values.keys() {
             if !self.params.iter().any(|param| &param.name == name) {
+                // Naming the accepted arguments turns the model's next call
+                // into a fix instead of a guess.
+                let accepted: Vec<&str> = self
+                    .params
+                    .iter()
+                    .map(|param| param.name.as_str())
+                    .collect();
                 return Err(ToolError::invalid_arguments(format!(
-                    "unknown argument `{name}`"
+                    "unknown argument `{name}`; accepted: {}",
+                    accepted.join(", ")
                 )));
             }
         }

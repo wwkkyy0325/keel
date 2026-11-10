@@ -129,6 +129,8 @@ pub enum TodoError {
     Locked,
     MultipleInProgress,
     Closed,
+    /// The list already closed with a different outcome.
+    AlreadyClosed(TodoState),
     NotComplete,
     InvalidState,
     /// A locked host plan only advances the current item.
@@ -151,6 +153,9 @@ impl fmt::Display for TodoError {
                 write!(f, "only one item can be in progress")
             }
             Self::Closed => write!(f, "todo list is closed"),
+            Self::AlreadyClosed(state) => {
+                write!(f, "todo list is already {}", state.as_str())
+            }
             Self::NotComplete => write!(f, "not every item is completed"),
             Self::InvalidState => write!(f, "invalid todo state transition"),
             Self::OutOfOrder => write!(f, "a locked host plan only advances the current item"),
@@ -233,23 +238,28 @@ impl TodoList {
     }
 
     /// Closes the list explicitly. `Completed` requires every item to be done.
+    ///
+    /// Closing into the state the list already holds is a no-op: the list
+    /// closes itself once every item is terminal, so a model that asks for the
+    /// outcome it can already see must not be told it failed.
     pub fn close(&mut self, state: TodoState) -> Result<(), TodoError> {
-        if self.state.is_closed() {
-            return Err(TodoError::Closed);
+        if state == TodoState::Active {
+            return Err(TodoError::InvalidState);
         }
-        match state {
-            TodoState::Completed => {
-                if self.items.is_empty()
-                    || self
-                        .items
-                        .iter()
-                        .any(|item| item.status != TodoStatus::Completed)
-                {
-                    return Err(TodoError::NotComplete);
-                }
-            }
-            TodoState::Failed | TodoState::Abandoned => {}
-            TodoState::Active => return Err(TodoError::InvalidState),
+        if self.state == state {
+            return Ok(());
+        }
+        if self.state.is_closed() {
+            return Err(TodoError::AlreadyClosed(self.state));
+        }
+        if state == TodoState::Completed
+            && (self.items.is_empty()
+                || self
+                    .items
+                    .iter()
+                    .any(|item| item.status != TodoStatus::Completed))
+        {
+            return Err(TodoError::NotComplete);
         }
         self.state = state;
         self.revision = self.revision.saturating_add(1);
@@ -513,5 +523,34 @@ mod tests {
         todos.close(TodoState::Abandoned).unwrap();
         assert_eq!(todos.state, TodoState::Abandoned);
         assert_eq!(todos.add_host("two"), Err(TodoError::Closed));
+    }
+
+    #[test]
+    fn closing_into_the_current_outcome_is_a_no_op() {
+        let mut todos = TodoList::new();
+        let id = todos.add_host("one").unwrap();
+        todos.update_status(id, TodoStatus::Completed).unwrap();
+        assert_eq!(todos.state, TodoState::Completed);
+        assert_eq!(todos.close(TodoState::Completed), Ok(()));
+        assert_eq!(
+            todos.close(TodoState::Abandoned),
+            Err(TodoError::AlreadyClosed(TodoState::Completed))
+        );
+        assert_eq!(
+            TodoError::AlreadyClosed(TodoState::Completed).to_string(),
+            "todo list is already completed"
+        );
+    }
+
+    #[test]
+    fn an_explicit_close_is_also_idempotent() {
+        let mut todos = TodoList::new();
+        todos.add_host("one").unwrap();
+        todos.close(TodoState::Abandoned).unwrap();
+        assert_eq!(todos.close(TodoState::Abandoned), Ok(()));
+        assert_eq!(
+            todos.close(TodoState::Failed),
+            Err(TodoError::AlreadyClosed(TodoState::Abandoned))
+        );
     }
 }

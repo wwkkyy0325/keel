@@ -43,6 +43,11 @@ fn unknown_argument_is_rejected() {
     args.insert("extra", ArgValue::Boolean(true));
     let error = schema().validate(&args).unwrap_err();
     assert_eq!(error.code, keel_core::ErrorCode::InvalidArguments);
+    assert!(
+        error.message.contains("accepted: text"),
+        "the error names what the tool accepts: {}",
+        error.message
+    );
 }
 
 #[test]

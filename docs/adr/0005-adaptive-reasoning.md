@@ -70,3 +70,11 @@ tool calls. An adapter cannot treat reasoning as a local UI setting.
 - Model-selected effort: unreliable and manipulable.
 - Starting at `Off`: without a verifier, a plausible wrong answer produces no
   signal, so the turn may never escalate.
+
+## Amendment (2026-11-09)
+
+- A thinking round that returns an empty reasoning string still marks the
+  assistant tool-call message: the provider requires the field, and an empty
+  string is the value it returned. The wire includes `reasoning_content` when a
+  message already carries it, so a provider that thinks by default works even
+  when the profile advertises no budget or effort level.

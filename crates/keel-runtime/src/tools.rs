@@ -2967,7 +2967,24 @@ impl TodoTool {
                         ));
                     }
                 };
-                todos.close(state).map_err(todo_error)?;
+                match todos.close(state) {
+                    Ok(()) => {}
+                    // The model cannot fix what it cannot see: name the items
+                    // that still block a completed close.
+                    Err(TodoError::NotComplete) => {
+                        let open: Vec<String> = todos
+                            .items
+                            .iter()
+                            .filter(|item| item.status != TodoStatus::Completed)
+                            .map(|item| format!("#{} {}", item.id, item.text))
+                            .collect();
+                        return Err(ToolError::invalid_arguments(format!(
+                            "not every item is completed: {}",
+                            open.join(", ")
+                        )));
+                    }
+                    Err(error) => return Err(todo_error(error)),
+                }
             }
             "list" => {}
             other => {
@@ -3135,6 +3152,50 @@ mod todo_tool_tests {
 
         let result = tool.call(update, &ctx()).await;
         assert!(result.error().is_some(), "closed lists reject updates");
+    }
+
+    #[tokio::test]
+    async fn close_succeeds_when_the_list_closed_itself() {
+        let todos = Arc::new(Mutex::new(TodoList::new()));
+        let id = todos
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .add_host("chapter 1")
+            .unwrap();
+        let tool = TodoTool::new(todos);
+
+        let mut update = ToolArgs::new();
+        update.insert("op", ArgValue::String("update".to_owned()));
+        update.insert("id", ArgValue::Integer(id as i64));
+        update.insert("status", ArgValue::String("completed".to_owned()));
+        let _ = tool.call(update, &ctx()).await;
+
+        let mut close = ToolArgs::new();
+        close.insert("op", ArgValue::String("close".to_owned()));
+        close.insert("outcome", ArgValue::String("completed".to_owned()));
+        let result = tool.call(close, &ctx()).await;
+        assert!(content(&result).contains("[tasks] completed: 1/1"));
+    }
+
+    #[tokio::test]
+    async fn close_names_the_items_that_are_not_done() {
+        let todos = Arc::new(Mutex::new(TodoList::new()));
+        {
+            let mut list = todos
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            list.add_model("one").unwrap();
+            list.add_model("two").unwrap();
+        }
+        let tool = TodoTool::new(todos);
+
+        let mut close = ToolArgs::new();
+        close.insert("op", ArgValue::String("close".to_owned()));
+        close.insert("outcome", ArgValue::String("completed".to_owned()));
+        let result = tool.call(close, &ctx()).await;
+        let error = result.error().expect("close is rejected");
+        assert!(error.message.contains("#1 one"), "{}", error.message);
+        assert!(error.message.contains("#2 two"), "{}", error.message);
     }
 }
 

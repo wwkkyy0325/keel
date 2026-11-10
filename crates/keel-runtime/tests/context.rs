@@ -57,6 +57,7 @@ fn recipe(stages: &[&str], budget_tokens: u32) -> ContextRecipe {
     ContextRecipe {
         stages: stages.iter().map(|stage| (*stage).to_owned()).collect(),
         budget_tokens,
+        max_budget_tokens: budget_tokens,
         compaction: Vec::<CompactionStep>::new(),
     }
 }

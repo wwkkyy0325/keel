@@ -24,7 +24,9 @@ pub fn build_request(
     };
     // Thinking-mode providers require the assistant's reasoning text on the
     // next request even when `reasoning_effort` is not advertised. The budget
-    // is the signal that the turn may have produced it.
+    // is one signal that the turn may have produced it; a message that already
+    // carries reasoning is the other, which covers providers that think by
+    // default while the profile advertises no reasoning support.
     let include_reasoning = reasoning.is_some() || request.thinking_budget > 0;
     let messages: Vec<Value> = request
         .messages
@@ -205,9 +207,12 @@ fn message_json(message: &Message, include_reasoning: bool) -> Value {
     let mut value = Map::new();
     value.insert("role".to_owned(), json!(role_str(message.role)));
     value.insert("content".to_owned(), json!(message.content));
-    if include_reasoning && message.role == MessageRole::Assistant {
+    if message.role == MessageRole::Assistant
+        && (include_reasoning || message.reasoning_content.is_some())
+    {
         // Thinking-mode providers require the field even when the model
-        // produced no reasoning text.
+        // produced no reasoning text. A message that already carries the text
+        // keeps it even when the profile advertises no reasoning support.
         value.insert(
             "reasoning_content".to_owned(),
             json!(message.reasoning_content.as_deref().unwrap_or("")),
@@ -399,5 +404,31 @@ mod tests {
             body["messages"][0]["reasoning_content"],
             "checked the files"
         );
+    }
+
+    #[test]
+    fn captured_reasoning_is_echoed_without_a_budget_or_effort() {
+        let request = ModelRequest {
+            messages: vec![Arc::new(
+                Message::assistant_tool_calls(Vec::new()).with_reasoning("looked around"),
+            )],
+            tools: Vec::new(),
+            control_tool: false,
+            thinking_budget: 0,
+            max_output_tokens: 128,
+            route: ModelRoute {
+                provider: "openai-compatible".to_owned(),
+                model: "m".to_owned(),
+            },
+            reasoning: ReasoningLevel::Low,
+        };
+
+        // A provider that thinks by default: the profile advertises neither a
+        // budget nor `reasoning_effort`, but the message already carries the
+        // text the follow-up must echo.
+        let body = build_request(&request, "fallback", None);
+
+        assert!(body.get("reasoning_effort").is_none());
+        assert_eq!(body["messages"][0]["reasoning_content"], "looked around");
     }
 }

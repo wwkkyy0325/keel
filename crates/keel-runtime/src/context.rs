@@ -576,9 +576,41 @@ fn render_record(record: &keel_core::SegmentRecord) -> String {
     line
 }
 
+/// One line per segment the rolling summary already covers.
+///
+/// The summary is rewritten from scratch and drops topics; this index keeps
+/// each covered segment's goal, result and files in view for a few dozen
+/// tokens, so an old topic stays discoverable. Bounded to roughly 600 tokens.
+pub fn render_covered_index(records: &[(u32, keel_core::SegmentRecord)]) -> String {
+    let mut text = String::new();
+    let cap = 600u32;
+    for (id, record) in records {
+        let goal = clip(&record.goal, 80);
+        let result = clip(&record.result, 120);
+        let mut line = format!("#{id} {goal} -> {result}");
+        if !record.changes.is_empty() {
+            let files: Vec<String> = record.changes.iter().take(4).cloned().collect();
+            line.push_str(" [");
+            line.push_str(&files.join(", "));
+            line.push(']');
+        }
+        if estimate_tokens(&text).saturating_add(estimate_tokens(&line)) > cap {
+            break;
+        }
+        text.push_str(&line);
+        text.push('\n');
+    }
+    text
+}
+
 fn render_recalled(recalled: &keel_core::RecalledSegment) -> String {
     let mut line = render_record(&recalled.record);
-    if let Some(excerpt) = &recalled.excerpt {
+    // A memo is the compact record of what the segment decided; the raw
+    // excerpt is the fallback when the summarizer never wrote one.
+    if let Some(memo) = &recalled.record.memo {
+        line.push_str("\n  memo: ");
+        line.push_str(&memo.replace('\n', "\n  "));
+    } else if let Some(excerpt) = &recalled.excerpt {
         line.push_str("\n  excerpt: ");
         line.push_str(&excerpt.replace('\n', "\n  "));
     }

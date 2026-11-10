@@ -725,6 +725,7 @@ mod tests {
             turns: 1,
             folded: false,
             absorbed_in: None,
+            memo: None,
         };
         let context = ContextSnapshot {
             estimate: 100,

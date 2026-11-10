@@ -98,6 +98,14 @@ pub enum Event {
         /// Query terms that occur somewhere in the session.
         known_terms: u32,
     },
+    /// The working set grew because this session's content no longer fit the
+    /// profile's base budget. Monotonic within the engine's lifetime.
+    ContextEscalated {
+        turn_id: TurnId,
+        from: u32,
+        to: u32,
+        reason: String,
+    },
     ContextElided {
         turn_id: TurnId,
         messages: u32,
@@ -345,6 +353,7 @@ impl Event {
             | Self::ContextPressure { turn_id, .. }
             | Self::HistoryAssembled { turn_id, .. }
             | Self::HistoryRecalled { turn_id, .. }
+            | Self::ContextEscalated { turn_id, .. }
             | Self::ContextElided { turn_id, .. }
             | Self::TodoUpdated { turn_id, .. }
             | Self::TodoClosed { turn_id, .. }
@@ -395,6 +404,7 @@ impl Event {
             Self::ContextPressure { .. } => "context_pressure",
             Self::HistoryAssembled { .. } => "history_assembled",
             Self::HistoryRecalled { .. } => "history_recalled",
+            Self::ContextEscalated { .. } => "context_escalated",
             Self::ContextElided { .. } => "context_elided",
             Self::TodoUpdated { .. } => "todo_updated",
             Self::TodoClosed { .. } => "todo_closed",

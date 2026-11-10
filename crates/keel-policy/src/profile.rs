@@ -57,6 +57,9 @@ struct ModelSection {
 struct ContextSection {
     stages: Vec<String>,
     budget_tokens: u32,
+    /// Ceiling for the in-session context ladder. Absent means no escalation.
+    #[serde(default)]
+    max_budget_tokens: Option<u32>,
     #[serde(default)]
     compaction: Vec<String>,
 }
@@ -229,6 +232,11 @@ pub fn from_profile_str(raw: &str, base_dir: &Path) -> Result<RuntimeConfig, Ker
         context: ContextRecipe {
             stages: file.context.stages,
             budget_tokens: file.context.budget_tokens,
+            max_budget_tokens: file
+                .context
+                .max_budget_tokens
+                .map(|max| max.max(file.context.budget_tokens))
+                .unwrap_or(file.context.budget_tokens),
             compaction,
         },
         thinking_budget: file.model.thinking_budget,

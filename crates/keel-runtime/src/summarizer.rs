@@ -31,12 +31,39 @@ const MAX_SUMMARY_FLOOR: u32 = 256;
 
 const SUMMARY_PROMPT: &str = "You maintain one rolling summary of a long work session. \
 You receive the previous summary, finished segments, and the newest segment transcript. \
-Rewrite the whole summary. Keep the current goal and state, decisions and why, exact file paths, \
+Start with exactly one line of the form `SEGMENT_MEMO: <the newest segment in at most 120 words: \
+what was asked, what was done, what was decided>`. Then a blank line. Then rewrite the whole \
+summary. Keep the current goal and state, decisions and why, exact file paths, \
 identifiers, commands and error messages, mistakes and fixes, open items, and anything the user \
 explicitly required or rejected. Drop details that no longer matter. If the new segment contradicts \
 the previous summary, replace the old statement. Do not add facts that are not in the input. Keep \
 entity names in their original language. Use these sections: Goal and state; Decisions; Artifacts; \
 Errors and fixes; Open items. No preamble.";
+
+/// Splits the per-segment memo line from the rolling summary.
+///
+/// A model that ignores the instruction falls back to the old behaviour: the
+/// whole text is the summary and no memo is stored.
+pub fn split_segment_memo(text: &str) -> (Option<String>, String) {
+    let trimmed = text.trim();
+    let Some(line_end) = trimmed.find('\n') else {
+        return (None, trimmed.to_owned());
+    };
+    let first = trimmed[..line_end]
+        .trim()
+        .trim_start_matches(['*', '#', ' ']);
+    let lower = first.to_ascii_lowercase();
+    let Some(rest) = lower.strip_prefix("segment_memo:") else {
+        return (None, trimmed.to_owned());
+    };
+    // The marker is ASCII, so its byte length is the same in both strings.
+    let memo = first[first.len() - rest.len()..].trim();
+    let summary = trimmed[line_end + 1..].trim();
+    if memo.is_empty() || summary.is_empty() {
+        return (None, trimmed.to_owned());
+    }
+    (Some(memo.to_owned()), summary.to_owned())
+}
 
 /// Summary budget for one session, scaled from the working set.
 pub fn memo_budget(working_set: u32) -> u32 {
@@ -288,6 +315,32 @@ mod tests {
         assert_eq!(summary_floor(128), 64);
         assert_eq!(summary_floor(756), 189);
         assert_eq!(summary_floor(4_096), 256);
+    }
+
+    #[test]
+    fn a_segment_memo_is_split_from_the_rolling_summary() {
+        let (memo, summary) = split_segment_memo(
+            "SEGMENT_MEMO: asked for the die fix; edited commands.rs.\n\n## Goal and state\n- done",
+        );
+        assert_eq!(
+            memo.as_deref(),
+            Some("asked for the die fix; edited commands.rs.")
+        );
+        assert!(summary.starts_with("## Goal and state"));
+    }
+
+    #[test]
+    fn a_summary_without_the_memo_marker_stays_whole() {
+        let (memo, summary) = split_segment_memo("## Goal and state\n- done");
+        assert!(memo.is_none());
+        assert_eq!(summary, "## Goal and state\n- done");
+    }
+
+    #[test]
+    fn a_memo_without_a_summary_is_rejected() {
+        let (memo, summary) = split_segment_memo("SEGMENT_MEMO: only a memo");
+        assert!(memo.is_none());
+        assert_eq!(summary, "SEGMENT_MEMO: only a memo");
     }
 
     #[tokio::test]

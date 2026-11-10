@@ -144,6 +144,7 @@ fn probe_config() -> RuntimeConfig {
         context: ContextRecipe {
             stages: vec!["system".to_owned(), "latest".to_owned()],
             budget_tokens: 4096,
+            max_budget_tokens: 4096,
             compaction: Vec::<CompactionStep>::new(),
         },
         thinking_budget: 0,

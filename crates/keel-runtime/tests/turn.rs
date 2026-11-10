@@ -476,6 +476,7 @@ async fn tool_output_over_context_budget_ends_in_error() {
     let events = Arc::new(EventLog::new());
     let mut config = common::runtime_config(&["echo"], 4, PermissionLevel::WorkspaceAuto);
     config.context.budget_tokens = 20;
+    config.context.max_budget_tokens = 20;
 
     let mut args = ToolArgs::new();
     args.insert("text", ArgValue::String("x".repeat(200)));
@@ -495,6 +496,47 @@ async fn tool_output_over_context_budget_ends_in_error() {
         outcome.error.as_ref().map(|error| error.code()),
         Some(ErrorCode::ContextOverflow)
     );
+}
+
+#[tokio::test]
+async fn tool_output_over_budget_escalates_the_working_set() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let mut config = common::runtime_config(&["echo"], 4, PermissionLevel::WorkspaceAuto);
+    config.context.budget_tokens = 20;
+    config.context.max_budget_tokens = 4096;
+
+    let mut args = ToolArgs::new();
+    args.insert("text", ArgValue::String("x".repeat(200)));
+    let model = MockModel::new(vec![
+        MockStep::ToolCall {
+            name: "echo".to_owned(),
+            args,
+        },
+        MockStep::Text("fits now".to_owned()),
+    ]);
+
+    let driver = common::build_driver(
+        model,
+        config,
+        events.clone(),
+        dir.path(),
+        common::test_limits(),
+    );
+    let outcome = driver.run("hi", CancelToken::new()).await;
+
+    assert_eq!(outcome.state, TurnState::Done);
+    assert_eq!(outcome.text, "fits now");
+    let escalated: Vec<u32> = events
+        .for_turn(outcome.turn_id)
+        .iter()
+        .filter_map(|record| match &record.event {
+            Event::ContextEscalated { to, .. } => Some(*to),
+            _ => None,
+        })
+        .collect();
+    assert!(!escalated.is_empty(), "the working set grew");
+    assert!(escalated.last().is_some_and(|to| *to > 20));
 }
 
 #[tokio::test]
@@ -1130,6 +1172,86 @@ fn two_call_limits() -> TurnLimits {
     }
 }
 
+/// One thinking round that returns an empty reasoning string plus a tool
+/// call, then a text answer. DeepSeek V4 behaves this way in many tool rounds.
+struct EmptyThinkingModel {
+    seen: SeenRequests,
+    calls: Mutex<u32>,
+}
+
+#[async_trait]
+impl ModelProvider for EmptyThinkingModel {
+    async fn stream(
+        &self,
+        request: ModelRequest,
+        cancel: &CancelToken,
+    ) -> Result<ModelStream, ModelError> {
+        self.seen
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push((request.tools.len(), request.messages.clone()));
+        let first = {
+            let mut calls = self
+                .calls
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *calls += 1;
+            *calls == 1
+        };
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        if first {
+            let mut args = ToolArgs::new();
+            args.insert("text", ArgValue::String("hi".to_owned()));
+            let _ = tx.send(Ok(ModelChunk::ThinkingDelta(String::new()))).await;
+            let _ = tx
+                .send(Ok(ModelChunk::ToolCall(keel_core::ToolCallRequest {
+                    id: ToolCallId::next(),
+                    name: "echo".to_owned(),
+                    args,
+                })))
+                .await;
+        } else {
+            let _ = tx.send(Ok(ModelChunk::TextDelta("done".to_owned()))).await;
+        }
+        let _ = tx
+            .send(Ok(ModelChunk::Finished {
+                usage: TokenUsage::default(),
+            }))
+            .await;
+        let _ = cancel;
+        Ok(ModelStream::new(rx))
+    }
+}
+
+#[tokio::test]
+async fn an_empty_thinking_round_is_echoed_on_the_tool_followup() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&["echo"], 4, PermissionLevel::WorkspaceAuto);
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let model = EmptyThinkingModel {
+        seen: seen.clone(),
+        calls: Mutex::new(0),
+    };
+    let driver = common::build_driver(model, config, events.clone(), dir.path(), two_call_limits());
+
+    let outcome = driver.run("hi", CancelToken::new()).await;
+    assert!(outcome.is_done(), "{outcome:?}");
+
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 2);
+    let echo = seen[1]
+        .1
+        .iter()
+        .find(|message| message.role == MessageRole::Assistant && !message.tool_calls.is_empty())
+        .expect("the tool-call message is replayed on the follow-up");
+    assert_eq!(
+        echo.reasoning_content.as_deref(),
+        Some(""),
+        "an empty thinking round still carries the field the provider requires"
+    );
+}
+
 #[tokio::test]
 async fn the_last_model_call_is_reserved_for_the_answer() {
     let dir = tempfile::tempdir().unwrap();
@@ -1267,6 +1389,7 @@ async fn a_large_tool_result_is_summarized_and_spilled() {
     ];
     // The current turn keeps the full result, so it needs room for it.
     config.context.budget_tokens = 60_000;
+    config.context.max_budget_tokens = 60_000;
 
     let content = "x".repeat(200_000);
     std::fs::write(dir.path().join("big.txt"), &content).unwrap();
@@ -1428,6 +1551,7 @@ async fn folded_work_is_included_in_a_later_summary() {
         "latest".to_owned(),
     ];
     config.context.budget_tokens = 8192;
+    config.context.max_budget_tokens = 8192;
 
     let mut write_args = ToolArgs::new();
     write_args.insert("path", ArgValue::String("a.txt".to_owned()));
@@ -1454,7 +1578,8 @@ async fn folded_work_is_included_in_a_later_summary() {
         dir.path(),
         common::test_limits(),
     )
-    .with_summarizer(Arc::new(summarizer));
+    .with_summarizer(Arc::new(summarizer))
+    .with_summary_cadence(1);
 
     assert!(driver
         .run("write a note", CancelToken::new())

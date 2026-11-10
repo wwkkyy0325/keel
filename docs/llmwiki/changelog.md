@@ -2397,3 +2397,86 @@
 - Keelson's desktop marks the option with a badge; the answer is one click
   instead of a read of every label. ADR 0033.
 - Tests: the OpenAI and Anthropic parse tests assert the field.
+
+### Empty thinking rounds keep the reasoning field (2026-11-09)
+
+- DeepSeek V4 thinks by default and returns `reasoning_content` on tool rounds,
+  often as an empty string. The driver attached reasoning to the tool-call
+  message only when the text was non-empty, and the wire echoed the field only
+  when the profile advertised `thinking_budget > 0` or `reasoning_effort`.
+  Keelson's live profile sets neither, so the OpenAI-compatible DeepSeek path
+  dropped the field and the follow-up returned 400: "The `reasoning_content`
+  in the thinking mode must be passed back to the API."
+- The driver now remembers that a round thought, even when the reasoning text
+  is empty, and attaches it to the tool-call message; the wire includes the
+  field whenever an assistant message already carries it, not only when a
+  budget or an effort level is advertised.
+- Tests: an empty thinking round is echoed on the tool follow-up (it fails
+  without the driver change), and a captured reasoning echo is sent without a
+  budget or `reasoning_effort`.
+
+### A context budget ladder (2026-11-09)
+
+- `[context] budget_tokens` stays the base working set. A new optional
+  `max_budget_tokens` gives the ceiling; absent keeps the old fixed behaviour.
+- The driver doubles the working set when a real signal says the content does
+  not fit — Red pressure or an over-budget per-call estimate — up to
+  `min(profile max, model window − output reserve)`. It is monotonic for the
+  engine's lifetime so the history prefix stays cache-friendly.
+- Escalation is emitted as `context_escalated { from, to, reason }`. The
+  wrap-up instruction and tool-result elision now run only at the cap.
+- New tests: a tool result that exceeds a tiny budget escalates and finishes
+  instead of overflowing; the same setup with `max_budget_tokens` pinned keeps
+  the old overflow error.
+- ADR 0034 records the policy. Verification: full workspace tests, clippy and
+  fmt pass.
+
+### Tool errors that say what to do next (2026-11-09)
+
+- A live Sojourn turn (47 tool calls, 4 failures) showed three self-corrected
+  model mistakes and one false failure: the todo list closes itself when its
+  last item becomes terminal, so the explicit `close` that followed was
+  rejected as "todo list is closed" although the requested outcome was
+  already true.
+- `TodoList::close` is idempotent for the state the list already holds; a
+  conflicting close returns `TodoError::AlreadyClosed(state)` and its message
+  names that state.
+- A rejected `close completed` names the open items
+  (`not every item is completed: #2 ...`).
+- `ToolSchema::validate` names the accepted arguments when it rejects an
+  unknown one (`unknown argument 'op2'; accepted: op, id, text, status,
+  outcome`).
+- Tests: idempotent close on the current and an explicit outcome, close after
+  auto-close through the tool, the open-item message, and the unknown-argument
+  hint. ADR 0035 records the policy; released as 0.1.1.
+
+### Summary cadence, covered index and memos (2026-11-09)
+
+- The replay showed the summary rewritten at every seal: 8 seals in 16 turns,
+  seal-turn cache share as low as 13%, and the summary shrinking from 11.1k to
+  3.6k characters as it dropped older topics.
+- The driver now rewrites at most every `summary_every_seals` seals (default
+  3) or at Amber+; a deferred seal keeps its record in context.
+  `TurnDriver::with_summary_cadence` tunes it.
+- Covered segments render as a bounded index beside the summary
+  (`render_covered_index`), so dropped topics stay discoverable and paths stay
+  exact.
+- The summary prompt asks for a leading `SEGMENT_MEMO:` line; the driver
+  splits it, stores it on `SegmentRecord::memo`, and recall renders it instead
+  of a raw excerpt. Snapshots without the field load unchanged.
+- Tests: third-seal rewrite only, index names the dropped topic, memo split
+  and no-marker fallback. ADR 0037; released as 0.2.0.
+
+### A segment seals on text size (2026-11-09)
+
+- The clean replay's active segment stayed open across ten same-topic turns,
+  keeping its text verbatim/digested in the history while it grew. The twelve
+  turn cap was too coarse for large answers and tool summaries.
+- `SEGMENT_TOKEN_CAP` (12,000 estimated text tokens) now seals with reason
+  `size` beside the turn cap, before the follow-up marker. Sealed text becomes
+  a record and a later summary candidate; a segment without a complete
+  goal/result keeps its text in history, so nothing is lost.
+- Does not address a single turn's tool-output peak; tool-result elision is
+  unchanged.
+- Test: a large same-topic segment seals before the turn cap. ADR 0038;
+  released as 0.2.1.

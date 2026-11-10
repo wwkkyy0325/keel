@@ -3,6 +3,84 @@
 Kernel crates and the reference host share the workspace version. A derived
 project pins a version and updates deliberately; see `docs/kernel-contract.md`.
 
+## 0.2.1 — 2026-11-09
+
+### Kernel
+
+- `SEGMENT_TOKEN_CAP` (12,000 estimated text tokens) seals a segment on text
+  size even while the topic continues, beside the existing twelve-turn cap.
+  The seal reason is the existing `size`. The check runs before the follow-up
+  marker so "继续" cannot hold a large segment open.
+- The estimate counts assistant tool-summary blocks; a segment that seals
+  without a complete goal/result keeps its text in history, so the cap cannot
+  lose content.
+- This bounds the active segment's contribution to history. A single turn with
+  many tool calls can still raise the per-call context; tool-result elision is
+  unchanged.
+
+### Evidence
+
+- The clean replay's active segment stayed open across ten same-topic turns;
+  the segment token cap is the mechanism that turns that text into a record
+  and a summary candidate earlier.
+- New test: a segment whose text exceeds the cap seals with reason `size`
+  before the turn cap.
+
+## 0.2.0 — 2026-11-09
+
+### Kernel
+
+- The rolling summary is rewritten at most once every
+  `KernelOptions::summary_every_seals` seals (default 3), or immediately at
+  Amber pressure or worse. A deferred seal keeps its structured record in the
+  context until the next rewrite. `TurnDriver::with_summary_cadence` tunes it.
+- Segments already covered by the summary are rendered as a bounded index
+  next to it (`#id goal -> result [files]`), so a topic the rewrite dropped
+  stays discoverable and its paths stay exact.
+- The summary prompt now asks for a leading `SEGMENT_MEMO:` line. The driver
+  splits it off, stores it on the sealed segment's record (`memo`), and
+  recall renders the memo instead of a raw excerpt. A model that ignores the
+  line falls back to the old summary-only behavior.
+- `SegmentRecord::memo` is optional and serde-defaulted, so 0.1.x snapshots
+  load unchanged.
+
+### Evidence
+
+- A transcript replay showed the summary rewritten at every seal: 8 seals in
+  16 turns, cache share on seal turns falling to 13–76% while non-seal turns
+  stayed at 95–99%, and the summary shrinking from 11.1k to 3.6k characters
+  as it dropped older topics.
+- New tests: a seal streak rewrites on the third seal only; the covered index
+  names a topic the summary dropped; the memo line splits from the rolling
+  summary; a memo-less summary stays whole.
+
+## 0.1.1 — 2026-11-09
+
+### Kernel
+
+- `todo close` is idempotent: asking for the outcome the list already holds
+  succeeds and returns the rendered list. The list closes itself once every
+  item is terminal, so the previous behavior reported a false failure for a
+  finished plan. A conflicting close is rejected with the state in the
+  message (`todo list is already completed`).
+- A rejected `close ... completed` names the items that still block it
+  (`not every item is completed: #2 ...`), so the model can fix them without
+  a listing round.
+- An unknown tool argument now names the arguments the tool accepts
+  (`unknown argument 'op2'; accepted: op, id, text, status, outcome`).
+  Strictness is unchanged; a typo still never changes tool behavior.
+
+### Evidence
+
+- New tests: `closing_into_the_current_outcome_is_a_no_op`,
+  `an_explicit_close_is_also_idempotent`,
+  `close_succeeds_when_the_list_closed_itself`,
+  `close_names_the_items_that_are_not_done`, and the extended
+  `unknown_argument_is_rejected` probe.
+- Found in a live Sojourn turn: 47 tool calls, 4 failures. Three were model
+  mistakes it repaired itself; the close after the list had closed itself
+  was the one kernel defect.
+
 ## 0.1.0 — 2026-11-01
 
 First complete kernel and reference host.

@@ -53,12 +53,13 @@ fn harness_with(
     reply: &str,
     summarizer: Option<Arc<dyn Summarizer>>,
 ) -> Harness {
-    harness_options(
-        budget_tokens,
-        reply,
-        summarizer,
-        keel_runtime::KernelOptions::default(),
-    )
+    // Most summary tests seal once and check that rewrite; the cadence has its
+    // own test below.
+    let options = keel_runtime::KernelOptions {
+        summary_every_seals: 1,
+        ..keel_runtime::KernelOptions::default()
+    };
+    harness_options(budget_tokens, reply, summarizer, options)
 }
 
 fn harness_options(
@@ -77,6 +78,7 @@ fn harness_options(
         "latest".to_owned(),
     ];
     config.context.budget_tokens = budget_tokens;
+    config.context.max_budget_tokens = budget_tokens;
 
     let tools = common::standard_registry(dir.path());
     let context = ContextBuilder::new(vec![
@@ -534,7 +536,18 @@ async fn an_absorbed_topic_is_recalled_by_its_terms() {
                 && message.content.starts_with("[conversation summary")
         })
         .expect("summary block");
-    assert!(!summary.content.contains("marlin"), "{}", summary.content);
+    // The rewrite dropped the topic; the covered index still names it, and
+    // recall restores the exchange itself.
+    let (rolling, index) = summary
+        .content
+        .split_once("[covered segments]")
+        .unwrap_or((summary.content.as_str(), ""));
+    assert!(!rolling.contains("marlin"), "{}", summary.content);
+    assert!(
+        index.contains("marlin"),
+        "the covered index keeps the topic discoverable: {}",
+        summary.content
+    );
     let recalled = requests[3]
         .iter()
         .find(|message| {
@@ -543,6 +556,54 @@ async fn an_absorbed_topic_is_recalled_by_its_terms() {
         })
         .expect("recall block");
     assert!(recalled.content.contains("marlin"), "{}", recalled.content);
+}
+
+#[tokio::test]
+async fn a_seal_streak_rewrites_the_summary_every_third_seal() {
+    let calls = Arc::new(AtomicU32::new(0));
+    let summarizer = Arc::new(FixedSummarizer {
+        calls: calls.clone(),
+        inputs: Arc::new(Mutex::new(Vec::new())),
+        text: "MODEL SUMMARY".to_owned(),
+    });
+    let harness = harness_options(
+        4096,
+        "ack",
+        Some(summarizer),
+        keel_runtime::KernelOptions::default(),
+    );
+
+    for input in [
+        "plan the marlin config",
+        "write a haiku about the sea",
+        "what is the weather today",
+        "where is the marlin config",
+    ] {
+        assert!(
+            harness
+                .driver
+                .run(input, CancelToken::new())
+                .await
+                .is_done(),
+            "{input}"
+        );
+    }
+
+    // Three seals: the first two stay as records, the third rewrites.
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+    let requests = harness.requests.lock().unwrap();
+    assert!(
+        requests[2]
+            .iter()
+            .all(|message| !message.content.starts_with("[conversation summary")),
+        "a deferred seal writes no summary block"
+    );
+    assert!(
+        requests[3]
+            .iter()
+            .any(|message| message.content.starts_with("[conversation summary")),
+        "the third seal writes the summary"
+    );
 }
 
 #[tokio::test]

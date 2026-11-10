@@ -27,8 +27,8 @@ pub mod verification;
 
 pub use background::{BackgroundResult, BackgroundTasks, LocalBackgroundTasks};
 pub use context::{
-    BuiltContext, ContextBuilder, HistoryStage, LatestStage, MemoryStage, SystemStage,
-    TaskStateStage,
+    render_covered_index, BuiltContext, ContextBuilder, HistoryStage, LatestStage, MemoryStage,
+    SystemStage, TaskStateStage,
 };
 pub use dispatch::ToolDispatcher;
 pub use driver::{AcceptanceSelector, KernelOptions, TurnDriver, TurnDriverConfig, TurnOutcome};

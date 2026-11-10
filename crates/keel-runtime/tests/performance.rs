@@ -89,6 +89,7 @@ async fn context_assembly_with_ten_thousand_messages() {
     let recipe = ContextRecipe {
         stages: vec!["system".to_owned(), "history".to_owned()],
         budget_tokens: 1_000_000,
+        max_budget_tokens: 1_000_000,
         compaction: Vec::new(),
     };
     let todos = TodoList::default();

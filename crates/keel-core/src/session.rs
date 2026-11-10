@@ -11,6 +11,10 @@ use crate::message::{Message, MessageRole};
 
 /// Turns in one segment before the kernel seals it.
 pub const SEGMENT_TURN_CAP: u32 = 12;
+/// Text tokens in one segment before the kernel seals it, even while the
+/// topic continues. Long answers and tool summaries otherwise stay verbatim in
+/// the active segment until the turn cap, which is what dilutes attention.
+pub const SEGMENT_TOKEN_CAP: u32 = 12_000;
 /// Input-to-segment term overlap below this is a topic change.
 pub const TOPIC_OVERLAP_FLOOR: f32 = 0.2;
 /// Input-to-segment overlap needed to recall an absorbed segment.
@@ -242,6 +246,10 @@ pub struct SegmentRecord {
     pub folded: bool,
     /// Summary revision whose text includes this record.
     pub absorbed_in: Option<u32>,
+    /// Model-written memo of this segment, kept for recall after the record
+    /// is absorbed into the rolling summary. Absent in older snapshots.
+    #[serde(default)]
+    pub memo: Option<String>,
 }
 
 /// Rolling model-written summary of the whole session.
@@ -717,6 +725,12 @@ impl Session {
         if segment.turns >= SEGMENT_TURN_CAP {
             return Some("size".to_owned());
         }
+        let text_tokens = segment.entries.iter().fold(0u32, |total, entry| {
+            total.saturating_add(entry.message.estimated_tokens())
+        });
+        if text_tokens >= SEGMENT_TOKEN_CAP {
+            return Some("size".to_owned());
+        }
 
         if FOLLOWUP_MARKERS
             .iter()
@@ -1017,6 +1031,28 @@ impl Session {
         Some(revision)
     }
 
+    /// Stores the model-written memo of one segment.
+    ///
+    /// The record is the fallback when the summary drops the segment; the
+    /// memo is what recall returns, so it is bounded and never empty.
+    pub fn set_segment_memo(&mut self, segment_id: u32, text: &str) {
+        let text = text.trim();
+        if text.is_empty() {
+            return;
+        }
+        let bound = 1200usize;
+        let memo: String = text.chars().take(bound).collect();
+        for segment in &mut self.segments {
+            if segment.id != segment_id {
+                continue;
+            }
+            if let Some(record) = segment.record.as_mut() {
+                record.memo = Some(memo);
+            }
+            break;
+        }
+    }
+
     /// Marks that the latest update failed; the previous summary stays valid.
     pub fn mark_summary_missing(&mut self) {
         self.summary_missing = true;
@@ -1034,6 +1070,24 @@ impl Session {
             .filter(|(index, _)| Some(*index) != newest)
             .filter_map(|(_, segment)| segment.record.clone())
             .filter(|record| !record.folded && record.absorbed_in.is_none())
+            .collect()
+    }
+
+    /// Segments already folded into the rolling summary, oldest first.
+    ///
+    /// The summary is a rewritten view; this index keeps the one-line shape of
+    /// every covered segment in context so a topic the rewrite dropped is
+    /// still discoverable, at about two dozen tokens per segment.
+    pub fn covered_index(&self) -> Vec<(u32, SegmentRecord)> {
+        self.segments
+            .iter()
+            .filter_map(|segment| {
+                segment
+                    .record
+                    .clone()
+                    .filter(|record| record.absorbed_in.is_some())
+                    .map(|record| (segment.id, record))
+            })
             .collect()
     }
 
@@ -1674,6 +1728,7 @@ fn build_record(segment: &Segment) -> Result<SegmentRecord, Vec<String>> {
         turns: segment.turns,
         folded: false,
         absorbed_in: None,
+        memo: None,
     })
 }
 
@@ -1949,6 +2004,25 @@ mod segmentation_tests {
             session.begin_turn("keep going");
             record(&mut session, "keep going");
         }
+
+        let change = session.begin_turn("keep going again");
+
+        assert_eq!(change.reason.as_deref(), Some("size"));
+        assert_eq!(change.sealed, Some(0));
+    }
+
+    #[test]
+    fn a_large_segment_seals_before_the_turn_cap() {
+        let text = "x".repeat(SEGMENT_TOKEN_CAP as usize * 4 + 64);
+        let mut session = Session::new();
+        session.record_turn(TurnRecord {
+            input: "keep going",
+            text: &text,
+            tools: &[],
+            artifacts: &[],
+            pending: &[],
+            verified: false,
+        });
 
         let change = session.begin_turn("keep going again");
 
