@@ -2540,3 +2540,11 @@
   "verifying" waited for every check. It now takes the turn's token, skips
   the remaining items, stops a running command check, and the driver returns
   `Cancelled` afterwards. ADR 0048; released as 0.2.7.
+
+### An interrupted turn stays in the history (2026-11-10)
+
+- A cancelled turn was left out of the session history, so a later `继续`
+  continued the previous completed turn while the transcript still showed
+  the cancelled question. Cancelled turns are now recorded: the input, the
+  streamed partial answer with an interruption marker, and their tool
+  summaries. ADR 0049; released as 0.2.8.

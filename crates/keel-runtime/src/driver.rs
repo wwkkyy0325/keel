@@ -618,6 +618,14 @@ impl<M: ModelProvider> TurnDriver<M> {
                 .record_pending(format!("interaction {} was deferred", interaction.get()));
         }
         stats.answer.verification = stats.verification.clone();
+        // A cancelled turn keeps the text it streamed, so the view does not
+        // lose it and the next message can see where the turn stopped.
+        if state == TurnState::Cancelled
+            && stats.answer.body.trim().is_empty()
+            && !text.trim().is_empty()
+        {
+            stats.answer.set_body(text.trim());
+        }
         if stats.answer.body.trim().is_empty() {
             if let Some(report) = &stats.wrap_up_report {
                 stats.answer.set_body(report);
@@ -625,36 +633,49 @@ impl<M: ModelProvider> TurnDriver<M> {
         }
         stats.answer.missing = stats.answer.body.trim().is_empty();
 
-        if state != TurnState::Cancelled {
-            let artifacts: Vec<String> = stats
-                .answer
-                .changes
-                .iter()
-                .map(|change| change.path.clone())
-                .collect();
-            let pending: Vec<String> = stats
-                .answer
-                .pending
-                .iter()
-                .map(|item| item.description.clone())
-                .collect();
-            let verified = stats
-                .verification
-                .as_ref()
-                .map(|report| report.passed())
-                .unwrap_or(false);
-            self.session
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .record_turn(TurnRecord {
-                    input,
-                    text: &stats.answer.body,
-                    tools: &stats.tool_summaries,
-                    artifacts: &artifacts,
-                    pending: &pending,
-                    verified,
-                });
-        }
+        let artifacts: Vec<String> = stats
+            .answer
+            .changes
+            .iter()
+            .map(|change| change.path.clone())
+            .collect();
+        let pending: Vec<String> = stats
+            .answer
+            .pending
+            .iter()
+            .map(|item| item.description.clone())
+            .collect();
+        let verified = stats
+            .verification
+            .as_ref()
+            .map(|report| report.passed())
+            .unwrap_or(false);
+        // An interrupted turn stays in the history: the user's input (and any
+        // streamed answer) is what the next message is continuing from. The
+        // marker keeps the model from treating a partial answer as complete.
+        let cancelled_body;
+        let body: &str = if state == TurnState::Cancelled {
+            let partial = stats.answer.body.trim();
+            cancelled_body = if partial.is_empty() {
+                String::new()
+            } else {
+                format!("{partial}\n\n[the user interrupted this turn; the answer is incomplete]")
+            };
+            &cancelled_body
+        } else {
+            &stats.answer.body
+        };
+        self.session
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .record_turn(TurnRecord {
+                input,
+                text: body,
+                tools: &stats.tool_summaries,
+                artifacts: &artifacts,
+                pending: &pending,
+                verified,
+            });
 
         TurnOutcome {
             turn_id,

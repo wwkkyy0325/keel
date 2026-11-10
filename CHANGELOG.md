@@ -3,6 +3,24 @@
 Kernel crates and the reference host share the workspace version. A derived
 project pins a version and updates deliberately; see `docs/kernel-contract.md`.
 
+## 0.2.8 — 2026-11-10
+
+### Kernel
+
+- A cancelled turn stays in the session history (ADR 0049): the input is
+  recorded, a streamed partial answer is kept with an
+  `[the user interrupted this turn; the answer is incomplete]` marker, and
+  the outcome's answer body carries the partial text so a host can show it.
+  The next message continues from the interrupted question.
+
+### Evidence
+
+- A user asked a question, cancelled the turn, and sent `继续`; the model
+  continued the previous completed turn because the cancelled input had
+  never been recorded, while the transcript still showed the question.
+- Test: after a cancelled turn, the next model request contains the
+  cancelled input.
+
 ## 0.2.7 — 2026-11-10
 
 ### Kernel

@@ -409,6 +409,48 @@ async fn cancellation_during_a_hanging_model_reaches_cancelled() {
 }
 
 #[tokio::test]
+async fn a_cancelled_turn_stays_in_the_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let mut config = common::runtime_config(&[], 0, PermissionLevel::WorkspaceAuto);
+    config.context.stages = vec![
+        "system".to_owned(),
+        "history".to_owned(),
+        "latest".to_owned(),
+    ];
+    let seen: SeenRequests = Arc::new(Mutex::new(Vec::new()));
+    let model = ToolRecordingModel {
+        inner: MockModel::new(vec![MockStep::Hang, MockStep::Text("answered".to_owned())]),
+        seen: seen.clone(),
+    };
+    let driver = common::build_driver(model, config, events, dir.path(), common::test_limits());
+    let cancel = CancelToken::new();
+    let cancel_task = cancel.clone();
+    let _cancel_task = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        cancel_task.cancel();
+    });
+    let outcome = driver.run("还在问的问题", cancel).await;
+    assert_eq!(outcome.state, TurnState::Cancelled);
+
+    let second = driver.run("继续", CancelToken::new()).await;
+    assert_eq!(second.state, TurnState::Done);
+
+    let requests = seen.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let messages = &requests.last().expect("the second request").1;
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.role == MessageRole::User
+                && message.content.contains("还在问的问题")),
+        "the cancelled input is part of the next request's history"
+    );
+    assert!(messages
+        .iter()
+        .any(|message| message.role == MessageRole::User && message.content == "继续"));
+}
+
+#[tokio::test]
 async fn tool_error_does_not_abort_the_turn() {
     let dir = tempfile::tempdir().unwrap();
     let events = Arc::new(EventLog::new());
