@@ -3,6 +3,22 @@
 Kernel crates and the reference host share the workspace version. A derived
 project pins a version and updates deliberately; see `docs/kernel-contract.md`.
 
+## 0.2.4 — 2026-11-10
+
+### Kernel
+
+- The OpenAI-compatible and Anthropic stream readers keep the trailing bytes
+  of an incomplete UTF-8 sequence across network chunks instead of decoding
+  each chunk lossily. A Chinese character cut by a chunk boundary no longer
+  becomes three U+FFFD; genuinely invalid bytes still do.
+
+### Evidence
+
+- A live DeepSeek answer stored `让对���知道信息来源`; the session document held
+  an incomplete lead byte and two continuation bytes where `方` belongs.
+- New tests: a character split across two chunks decodes whole; an invalid
+  byte still becomes a replacement character.
+
 ## 0.2.3 — 2026-11-10
 
 ### Kernel

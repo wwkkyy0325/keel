@@ -2505,3 +2505,12 @@
 - An LF file and a new file are written as given.
 - Tests: a CRLF file keeps CRLF for LF content; an LF file stays LF.
   Released as 0.2.3.
+
+### A stream chunk no longer splits a character (2026-11-10)
+
+- Both model adapters decoded every network chunk with `from_utf8_lossy`;
+  a chunk boundary inside a multi-byte character stored a live DeepSeek
+  answer with three U+FFFD where one Chinese character belonged.
+- The readers now hold the incomplete trailing bytes until the next chunk;
+  invalid bytes still decode to U+FFFD. Unit tests cover both paths.
+- Released as 0.2.4.

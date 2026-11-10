@@ -156,6 +156,7 @@ async fn read_stream(
     cancel: CancelToken,
 ) {
     let mut buffer = String::new();
+    let mut pending: Vec<u8> = Vec::new();
     let mut accumulator = ToolCallAccumulator::default();
     let mut usage = TokenUsage::default();
     let mut saw_finish = false;
@@ -167,8 +168,10 @@ async fn read_stream(
         };
         match chunk {
             Ok(Some(chunk)) => {
-                let text = String::from_utf8_lossy(&chunk).replace("\r\n", "\n");
-                buffer.push_str(&text);
+                buffer.push_str(&decode_chunk(&mut pending, &chunk));
+                if buffer.contains('\r') {
+                    buffer = buffer.replace("\r\n", "\n");
+                }
                 while let Some(index) = buffer.find("\n\n") {
                     let event: String = buffer.drain(..index + 2).collect();
                     match process_event(&event, &tx, &mut accumulator, &mut usage, &mut saw_finish)
@@ -191,6 +194,11 @@ async fn read_stream(
                 return;
             }
         }
+    }
+
+    if !pending.is_empty() {
+        buffer.push_str(&String::from_utf8_lossy(&pending));
+        buffer = buffer.replace("\r\n", "\n");
     }
 
     if !buffer.trim().is_empty() {
@@ -343,4 +351,60 @@ async fn emit_finished(
         }
     }
     let _ = tx.send(Ok(ModelChunk::Finished { usage })).await;
+}
+
+/// Decodes a network chunk without corrupting a character whose bytes span
+/// two chunks. An incomplete trailing sequence waits for the next chunk;
+/// genuinely invalid bytes become U+FFFD.
+fn decode_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
+    pending.extend_from_slice(chunk);
+    let mut text = String::with_capacity(pending.len());
+    loop {
+        let error = match std::str::from_utf8(pending) {
+            Ok(valid) => {
+                text.push_str(valid);
+                pending.clear();
+                return text;
+            }
+            Err(error) => error,
+        };
+        let valid = error.valid_up_to();
+        if let Ok(prefix) = std::str::from_utf8(&pending[..valid]) {
+            text.push_str(prefix);
+        }
+        match error.error_len() {
+            Some(length) => {
+                text.push('\u{FFFD}');
+                pending.drain(..valid + length);
+            }
+            None => {
+                pending.drain(..valid);
+                return text;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_chunk;
+
+    #[test]
+    fn a_character_split_across_chunks_stays_whole() {
+        let text = "让方知道";
+        let bytes = text.as_bytes();
+        let mut pending = Vec::new();
+        let first = decode_chunk(&mut pending, &bytes[..4]);
+        let second = decode_chunk(&mut pending, &bytes[4..]);
+        assert_eq!(format!("{first}{second}"), text);
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn an_invalid_byte_becomes_a_replacement_character() {
+        let mut pending = Vec::new();
+        let decoded = decode_chunk(&mut pending, &[b'a', 0xff, b'b']);
+        assert_eq!(decoded, "a\u{FFFD}b");
+        assert!(pending.is_empty());
+    }
 }
