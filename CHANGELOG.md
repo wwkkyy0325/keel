@@ -3,6 +3,25 @@
 Kernel crates and the reference host share the workspace version. A derived
 project pins a version and updates deliberately; see `docs/kernel-contract.md`.
 
+## 0.2.13 — 2026-11-11
+
+### Kernel
+
+- One history entry is bounded at 12 000 characters with a note naming what
+  was left out, and a segment a summary already covers drops its verbatim
+  transcript (ADR 0052). The newest segment stays verbatim; an absorbed
+  segment keeps its record, memo and a bounded recall excerpt. Restore
+  applies both rules, so an old document shrinks on its next save.
+
+### Evidence
+
+- A real conversation reached 1.1 MB: the snapshot was 434k characters, 423k
+  of them verbatim assistant entries of a single segment that never sealed
+  (eleven entries of about 38k, mostly tool summaries).
+- Tests: a long turn is capped with the note, restore caps an old long entry,
+  a covered segment drops its entries while the newest keeps them, and
+  recall still finds the topic through the stored excerpt.
+
 ## 0.2.12 — 2026-11-11
 
 ### Kernel

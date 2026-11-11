@@ -250,6 +250,11 @@ pub struct SegmentRecord {
     /// is absorbed into the rolling summary. Absent in older snapshots.
     #[serde(default)]
     pub memo: Option<String>,
+    /// A bounded exchange kept for recall when the summary covers this
+    /// segment and its verbatim entries are dropped. Absent in older
+    /// snapshots.
+    #[serde(default)]
+    pub excerpt: Option<String>,
 }
 
 /// Rolling model-written summary of the whole session.
@@ -504,7 +509,10 @@ impl Session {
                             "user" => Message::user(entry.content),
                             "system" => Message::system(entry.content),
                             "tool" => Message::new(MessageRole::Tool, entry.content),
-                            _ => Message::assistant(entry.content),
+                            // A document written before the cap may hold a
+                            // very long body; the history copy is bounded on
+                            // load too.
+                            _ => Message::assistant(cap_entry(entry.content)),
                         }),
                     })
                     .collect(),
@@ -519,7 +527,7 @@ impl Session {
         let next_segment_id = snapshot
             .next_segment_id
             .max(segments.iter().map(|segment| segment.id).max().unwrap_or(0));
-        Ok(Self {
+        let mut session = Self {
             segments,
             next_segment_id,
             last_verified: snapshot.last_verified,
@@ -530,7 +538,12 @@ impl Session {
             summary: snapshot.summary,
             next_summary_revision: snapshot.next_summary_revision,
             summary_missing: snapshot.summary_missing,
-        })
+        };
+        // A document written before this rule kept the verbatim entries of
+        // segments an earlier summary already covered. Drop them on load; the
+        // next save writes the smaller document.
+        session.drop_absorbed_transcripts();
+        Ok(session)
     }
 
     /// Decides the segment boundary for an input before the turn runs.
@@ -620,7 +633,7 @@ impl Session {
         }
         if !body.trim().is_empty() {
             segment.entries.push(Entry {
-                message: Arc::new(Message::assistant(body)),
+                message: Arc::new(Message::assistant(cap_entry(body))),
             });
         }
     }
@@ -1028,7 +1041,51 @@ impl Session {
                 }
             }
         }
+        self.drop_absorbed_transcripts();
         Some(revision)
+    }
+
+    /// Drops the verbatim transcript of segments a summary already covers.
+    ///
+    /// The record, its memo and the summary are what recall and the context
+    /// projection read; the entries are only the summarizer's input and are
+    /// no longer needed once the summary includes the segment. The newest
+    /// non-empty segment keeps its entries, so the latest exchange stays
+    /// verbatim.
+    pub(crate) fn drop_absorbed_transcripts(&mut self) {
+        let Some(summary) = self.summary.as_ref() else {
+            return;
+        };
+        let covered: BTreeSet<u32> = summary.covers.iter().copied().collect();
+        let newest = self
+            .segments
+            .iter()
+            .rposition(|segment| !segment.entries.is_empty());
+        for (index, segment) in self.segments.iter_mut().enumerate() {
+            if Some(index) == newest {
+                continue;
+            }
+            let absorbed = segment
+                .record
+                .as_ref()
+                .is_some_and(|record| record.absorbed_in.is_some());
+            if absorbed && covered.contains(&segment.id) {
+                // Recall may still ask for a detail; keep one bounded
+                // exchange before the transcript goes away.
+                if segment
+                    .record
+                    .as_ref()
+                    .is_some_and(|record| record.excerpt.is_none())
+                {
+                    if let Some(record) = segment.record.as_mut() {
+                        let goal: String = record.goal.chars().take(RECALL_EXCERPT_CHARS).collect();
+                        record.excerpt =
+                            Some(format!("user: {goal}\nassistant: {}", record.result));
+                    }
+                }
+                segment.entries.clear();
+            }
+        }
     }
 
     /// Stores the model-written memo of one segment.
@@ -1191,7 +1248,7 @@ impl Session {
                 RecalledSegment {
                     segment_id: segment.id,
                     record: record.clone(),
-                    excerpt: recall_excerpt(segment, &weights),
+                    excerpt: recall_excerpt(segment, &weights).or_else(|| record.excerpt.clone()),
                     score_bp: (score * 10_000.0).round().clamp(0.0, 10_000.0) as u32,
                     matched,
                     query_terms: query_term_count,
@@ -1729,7 +1786,27 @@ fn build_record(segment: &Segment) -> Result<SegmentRecord, Vec<String>> {
         folded: false,
         absorbed_in: None,
         memo: None,
+        excerpt: None,
     })
+}
+
+/// Longest assistant body kept in a segment entry. The live turn saw the
+/// whole text and the tool output; the history copy is bounded so one long
+/// turn cannot grow the session document without limit.
+pub const MAX_ENTRY_CHARS: usize = 12_000;
+
+/// Keeps the head of an entry body and names what was dropped, so a reader
+/// can tell a short turn from a clipped one.
+pub(crate) fn cap_entry(text: String) -> String {
+    let count = text.chars().count();
+    if count <= MAX_ENTRY_CHARS {
+        return text;
+    }
+    let head: String = text.chars().take(MAX_ENTRY_CHARS).collect();
+    format!(
+        "{head}\n(+{} characters kept out of this turn's transcript)",
+        count - MAX_ENTRY_CHARS
+    )
 }
 
 /// The assistant text without the `[tools]` block, flattened and bounded.
@@ -1819,6 +1896,104 @@ mod tests {
             restored.summary().map(|summary| summary.text.as_str()),
             Some("memo text")
         );
+    }
+
+    #[test]
+    fn a_long_turn_body_is_capped_in_the_transcript() {
+        let mut session = Session::new();
+        let body = "x".repeat(MAX_ENTRY_CHARS * 2);
+        session.record_turn(TurnRecord {
+            input: "write a lot",
+            text: &body,
+            tools: &[],
+            artifacts: &[],
+            pending: &[],
+            verified: false,
+        });
+
+        let assistant = session.segments()[0]
+            .entries
+            .iter()
+            .find(|entry| entry.message.role == MessageRole::Assistant)
+            .expect("the assistant entry");
+        assert!(
+            assistant.message.content.chars().count() <= MAX_ENTRY_CHARS + 80,
+            "the entry stays near the cap"
+        );
+        assert!(
+            assistant
+                .message
+                .content
+                .contains("kept out of this turn's transcript"),
+            "the clipped body says so"
+        );
+    }
+
+    #[test]
+    fn restoring_caps_an_old_long_entry() {
+        let mut session = Session::new();
+        record(&mut session, "write a lot", "done");
+        let mut snapshot = session.snapshot();
+        snapshot.segments[0].entries[1].content = "y".repeat(MAX_ENTRY_CHARS * 2);
+
+        let restored = Session::restore(snapshot).expect("the snapshot restores");
+
+        let assistant = restored.segments()[0]
+            .entries
+            .iter()
+            .find(|entry| entry.message.role == MessageRole::Assistant)
+            .expect("the assistant entry");
+        assert!(assistant.message.content.chars().count() <= MAX_ENTRY_CHARS + 80);
+    }
+
+    #[test]
+    fn a_covered_segment_drops_its_verbatim_transcript() {
+        let mut session = Session::new();
+        record(&mut session, "first task", "first answer");
+        assert!(session.seal_current());
+        record(&mut session, "second task", "second answer");
+        let sealed_id = session.segments()[0].id;
+        assert_eq!(session.segments()[0].entries.len(), 2);
+
+        session.set_summary("memo", &[sealed_id], 256);
+
+        assert!(
+            session.segments()[0].entries.is_empty(),
+            "the covered segment keeps its record, not its transcript"
+        );
+        assert_eq!(
+            session.segments()[1].entries.len(),
+            2,
+            "the newest segment stays verbatim"
+        );
+        assert_eq!(session.history().len(), 2, "history is the newest segment");
+    }
+
+    #[test]
+    fn restoring_prunes_a_segment_an_earlier_summary_covered() {
+        let mut session = Session::new();
+        record(&mut session, "first task", "first answer");
+        assert!(session.seal_current());
+        record(&mut session, "second task", "second answer");
+        let sealed_id = session.segments()[0].id;
+        let mut snapshot = session.snapshot();
+        // A document written before the rule: the summary covers the segment
+        // but its entries are still stored.
+        snapshot.summary = Some(SessionSummary {
+            text: "memo".to_owned(),
+            revision: 1,
+            covers: vec![sealed_id],
+            budget_tokens: 256,
+        });
+        if let Some(record) = snapshot.segments[0].record.as_mut() {
+            record.absorbed_in = Some(1);
+        }
+        assert_eq!(snapshot.segments[0].entries.len(), 2);
+
+        let restored = Session::restore(snapshot).expect("the snapshot restores");
+
+        assert!(restored.segments()[0].entries.is_empty());
+        assert_eq!(restored.segments()[1].entries.len(), 2);
     }
 
     #[test]
@@ -2013,16 +2188,20 @@ mod segmentation_tests {
 
     #[test]
     fn a_large_segment_seals_before_the_turn_cap() {
-        let text = "x".repeat(SEGMENT_TOKEN_CAP as usize * 4 + 64);
+        // One turn is capped, so the size seal is reached by several long
+        // turns instead of one oversized one.
+        let text = "x".repeat(MAX_ENTRY_CHARS);
         let mut session = Session::new();
-        session.record_turn(TurnRecord {
-            input: "keep going",
-            text: &text,
-            tools: &[],
-            artifacts: &[],
-            pending: &[],
-            verified: false,
-        });
+        for _ in 0..4 {
+            session.record_turn(TurnRecord {
+                input: "keep going",
+                text: &text,
+                tools: &[],
+                artifacts: &[],
+                pending: &[],
+                verified: false,
+            });
+        }
 
         let change = session.begin_turn("keep going again");
 
