@@ -1795,9 +1795,17 @@ fn build_record(segment: &Segment) -> Result<SegmentRecord, Vec<String>> {
 /// turn cannot grow the session document without limit.
 pub const MAX_ENTRY_CHARS: usize = 12_000;
 
+/// Suffix of the note `cap_entry` appends. An entry that already ends with it
+/// is bounded, so a restore leaves it alone instead of capping it again and
+/// replacing the dropped count with the length of the note itself.
+const CAP_NOTE_SUFFIX: &str = " characters kept out of this turn's transcript)";
+
 /// Keeps the head of an entry body and names what was dropped, so a reader
 /// can tell a short turn from a clipped one.
 pub(crate) fn cap_entry(text: String) -> String {
+    if text.ends_with(CAP_NOTE_SUFFIX) {
+        return text;
+    }
     let count = text.chars().count();
     if count <= MAX_ENTRY_CHARS {
         return text;
@@ -1944,6 +1952,24 @@ mod tests {
             .find(|entry| entry.message.role == MessageRole::Assistant)
             .expect("the assistant entry");
         assert!(assistant.message.content.chars().count() <= MAX_ENTRY_CHARS + 80);
+    }
+
+    #[test]
+    fn restoring_a_capped_entry_keeps_its_note() {
+        let mut session = Session::new();
+        record(&mut session, "write a lot", "done");
+        let mut snapshot = session.snapshot();
+        snapshot.segments[0].entries[1].content = "y".repeat(MAX_ENTRY_CHARS * 2);
+
+        let first = Session::restore(snapshot).expect("the snapshot restores");
+        let capped = first.snapshot();
+        let second = Session::restore(capped.clone()).expect("the capped snapshot restores");
+
+        assert_eq!(
+            serde_json::to_value(second.snapshot()).expect("a snapshot encodes"),
+            serde_json::to_value(capped).expect("a snapshot encodes"),
+            "a second restore does not cap the note itself"
+        );
     }
 
     #[test]

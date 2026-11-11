@@ -3,6 +3,20 @@
 Kernel crates and the reference host share the workspace version. A derived
 project pins a version and updates deliberately; see `docs/kernel-contract.md`.
 
+## 0.2.14 — 2026-11-11
+
+### Kernel
+
+- Capping a history entry is idempotent: an entry that already ends with the
+  note is left alone, so restoring a document cannot cap the note itself and
+  replace the dropped count with the note's own length.
+
+### Evidence
+
+- Restoring the real conversation documents twice changed the snapshot on the
+  second restore: every capped entry's note went from the real count to about
+  60. Tests: a second restore of a capped snapshot is byte-identical.
+
 ## 0.2.13 — 2026-11-11
 
 ### Kernel

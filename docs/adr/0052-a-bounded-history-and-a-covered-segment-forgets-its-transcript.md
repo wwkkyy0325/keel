@@ -61,3 +61,12 @@ to bring back.
   that brings old details back would have silently lost its detail.
 - Storing images in the transcript: out of scope; images are turn-scoped
   (ADR 0051).
+
+## Amendment (0.2.14)
+
+Restoring a real document showed that the cap was not idempotent: an entry
+that already ended with the note was capped again, and its count became the
+note's own length (about 60). `cap_entry` now returns an entry that already
+ends with the note unchanged, so a second restore is byte-identical. The
+note is the only marker; a body that happens to end with the same sentence
+is left as written.
