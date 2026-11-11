@@ -3,6 +3,21 @@
 Kernel crates and the reference host share the workspace version. A derived
 project pins a version and updates deliberately; see `docs/kernel-contract.md`.
 
+## 0.2.12 — 2026-11-11
+
+### Kernel
+
+- A permission prompt labels only an `Execute` detail as a command; any other
+  tool detail is shown as a sentence. A screen capture reads
+  `window Notepad` instead of `command: window Notepad`, while the shell
+  keeps its command wording.
+
+### Evidence
+
+- The confirmation for a capture named a folder and then a "command" that was
+  not a command. Tests: a shell detail keeps `command:`, a write detail does
+  not.
+
 ## 0.2.11 — 2026-11-10
 
 ### Kernel

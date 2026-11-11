@@ -380,20 +380,7 @@ impl ToolDispatcher {
                         )));
                     };
 
-                    let scope = request
-                        .path
-                        .as_ref()
-                        .map(|path| path.display().to_string())
-                        .unwrap_or_else(|| "no path".to_owned());
-                    let detail = request
-                        .detail
-                        .as_deref()
-                        .map(|detail| format!("\ncommand: {detail}"))
-                        .unwrap_or_default();
-                    let prompt = format!(
-                        "Allow `{tool_name}` to {} `{scope}`? {reason}{detail}",
-                        request.access.as_str()
-                    );
+                    let prompt = permission_prompt(tool_name, &request, &reason);
                     let interaction = InteractionRequest::new(
                         turn_id,
                         InteractionKind::PermissionApproval,
@@ -617,9 +604,56 @@ fn preview_of(result: &ToolResult) -> Option<String> {
     Some(preview)
 }
 
+/// The text a host shows for a permission request. A command line is labelled
+/// as one; any other detail is a target the user should read as a sentence.
+fn permission_prompt(tool: &str, request: &PermissionRequest, reason: &str) -> String {
+    let scope = request
+        .path
+        .as_ref()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "no path".to_owned());
+    let detail = request
+        .detail
+        .as_deref()
+        .map(|detail| {
+            if request.access == AccessKind::Execute {
+                format!("\ncommand: {detail}")
+            } else {
+                format!("\n{detail}")
+            }
+        })
+        .unwrap_or_default();
+    format!(
+        "Allow `{tool}` to {} `{scope}`? {reason}{detail}",
+        request.access.as_str()
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn request(access: AccessKind) -> PermissionRequest {
+        PermissionRequest {
+            tool: "test".to_owned(),
+            access,
+            path: Some(std::path::PathBuf::from("/outside/folder")),
+            detail: Some("window Notepad".to_owned()),
+        }
+    }
+
+    #[test]
+    fn a_shell_detail_is_labelled_as_a_command() {
+        let prompt = permission_prompt("shell", &request(AccessKind::Execute), "outside");
+        assert!(prompt.contains("\ncommand: window Notepad"), "{prompt}");
+    }
+
+    #[test]
+    fn another_tool_detail_is_a_sentence() {
+        let prompt = permission_prompt("screen_capture", &request(AccessKind::Write), "outside");
+        assert!(prompt.contains("\nwindow Notepad"), "{prompt}");
+        assert!(!prompt.contains("command:"), "{prompt}");
+    }
 
     #[test]
     fn a_successful_call_keeps_its_output() {
