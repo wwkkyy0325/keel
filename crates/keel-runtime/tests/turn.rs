@@ -2205,3 +2205,65 @@ async fn a_thinking_signature_is_echoed_on_the_tool_followup() {
         "the signed thinking block must be sent back"
     );
 }
+
+/// The first round streams a draft and then reports malformed tool JSON; the
+/// retry must discard the draft and answer cleanly.
+struct RetryAfterMalformedModel {
+    calls: Mutex<u32>,
+}
+
+#[async_trait]
+impl ModelProvider for RetryAfterMalformedModel {
+    async fn stream(
+        &self,
+        _request: ModelRequest,
+        _cancel: &CancelToken,
+    ) -> Result<ModelStream, ModelError> {
+        let call = {
+            let mut calls = self
+                .calls
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *calls += 1;
+            *calls
+        };
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        if call == 1 {
+            let _ = tx.send(Ok(ModelChunk::TextDelta("draft".to_owned()))).await;
+            let _ = tx
+                .send(Err(ModelError::new(
+                    ErrorCode::InvalidResponse,
+                    "invalid tool input: expected `,` or `}`",
+                    true,
+                )))
+                .await;
+        } else {
+            let _ = tx.send(Ok(ModelChunk::TextDelta("done".to_owned()))).await;
+            let _ = tx
+                .send(Ok(ModelChunk::Finished {
+                    usage: TokenUsage::default(),
+                }))
+                .await;
+        }
+        Ok(ModelStream::new(rx))
+    }
+}
+
+#[tokio::test]
+async fn a_malformed_tool_payload_is_retried_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&["echo"], 4, PermissionLevel::WorkspaceAuto);
+    let model = RetryAfterMalformedModel {
+        calls: Mutex::new(0),
+    };
+    let driver = common::build_driver(model, config, events.clone(), dir.path(), two_call_limits());
+
+    let outcome = driver.run("hi", CancelToken::new()).await;
+
+    assert!(outcome.is_done(), "{outcome:?}");
+    assert_eq!(
+        outcome.answer.body, "done",
+        "the draft from the failed attempt must not survive the retry"
+    );
+}

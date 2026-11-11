@@ -198,8 +198,9 @@ impl ToolCallAccumulator {
             let arguments = if partial.arguments.trim().is_empty() {
                 Value::Object(Map::new())
             } else {
-                serde_json::from_str(&partial.arguments)
-                    .map_err(|error| invalid(format!("invalid tool arguments: {error}")))?
+                serde_json::from_str(&partial.arguments).map_err(|error| {
+                    retryable_invalid(format!("invalid tool arguments: {error}"))
+                })?
             };
             if partial.name == CONTROL_TOOL_NAME {
                 finished.push(FinishedCall::Interaction(parse_interaction_json(
@@ -418,6 +419,12 @@ fn parse_arg(value: &Value) -> Result<ArgValue, ModelError> {
 
 fn invalid(message: impl Into<String>) -> ModelError {
     ModelError::new(ErrorCode::InvalidResponse, message, false)
+}
+
+/// A malformed tool argument payload is a model-output flake; one retry may
+/// produce valid JSON and is cheaper than failing the turn.
+fn retryable_invalid(message: impl Into<String>) -> ModelError {
+    ModelError::new(ErrorCode::InvalidResponse, message, true)
 }
 
 #[cfg(test)]

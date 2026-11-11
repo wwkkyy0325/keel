@@ -342,6 +342,12 @@ fn invalid(message: impl Into<String>) -> ModelError {
     ModelError::new(ErrorCode::InvalidResponse, message, false)
 }
 
+/// A malformed tool argument payload is a model-output flake; one retry may
+/// produce valid JSON and is cheaper than failing the turn.
+fn retryable_invalid(message: impl Into<String>) -> ModelError {
+    ModelError::new(ErrorCode::InvalidResponse, message, true)
+}
+
 #[derive(Default)]
 struct PartialTool {
     name: String,
@@ -490,7 +496,7 @@ impl StreamDecoder {
                 Value::Object(Map::new())
             } else {
                 serde_json::from_str(&partial.input)
-                    .map_err(|error| invalid(format!("invalid tool input: {error}")))?
+                    .map_err(|error| retryable_invalid(format!("invalid tool input: {error}")))?
             };
             if partial.name == CONTROL_TOOL_NAME {
                 chunks.push(ModelChunk::Interaction(parse_interaction_json(&input)?));

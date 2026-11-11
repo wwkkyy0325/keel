@@ -3,6 +3,24 @@
 Kernel crates and the reference host share the workspace version. A derived
 project pins a version and updates deliberately; see `docs/kernel-contract.md`.
 
+## 0.2.16 — 2026-11-11
+
+### Kernel
+
+- A malformed tool-argument payload (invalid JSON) is retried once. The
+  provider marks the parse failure `InvalidResponse`, and the driver re-runs
+  the model call after discarding the failed attempt's draft text. Network
+  errors and stream cuts keep their previous behaviour: they fail the turn,
+  and a cut stream keeps its partial text.
+
+### Evidence
+
+- A live `deepseek-flash` explainer run failed after 366 s with
+  `invalid tool input` (`expected , or }`) even though the dossier files had
+  been written. The new test `a_malformed_tool_payload_is_retried_once`
+  passes; the two existing failure tests keep their error code and partial
+  text.
+
 ## 0.2.15 — 2026-11-11
 
 ### Kernel

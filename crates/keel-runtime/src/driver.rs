@@ -41,6 +41,8 @@ const SUMMARY_EVERY_SEALS: u32 = 3;
 /// Bounds how many times one turn restarts itself because the model stopped
 /// while its task list still had unfinished items.
 const MAX_CONTINUATIONS: u32 = 6;
+/// One retry for a transient model-output failure such as malformed tool JSON.
+const MAX_MODEL_RETRIES: u32 = 1;
 use crate::TurnLimits;
 
 /// Host-side mechanism switches used by ablations.
@@ -1298,104 +1300,40 @@ impl<M: ModelProvider> TurnDriver<M> {
                 route: route.clone(),
                 reasoning: stats.reasoning,
             };
-            let model_started = tokio::time::Instant::now();
-            self.events.append(Event::ModelStarted {
-                turn_id,
-                provider: route.provider.clone(),
-                model: route.model.clone(),
-            });
+            let mut attempt = 0;
+            let (
+                round_text,
+                round_reasoning,
+                round_signature,
+                round_thought,
+                mut calls,
+                mut pending_interactions,
+            ) = 'attempt: loop {
+                let model_started = tokio::time::Instant::now();
+                self.events.append(Event::ModelStarted {
+                    turn_id,
+                    provider: route.provider.clone(),
+                    model: route.model.clone(),
+                });
 
-            let call_deadline = deadline.min(tokio::time::Instant::now() + MODEL_CALL_TIMEOUT);
-            let stream_result = tokio::select! {
-                _ = cancel.cancelled() => {
-                    return Err(KernelError::Cancelled { stage: "model" });
-                }
-                result = tokio::time::timeout_at(call_deadline, self.model.stream(request, cancel)) => result,
-            };
-
-            let mut stream = match stream_result {
-                Ok(Ok(stream)) => stream,
-                Ok(Err(failure)) => {
-                    let event = if failure.code == ErrorCode::ContextOverflow {
-                        TurnEvent::Overflow
-                    } else {
-                        TurnEvent::StreamFailure
-                    };
-                    self.step(fsm, turn_id, event)?;
-                    self.record_model_failure(
-                        turn_id,
-                        &route,
-                        model_started,
-                        failure.code,
-                        &failure.message,
-                    );
-                    return Err(KernelError::Model(failure));
-                }
-                Err(_) => {
-                    if text.is_empty() {
-                        self.record_model_failure(
-                            turn_id,
-                            &route,
-                            model_started,
-                            ErrorCode::Timeout,
-                            "the model call did not start before its deadline",
-                        );
-                        return Err(KernelError::Timeout {
-                            stage: "model",
-                            limit_ms: self.timeout_ms(),
-                        });
-                    }
-                    self.step(fsm, turn_id, TurnEvent::WallClockLow)?;
-                    break 'turn;
-                }
-            };
-
-            let mut round_text = String::new();
-            let mut round_reasoning = String::new();
-            let mut round_signature: Option<String> = None;
-            // A thinking provider may return an empty reasoning string; the
-            // wire still has to echo the field on the tool-call message.
-            let mut round_thought = false;
-            let mut calls = Vec::new();
-            let mut pending_interactions: Vec<InteractionRequest> = Vec::new();
-
-            // A stream that keeps delivering chunks is alive, however long the
-            // answer takes; only a silent stream hits the window.
-            let mut chunk_deadline = call_deadline;
-            let usage = loop {
-                let chunk = tokio::select! {
+                let call_deadline = deadline.min(tokio::time::Instant::now() + MODEL_CALL_TIMEOUT);
+                let stream_result = tokio::select! {
                     _ = cancel.cancelled() => {
-                        return Err(KernelError::Cancelled { stage: "model stream" });
+                        return Err(KernelError::Cancelled { stage: "model" });
                     }
-                    result = tokio::time::timeout_at(chunk_deadline, stream.recv()) => result,
+                    result = tokio::time::timeout_at(call_deadline, self.model.stream(request.clone(), cancel)) => result,
                 };
-                chunk_deadline = deadline.min(tokio::time::Instant::now() + MODEL_CALL_TIMEOUT);
 
-                match chunk {
-                    Err(_) => {
-                        if text.is_empty() {
-                            return Err(KernelError::Timeout {
-                                stage: "model stream",
-                                limit_ms: self.timeout_ms(),
-                            });
+                let mut stream = match stream_result {
+                    Ok(Ok(stream)) => stream,
+                    Ok(Err(failure)) => {
+                        if failure.retryable
+                            && failure.code == ErrorCode::InvalidResponse
+                            && attempt < MAX_MODEL_RETRIES
+                        {
+                            attempt += 1;
+                            continue 'attempt;
                         }
-                        self.step(fsm, turn_id, TurnEvent::WallClockLow)?;
-                        break 'turn;
-                    }
-                    Ok(None) => {
-                        self.step(fsm, turn_id, TurnEvent::StreamFailure)?;
-                        let failure =
-                            ModelError::stream_cut("model stream ended without a finish chunk");
-                        self.record_model_failure(
-                            turn_id,
-                            &route,
-                            model_started,
-                            failure.code,
-                            &failure.message,
-                        );
-                        return Err(KernelError::Model(failure));
-                    }
-                    Ok(Some(Err(failure))) => {
                         let event = if failure.code == ErrorCode::ContextOverflow {
                             TurnEvent::Overflow
                         } else {
@@ -1411,49 +1349,157 @@ impl<M: ModelProvider> TurnDriver<M> {
                         );
                         return Err(KernelError::Model(failure));
                     }
-                    Ok(Some(Ok(ModelChunk::TextDelta(delta)))) => {
-                        text.push_str(&delta);
-                        round_text.push_str(&delta);
+                    Err(_) => {
+                        if text.is_empty() {
+                            self.record_model_failure(
+                                turn_id,
+                                &route,
+                                model_started,
+                                ErrorCode::Timeout,
+                                "the model call did not start before its deadline",
+                            );
+                            return Err(KernelError::Timeout {
+                                stage: "model",
+                                limit_ms: self.timeout_ms(),
+                            });
+                        }
+                        self.step(fsm, turn_id, TurnEvent::WallClockLow)?;
+                        break 'turn;
                     }
-                    Ok(Some(Ok(ModelChunk::ThinkingDelta(delta)))) => {
-                        round_thought = true;
-                        round_reasoning.push_str(&delta);
-                    }
-                    Ok(Some(Ok(ModelChunk::ThinkingSignature(signature)))) => {
-                        round_thought = true;
-                        round_signature = Some(signature);
-                    }
-                    Ok(Some(Ok(ModelChunk::ToolCall(call)))) => calls.push(call),
-                    Ok(Some(Ok(ModelChunk::Interaction(request)))) => {
-                        pending_interactions.push(request);
-                    }
-                    Ok(Some(Ok(ModelChunk::Finished { usage: reported }))) => {
-                        break reported;
-                    }
-                }
-            };
+                };
 
-            let observed_overhead = usage.input_tokens.saturating_sub(estimated_tokens);
-            self.overhead
-                .fetch_max(u64::from(observed_overhead), Ordering::Relaxed);
-            stats.usage.input_tokens = stats.usage.input_tokens.saturating_add(usage.input_tokens);
-            stats.usage.output_tokens = stats
-                .usage
-                .output_tokens
-                .saturating_add(usage.output_tokens);
-            stats.usage.cached_input_tokens = stats
-                .usage
-                .cached_input_tokens
-                .saturating_add(usage.cached_input_tokens);
-            self.events.append(Event::ModelFinished {
-                turn_id,
-                tool_calls: calls.len(),
-                usage,
-                duration_ms: model_started
-                    .elapsed()
-                    .as_millis()
-                    .min(u128::from(u64::MAX)) as u64,
-            });
+                let mut round_text = String::new();
+                let mut round_reasoning = String::new();
+                let mut round_signature: Option<String> = None;
+                // A thinking provider may return an empty reasoning string; the
+                // wire still has to echo the field on the tool-call message.
+                let mut round_thought = false;
+                let mut calls = Vec::new();
+                let mut pending_interactions: Vec<InteractionRequest> = Vec::new();
+
+                // A stream that keeps delivering chunks is alive, however long
+                // the answer takes; only a silent stream hits the window.
+                let text_before = text.len();
+                let mut chunk_deadline = call_deadline;
+                let usage = loop {
+                    let chunk = tokio::select! {
+                        _ = cancel.cancelled() => {
+                            return Err(KernelError::Cancelled { stage: "model stream" });
+                        }
+                        result = tokio::time::timeout_at(chunk_deadline, stream.recv()) => result,
+                    };
+                    chunk_deadline = deadline.min(tokio::time::Instant::now() + MODEL_CALL_TIMEOUT);
+
+                    match chunk {
+                        Err(_) => {
+                            if text.is_empty() {
+                                return Err(KernelError::Timeout {
+                                    stage: "model stream",
+                                    limit_ms: self.timeout_ms(),
+                                });
+                            }
+                            self.step(fsm, turn_id, TurnEvent::WallClockLow)?;
+                            break 'turn;
+                        }
+                        Ok(None) => {
+                            let failure =
+                                ModelError::stream_cut("model stream ended without a finish chunk");
+                            if failure.retryable
+                                && failure.code == ErrorCode::InvalidResponse
+                                && attempt < MAX_MODEL_RETRIES
+                            {
+                                attempt += 1;
+                                text.truncate(text_before);
+                                continue 'attempt;
+                            }
+                            self.step(fsm, turn_id, TurnEvent::StreamFailure)?;
+                            self.record_model_failure(
+                                turn_id,
+                                &route,
+                                model_started,
+                                failure.code,
+                                &failure.message,
+                            );
+                            return Err(KernelError::Model(failure));
+                        }
+                        Ok(Some(Err(failure))) => {
+                            if failure.retryable
+                                && failure.code == ErrorCode::InvalidResponse
+                                && attempt < MAX_MODEL_RETRIES
+                            {
+                                attempt += 1;
+                                text.truncate(text_before);
+                                continue 'attempt;
+                            }
+                            let event = if failure.code == ErrorCode::ContextOverflow {
+                                TurnEvent::Overflow
+                            } else {
+                                TurnEvent::StreamFailure
+                            };
+                            self.step(fsm, turn_id, event)?;
+                            self.record_model_failure(
+                                turn_id,
+                                &route,
+                                model_started,
+                                failure.code,
+                                &failure.message,
+                            );
+                            return Err(KernelError::Model(failure));
+                        }
+                        Ok(Some(Ok(ModelChunk::TextDelta(delta)))) => {
+                            text.push_str(&delta);
+                            round_text.push_str(&delta);
+                        }
+                        Ok(Some(Ok(ModelChunk::ThinkingDelta(delta)))) => {
+                            round_thought = true;
+                            round_reasoning.push_str(&delta);
+                        }
+                        Ok(Some(Ok(ModelChunk::ThinkingSignature(signature)))) => {
+                            round_thought = true;
+                            round_signature = Some(signature);
+                        }
+                        Ok(Some(Ok(ModelChunk::ToolCall(call)))) => calls.push(call),
+                        Ok(Some(Ok(ModelChunk::Interaction(request)))) => {
+                            pending_interactions.push(request);
+                        }
+                        Ok(Some(Ok(ModelChunk::Finished { usage: reported }))) => {
+                            break reported;
+                        }
+                    }
+                };
+
+                let observed_overhead = usage.input_tokens.saturating_sub(estimated_tokens);
+                self.overhead
+                    .fetch_max(u64::from(observed_overhead), Ordering::Relaxed);
+                stats.usage.input_tokens =
+                    stats.usage.input_tokens.saturating_add(usage.input_tokens);
+                stats.usage.output_tokens = stats
+                    .usage
+                    .output_tokens
+                    .saturating_add(usage.output_tokens);
+                stats.usage.cached_input_tokens = stats
+                    .usage
+                    .cached_input_tokens
+                    .saturating_add(usage.cached_input_tokens);
+                self.events.append(Event::ModelFinished {
+                    turn_id,
+                    tool_calls: calls.len(),
+                    usage,
+                    duration_ms: model_started
+                        .elapsed()
+                        .as_millis()
+                        .min(u128::from(u64::MAX)) as u64,
+                });
+
+                break (
+                    round_text,
+                    round_reasoning,
+                    round_signature,
+                    round_thought,
+                    calls,
+                    pending_interactions,
+                );
+            };
 
             // The first text after the wrap-up instruction is the report. It
             // stays ordinary assistant text, and is also kept separately so
