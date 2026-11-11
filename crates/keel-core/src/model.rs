@@ -52,6 +52,9 @@ pub struct ToolCallRequest {
 pub enum ModelChunk {
     TextDelta(String),
     ThinkingDelta(String),
+    /// The signature that closes a thinking block. Anthropic-style providers
+    /// require it when the block is echoed back on a tool follow-up.
+    ThinkingSignature(String),
     ToolCall(ToolCallRequest),
     /// The model asks for user input. This is a control-plane chunk, never a
     /// domain tool call.

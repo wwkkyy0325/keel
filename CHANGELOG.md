@@ -3,6 +3,25 @@
 Kernel crates and the reference host share the workspace version. A derived
 project pins a version and updates deliberately; see `docs/kernel-contract.md`.
 
+## 0.2.15 — 2026-11-11
+
+### Kernel
+
+- A signed Anthropic-style thinking block rides with the assistant message
+  that requested tools: the streamed thinking and its signature are kept, and
+  the block is serialised first on the follow-up. An empty signed block is
+  still sent, because thinking-mode providers reject a follow-up without it.
+
+### Evidence
+
+- `deepseek-flash` rejected every tool follow-up with 400
+  `The content[].thinking in the thinking mode must be passed back to the
+  API`. The new live probe `a_thinking_model_survives_a_tool_followup`
+  passes, and so does the tool-call replay test.
+- Tests: a signed block is echoed first with its signature; an empty signed
+  block is echoed; `signature_delta` closes the block; the driver replays the
+  signature on the tool message.
+
 ## 0.2.14 — 2026-11-11
 
 ### Kernel

@@ -1352,6 +1352,7 @@ impl<M: ModelProvider> TurnDriver<M> {
 
             let mut round_text = String::new();
             let mut round_reasoning = String::new();
+            let mut round_signature: Option<String> = None;
             // A thinking provider may return an empty reasoning string; the
             // wire still has to echo the field on the tool-call message.
             let mut round_thought = false;
@@ -1417,6 +1418,10 @@ impl<M: ModelProvider> TurnDriver<M> {
                     Ok(Some(Ok(ModelChunk::ThinkingDelta(delta)))) => {
                         round_thought = true;
                         round_reasoning.push_str(&delta);
+                    }
+                    Ok(Some(Ok(ModelChunk::ThinkingSignature(signature)))) => {
+                        round_thought = true;
+                        round_signature = Some(signature);
                     }
                     Ok(Some(Ok(ModelChunk::ToolCall(call)))) => calls.push(call),
                     Ok(Some(Ok(ModelChunk::Interaction(request)))) => {
@@ -1588,6 +1593,9 @@ impl<M: ModelProvider> TurnDriver<M> {
                 tool_call_message.content = round_text;
                 if round_thought {
                     tool_call_message = tool_call_message.with_reasoning(round_reasoning.clone());
+                    if let Some(signature) = round_signature.clone() {
+                        tool_call_message = tool_call_message.with_thinking_signature(signature);
+                    }
                 }
                 messages.push(Arc::new(tool_call_message));
 
@@ -1748,7 +1756,14 @@ impl<M: ModelProvider> TurnDriver<M> {
             if !wrapped_up && !final_call_announced && stats.continuations < MAX_CONTINUATIONS {
                 if let Some((remaining, prompt)) = self.unfinished_todos() {
                     stats.continuations = stats.continuations.saturating_add(1);
-                    messages.push(Arc::new(Message::assistant(round_text.clone())));
+                    let mut answer = Message::assistant(round_text.clone());
+                    if round_thought {
+                        answer = answer.with_reasoning(round_reasoning.clone());
+                        if let Some(signature) = round_signature.clone() {
+                            answer = answer.with_thinking_signature(signature);
+                        }
+                    }
+                    messages.push(Arc::new(answer));
                     messages.push(Arc::new(Message::user(prompt)));
                     self.events
                         .append(Event::TurnContinued { turn_id, remaining });

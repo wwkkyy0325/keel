@@ -52,6 +52,10 @@ pub struct Message {
     /// Provider reasoning text that must be echoed back with tool calls for
     /// thinking-mode models such as DeepSeek.
     pub reasoning_content: Option<String>,
+    /// Signature an Anthropic-style provider attaches to a thinking block.
+    /// The block must be sent back verbatim on a tool follow-up, and the
+    /// provider rejects one without its signature.
+    pub thinking_signature: Option<String>,
     /// Images this message carries. A tool that captures a screenshot attaches
     /// it to its result message so the next model call can see it.
     pub images: Vec<ImagePart>,
@@ -65,6 +69,7 @@ impl Message {
             tool_calls: Vec::new(),
             tool_call_id: None,
             reasoning_content: None,
+            thinking_signature: None,
             images: Vec::new(),
         }
     }
@@ -89,6 +94,7 @@ impl Message {
             tool_calls,
             tool_call_id: None,
             reasoning_content: None,
+            thinking_signature: None,
             images: Vec::new(),
         }
     }
@@ -96,6 +102,13 @@ impl Message {
     /// Attaches provider reasoning text to this message.
     pub fn with_reasoning(mut self, reasoning: impl Into<String>) -> Self {
         self.reasoning_content = Some(reasoning.into());
+        self
+    }
+
+    /// Attaches the signature that must accompany the reasoning when the
+    /// provider echoes a thinking block back.
+    pub fn with_thinking_signature(mut self, signature: impl Into<String>) -> Self {
+        self.thinking_signature = Some(signature.into());
         self
     }
 
@@ -107,6 +120,7 @@ impl Message {
             tool_calls: Vec::new(),
             tool_call_id: Some(call_id),
             reasoning_content: None,
+            thinking_signature: None,
             images: Vec::new(),
         }
     }
@@ -120,6 +134,7 @@ impl Message {
             tool_calls: Vec::new(),
             tool_call_id: None,
             reasoning_content: None,
+            thinking_signature: None,
             images: Vec::new(),
         }
     }

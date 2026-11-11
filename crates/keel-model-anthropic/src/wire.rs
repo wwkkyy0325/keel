@@ -74,6 +74,20 @@ fn messages_json(messages: &[Arc<Message>]) -> Vec<Value> {
             }
             MessageRole::Assistant => {
                 let mut blocks = Vec::new();
+                // A thinking block must come first, and a provider that asks
+                // for it back rejects the message when it is missing.
+                if let Some(thinking) = message.reasoning_content.as_deref() {
+                    // An empty reasoning string still needs its block when the
+                    // provider signed it; DeepSeek rejects the follow-up
+                    // otherwise.
+                    if !thinking.is_empty() || message.thinking_signature.is_some() {
+                        let mut block = json!({"type": "thinking", "thinking": thinking});
+                        if let Some(signature) = message.thinking_signature.as_deref() {
+                            block["signature"] = json!(signature);
+                        }
+                        blocks.push(block);
+                    }
+                }
                 if !message.content.is_empty() {
                     blocks.push(json!({"type": "text", "text": message.content}));
                 }
@@ -406,6 +420,15 @@ impl StreamDecoder {
                                 }
                             }
                         }
+                        Some("signature_delta") => {
+                            if let Some(signature) = delta.get("signature").and_then(Value::as_str)
+                            {
+                                if !signature.is_empty() {
+                                    chunks
+                                        .push(ModelChunk::ThinkingSignature(signature.to_owned()));
+                                }
+                            }
+                        }
                         Some("input_json_delta") => {
                             if let Some(partial) = delta.get("partial_json").and_then(Value::as_str)
                             {
@@ -587,6 +610,67 @@ mod tests {
         assert_eq!(body["messages"][0]["content"][0]["type"], "text");
         assert_eq!(body["messages"][0]["content"][1]["type"], "image");
         assert_eq!(body["messages"][0]["content"][1]["source"]["data"], "AQID");
+    }
+
+    #[test]
+    fn a_thinking_block_is_echoed_first_with_its_signature() {
+        let call = Message::assistant_tool_calls(vec![ToolCallRequest {
+            id: ToolCallId::new(5),
+            name: "echo".to_owned(),
+            args: ToolArgs::new(),
+        }])
+        .with_reasoning("weigh the options")
+        .with_thinking_signature("sig-1");
+
+        let mut request = request();
+        request.messages = vec![Arc::new(call)];
+
+        let body = build_request(&request, "fallback");
+        let blocks = &body["messages"][0]["content"];
+
+        assert_eq!(blocks[0]["type"], "thinking");
+        assert_eq!(blocks[0]["thinking"], "weigh the options");
+        assert_eq!(blocks[0]["signature"], "sig-1");
+        assert_eq!(blocks[1]["type"], "tool_use");
+    }
+
+    #[test]
+    fn an_empty_signed_thinking_block_is_still_echoed() {
+        let call = Message::assistant_tool_calls(vec![ToolCallRequest {
+            id: ToolCallId::new(6),
+            name: "echo".to_owned(),
+            args: ToolArgs::new(),
+        }])
+        .with_reasoning("")
+        .with_thinking_signature("sig-2");
+
+        let mut request = request();
+        request.messages = vec![Arc::new(call)];
+
+        let body = build_request(&request, "fallback");
+        let blocks = &body["messages"][0]["content"];
+
+        assert_eq!(blocks[0]["type"], "thinking");
+        assert_eq!(blocks[0]["thinking"], "");
+        assert_eq!(blocks[0]["signature"], "sig-2");
+        assert_eq!(blocks[1]["type"], "tool_use");
+    }
+
+    #[test]
+    fn a_signature_delta_closes_the_thinking_block() {
+        let mut decoder = StreamDecoder::default();
+        let chunks = decoder
+            .apply(&json!({
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": { "type": "signature_delta", "signature": "sig-1" }
+            }))
+            .expect("the event decodes");
+
+        assert_eq!(
+            chunks,
+            vec![ModelChunk::ThinkingSignature("sig-1".to_owned())]
+        );
     }
 
     #[test]

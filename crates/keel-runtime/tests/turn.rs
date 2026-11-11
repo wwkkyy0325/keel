@@ -2119,3 +2119,89 @@ async fn a_tool_image_reaches_the_next_model_call() {
     assert_eq!(tool_message.images[0].media_type, "image/png");
     assert_eq!(tool_message.images[0].data, vec![1, 2, 3]);
 }
+
+/// A thinking round with a signature, then the answer. Anthropic-style
+/// providers reject the follow-up when the signed block is not replayed.
+struct SignedThinkingModel {
+    seen: SeenRequests,
+    calls: Mutex<u32>,
+}
+
+#[async_trait]
+impl ModelProvider for SignedThinkingModel {
+    async fn stream(
+        &self,
+        request: ModelRequest,
+        cancel: &CancelToken,
+    ) -> Result<ModelStream, ModelError> {
+        self.seen
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push((request.tools.len(), request.messages.clone()));
+        let first = {
+            let mut calls = self
+                .calls
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *calls += 1;
+            *calls == 1
+        };
+        let (tx, rx) = tokio::sync::mpsc::channel(8);
+        if first {
+            let mut args = ToolArgs::new();
+            args.insert("text", ArgValue::String("hi".to_owned()));
+            let _ = tx
+                .send(Ok(ModelChunk::ThinkingDelta("weigh it".to_owned())))
+                .await;
+            let _ = tx
+                .send(Ok(ModelChunk::ThinkingSignature("sig-1".to_owned())))
+                .await;
+            let _ = tx
+                .send(Ok(ModelChunk::ToolCall(keel_core::ToolCallRequest {
+                    id: ToolCallId::next(),
+                    name: "echo".to_owned(),
+                    args,
+                })))
+                .await;
+        } else {
+            let _ = tx.send(Ok(ModelChunk::TextDelta("done".to_owned()))).await;
+        }
+        let _ = tx
+            .send(Ok(ModelChunk::Finished {
+                usage: TokenUsage::default(),
+            }))
+            .await;
+        let _ = cancel;
+        Ok(ModelStream::new(rx))
+    }
+}
+
+#[tokio::test]
+async fn a_thinking_signature_is_echoed_on_the_tool_followup() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&["echo"], 4, PermissionLevel::WorkspaceAuto);
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let model = SignedThinkingModel {
+        seen: seen.clone(),
+        calls: Mutex::new(0),
+    };
+    let driver = common::build_driver(model, config, events.clone(), dir.path(), two_call_limits());
+
+    let outcome = driver.run("hi", CancelToken::new()).await;
+    assert!(outcome.is_done(), "{outcome:?}");
+
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 2);
+    let echo = seen[1]
+        .1
+        .iter()
+        .find(|message| message.role == MessageRole::Assistant && !message.tool_calls.is_empty())
+        .expect("the tool-call message is replayed on the follow-up");
+    assert_eq!(echo.reasoning_content.as_deref(), Some("weigh it"));
+    assert_eq!(
+        echo.thinking_signature.as_deref(),
+        Some("sig-1"),
+        "the signed thinking block must be sent back"
+    );
+}
