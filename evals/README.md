@@ -99,3 +99,16 @@ Two cases exercise a long run rather than a single fix:
 
 A case that cannot finish inside its working set is a finding, not a flake:
 the report records the overflow and the chapters that were written.
+
+## Run workspaces
+
+The directories the long-horizon runs actually ran in (`fusion-run`,
+`fusion-tools`, `recall-probe`, `ascent-novel`, `ascent-ablation`,
+`ascent-smoke`, `keel-notes`, `todo-smoke`) live in `evals/data/workspaces/`,
+which is gitignored, together with an `INDEX.md` naming the report that cites
+each one. Reports written before the move still quote the old
+`D:\workspace-new\wwkkyy0325\<name>` path: that is a record of where the run
+happened, so it was not rewritten. Use the INDEX to translate.
+
+`git clean -xdf` deletes ignored files and would take those workspaces with it.
+Use `git clean -df` when cleaning this repository.
