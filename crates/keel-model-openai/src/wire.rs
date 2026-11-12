@@ -233,10 +233,18 @@ impl ToolCallAccumulator {
                         } else {
                             ""
                         };
+                        // A Windows path inside a JSON string is the most
+                        // common escape mistake; name the fix once here
+                        // instead of letting the next call repeat it.
+                        let hint = if error.to_string().contains("escape") {
+                            "; backslashes in JSON must be doubled, e.g. D:\\\\work\\\\file.rs"
+                        } else {
+                            ""
+                        };
                         finished.push(FinishedCall::Malformed {
                             name: partial.name,
                             message: format!(
-                                "invalid tool arguments: {error}; received: {preview}{more}"
+                                "invalid tool arguments: {error}; received: {preview}{more}{hint}"
                             ),
                         });
                         continue;

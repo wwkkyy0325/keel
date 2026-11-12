@@ -72,12 +72,40 @@ pub trait PermissionGate: Send + Sync {
 /// root. The dispatcher canonicalizes the result before the permission gate,
 /// so a symlink inside the workspace cannot point the check at another path.
 pub fn resolve_path(root: &Path, path: &Path) -> PathBuf {
+    let path = workspace_relative(path);
     let candidate = if path.is_absolute() {
         path.to_path_buf()
     } else {
         root.join(path)
     };
     simplify_path(normalize(&candidate))
+}
+
+/// A model often writes `/src/main.js`. On Windows that is a rooted path with
+/// no drive, and joining it would leave the workspace (`D:\src\main.js`).
+/// A single leading separator is read as workspace-relative there. Absolute
+/// drives and UNC paths are untouched; on other platforms an absolute path
+/// stays absolute.
+#[cfg(windows)]
+fn workspace_relative(path: &Path) -> &Path {
+    let Some(text) = path.to_str() else {
+        return path;
+    };
+    let mut chars = text.chars();
+    let first = chars.next();
+    let second = chars.next();
+    let single =
+        matches!(first, Some('/') | Some('\\')) && !matches!(second, Some('/') | Some('\\'));
+    if single {
+        Path::new(&text[1..])
+    } else {
+        path
+    }
+}
+
+#[cfg(not(windows))]
+fn workspace_relative(path: &Path) -> &Path {
+    path
 }
 
 /// Strips the Windows verbatim prefix so canonicalized roots and tool paths
@@ -178,5 +206,37 @@ mod tests {
         let expected = PathBuf::from("/ws/b");
 
         assert_eq!(resolve_path(root, Path::new("a/../b")), expected);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_leading_separator_is_workspace_relative() {
+        let root = Path::new(r"D:\work\project");
+
+        assert_eq!(
+            resolve_path(root, Path::new("/src/main.js")),
+            PathBuf::from(r"D:\work\project\src\main.js")
+        );
+        assert_eq!(
+            resolve_path(root, Path::new(r"\src\main.js")),
+            PathBuf::from(r"D:\work\project\src\main.js")
+        );
+        assert_eq!(
+            resolve_path(root, Path::new(r"D:\elsewhere\x")),
+            PathBuf::from(r"D:\elsewhere\x")
+        );
+        assert_eq!(
+            resolve_path(root, Path::new(r"\\server\share\x")),
+            PathBuf::from(r"\\server\share\x")
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn an_absolute_path_stays_absolute() {
+        assert_eq!(
+            resolve_path(Path::new("/ws"), Path::new("/src/main.js")),
+            PathBuf::from("/src/main.js")
+        );
     }
 }

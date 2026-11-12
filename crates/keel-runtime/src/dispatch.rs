@@ -115,7 +115,7 @@ impl ToolDispatcher {
         let mut reads = Vec::new();
         let mut writes = Vec::new();
 
-        for (index, call) in calls.into_iter().enumerate() {
+        for (index, mut call) in calls.into_iter().enumerate() {
             let tool = self.registry.get(&call.name);
             let risk = tool
                 .as_ref()
@@ -153,6 +153,9 @@ impl ToolDispatcher {
             };
 
             let schema = tool.schema();
+            // Repair the one argument shape models get wrong most often
+            // before rejecting the call: a scalar where a list is declared.
+            schema.widen_lists(&mut call.args);
             if let Err(error) = schema.validate(&call.args) {
                 results[index] = Some(self.reject(
                     turn_id,

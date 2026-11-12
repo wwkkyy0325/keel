@@ -199,10 +199,17 @@ impl Tool for ReadFileTool {
         // Bounded read: a log or archive larger than the limit yields its head
         // and a marker instead of an error, so the model can still work with
         // it without reading gigabytes into memory.
-        let len = tokio::fs::metadata(&resolved)
-            .await
-            .map(|metadata| metadata.len())
-            .unwrap_or(0);
+        let metadata = tokio::fs::metadata(&resolved).await;
+        if metadata.as_ref().is_ok_and(|metadata| metadata.is_dir()) {
+            return ToolResult::failure(
+                ctx.call_id,
+                "read_file",
+                ToolError::invalid_arguments(format!(
+                    "`{path}` is a directory; use list_dir to list it"
+                )),
+            );
+        }
+        let len = metadata.map(|metadata| metadata.len()).unwrap_or(0);
         let truncated = len > MAX_READ_FILE_BYTES;
         let mut file = match tokio::fs::File::open(&resolved).await {
             Ok(file) => file,
@@ -3756,6 +3763,23 @@ mod file_tool_tests {
             ArgValue::StringList(news.iter().map(|value| (*value).to_owned()).collect()),
         );
         args
+    }
+
+    #[tokio::test]
+    async fn read_file_names_a_directory_instead_of_a_bare_os_error() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("src")).unwrap();
+
+        let result = ReadFileTool::new()
+            .call(args(&[("path", "src")]), &ctx(dir.path()))
+            .await;
+
+        let message = result
+            .error()
+            .map(|error| error.message.clone())
+            .unwrap_or_default();
+        assert!(message.contains("is a directory"), "{message}");
+        assert!(message.contains("list_dir"), "{message}");
     }
 
     #[tokio::test]

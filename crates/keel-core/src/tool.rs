@@ -110,6 +110,25 @@ impl ToolSchema {
         }
         Ok(())
     }
+
+    /// A model routinely sends a bare string where the schema declares a
+    /// list (`"old": "..."`). Widening it to a one-element list is
+    /// unambiguous, so the call is repaired before the strict check instead
+    /// of failing and costing a model round trip.
+    pub fn widen_lists(&self, args: &mut ToolArgs) {
+        for param in &self.params {
+            if param.kind != ParamKind::StringList {
+                continue;
+            }
+            let widened = match args.values.get(&param.name) {
+                Some(ArgValue::String(text)) => Some(ArgValue::StringList(vec![text.clone()])),
+                _ => None,
+            };
+            if let Some(widened) = widened {
+                args.values.insert(param.name.clone(), widened);
+            }
+        }
+    }
 }
 
 /// One typed tool argument value.
@@ -304,4 +323,80 @@ pub trait Tool: Send + Sync {
     }
 
     async fn call(&self, args: ToolArgs, ctx: &ToolCtx) -> ToolResult;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn list_schema() -> ToolSchema {
+        ToolSchema {
+            name: "edit".to_owned(),
+            description: String::new(),
+            risk: RiskLevel::ReadOnly,
+            params: vec![
+                ParamSpec {
+                    name: "old".to_owned(),
+                    kind: ParamKind::StringList,
+                    required: true,
+                },
+                ParamSpec {
+                    name: "path".to_owned(),
+                    kind: ParamKind::String,
+                    required: true,
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn a_bare_string_widens_to_a_one_element_list() {
+        let schema = list_schema();
+        let mut args = ToolArgs::new();
+        args.insert("path", ArgValue::String("src/main.js".to_owned()));
+        args.insert("old", ArgValue::String("let a = 1;".to_owned()));
+        assert!(schema.validate(&args).is_err());
+
+        schema.widen_lists(&mut args);
+
+        assert_eq!(
+            args.get("old"),
+            Some(&ArgValue::StringList(vec!["let a = 1;".to_owned()]))
+        );
+        assert!(schema.validate(&args).is_ok());
+    }
+
+    #[test]
+    fn a_real_list_and_a_plain_string_are_left_alone() {
+        let schema = list_schema();
+        let mut args = ToolArgs::new();
+        args.insert("path", ArgValue::String("src/main.js".to_owned()));
+        args.insert(
+            "old",
+            ArgValue::StringList(vec!["a".to_owned(), "b".to_owned()]),
+        );
+
+        schema.widen_lists(&mut args);
+
+        assert_eq!(
+            args.get("old"),
+            Some(&ArgValue::StringList(vec!["a".to_owned(), "b".to_owned()]))
+        );
+        assert_eq!(
+            args.get("path"),
+            Some(&ArgValue::String("src/main.js".to_owned()))
+        );
+    }
+
+    #[test]
+    fn a_boolean_for_a_list_still_fails_the_check() {
+        let schema = list_schema();
+        let mut args = ToolArgs::new();
+        args.insert("path", ArgValue::String("src/main.js".to_owned()));
+        args.insert("old", ArgValue::Boolean(true));
+
+        schema.widen_lists(&mut args);
+
+        assert!(schema.validate(&args).is_err());
+    }
 }
