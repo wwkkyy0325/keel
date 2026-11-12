@@ -3,6 +3,40 @@
 Kernel crates and the reference host share the workspace version. A derived
 project pins a version and updates deliberately; see `docs/kernel-contract.md`.
 
+## Unreleased
+
+### Kernel
+
+- A malformed tool-call payload is retried with a note naming the failure
+  instead of a verbatim resend (ADR 0055). The error also carries a bounded
+  sample of the received arguments.
+- The OpenAI-wire tool-call accumulator accepts cumulative argument resends:
+  a delta that starts with the whole buffer replaces it, while incremental
+  fragments still append.
+- A background command can be stopped by its `bg-N` handle (ADR 0056); the
+  task stays registered so the driver still delivers its result to the model.
+- A tool call whose arguments are not valid JSON becomes a failed tool result
+  the model can correct, instead of a retry or a turn failure (ADR 0058).
+  The call appears in the transcript with the parse error and a bounded
+  sample; the dispatcher never runs it. Type errors in valid JSON keep the
+  ADR 0055 retry.
+- Shell and background commands on Windows are created with
+  `CREATE_NO_WINDOW` (ADR 0059). A GUI host used to flash a console window
+  for every child: each shell call, git probe and `ffprobe`, and a background
+  command kept one open for its whole run.
+
+### Evidence
+
+- A live `deepseek-flash` turn failed after 667 s with `invalid tool
+  arguments: expected value at line 1 column 13`. The new tests
+  `a_malformed_tool_call_is_retried_with_a_correction`,
+  `a_cumulative_resend_replaces_the_buffer`, `an_exact_repeat_is_not_doubled`
+  and `a_running_command_can_be_stopped` pass; the runtime suite is green.
+- A second live turn spent 303 s and 30 model calls, then emitted an
+  `edit_file` call with an unquoted `new` value and failed after the retry.
+  The new test `a_malformed_tool_call_becomes_a_tool_failure` keeps the turn
+  alive and reports the failure as a tool result.
+
 ## 0.2.16 — 2026-11-11
 
 ### Kernel

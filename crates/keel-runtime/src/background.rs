@@ -73,11 +73,36 @@ pub struct LocalBackgroundTasks {
     events: Option<Arc<EventLog>>,
 }
 
+/// Highest `bg-N.log` handle already on disk, or 0.
+fn highest_handle(dir: &Path) -> u32 {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| {
+            let name = entry.file_name();
+            let name = name.to_str()?;
+            let number = name.strip_prefix("bg-")?.strip_suffix(".log")?;
+            number.parse::<u32>().ok()
+        })
+        .max()
+        .unwrap_or(0)
+}
+
 impl LocalBackgroundTasks {
     pub fn new(outputs: impl Into<PathBuf>) -> Self {
+        let outputs = outputs.into();
+        // Handles restart at bg-1 with a new registry. Continue after the
+        // logs already in the directory, so a new task does not append to an
+        // older handle's log and two sessions never share one.
+        let next_id = highest_handle(&outputs);
         Self {
-            state: Mutex::new(State::default()),
-            outputs: outputs.into(),
+            state: Mutex::new(State {
+                next_id,
+                tasks: Vec::new(),
+            }),
+            outputs,
             events: None,
         }
     }
@@ -96,6 +121,29 @@ impl LocalBackgroundTasks {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .tasks
             .len()
+    }
+
+    /// Kills a running command by its `bg-N` handle. The task stays in the
+    /// registry so `drain` still reports how it ended, and the next snapshot
+    /// shows it as no longer running. Returns false when the handle is
+    /// unknown or the command had already exited.
+    pub fn stop(&self, id: &str) -> bool {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let Some(task) = state
+            .tasks
+            .iter_mut()
+            .find(|task| format!("bg-{}", task.id) == id)
+        else {
+            return false;
+        };
+        if matches!(task.child.try_wait(), Ok(Some(_))) {
+            return false;
+        }
+        command::kill_tree(task.pid);
+        true
     }
 
     /// Reports running and finished-but-not-drained commands without
@@ -304,6 +352,69 @@ mod tests {
         assert_eq!(results[0].exit_code, Some(0));
         assert!(results[0].tail.contains("done"), "{}", results[0].tail);
         assert!(results[0].output_path.exists());
+    }
+
+    #[test]
+    fn a_running_command_can_be_stopped() {
+        if !python_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let tasks = LocalBackgroundTasks::new(dir.path().join("outputs"));
+        let args = vec!["-c".to_owned(), "import time; time.sleep(30)".to_owned()];
+        let spec = CommandSpec {
+            program: "python",
+            args: &args,
+            cwd: dir.path(),
+            timeout: Duration::from_secs(30),
+            max_duration: None,
+        };
+        tasks.start(TurnId::new(1), &spec).unwrap();
+        assert_eq!(tasks.running(), 1);
+
+        assert!(tasks.stop("bg-1"));
+        assert!(!tasks.stop("bg-9"), "an unknown handle is refused");
+
+        let mut results = Vec::new();
+        for _ in 0..100 {
+            results = tasks.drain();
+            if !results.is_empty() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(results.len(), 1);
+        assert_ne!(results[0].exit_code, Some(0));
+        assert_eq!(tasks.running(), 0);
+    }
+
+    #[test]
+    fn a_new_registry_continues_after_existing_handles() {
+        if !python_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let outputs = dir.path().join("outputs");
+        std::fs::create_dir_all(&outputs).unwrap();
+        std::fs::write(outputs.join("bg-7.log"), "an earlier session").unwrap();
+        let tasks = LocalBackgroundTasks::new(outputs);
+        let args = vec!["-c".to_owned(), "print('new')".to_owned()];
+        let spec = CommandSpec {
+            program: "python",
+            args: &args,
+            cwd: dir.path(),
+            timeout: Duration::from_secs(5),
+            max_duration: None,
+        };
+
+        let started = tasks.start(TurnId::new(1), &spec).unwrap();
+
+        assert!(started.contains("bg-8"), "{started}");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("outputs/bg-7.log")).unwrap(),
+            "an earlier session",
+            "the older log must not be appended to"
+        );
     }
 
     #[test]

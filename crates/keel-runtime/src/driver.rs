@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -9,9 +9,10 @@ use keel_core::{
     CancelToken, CommitCtx, CommitDecision, ContextMessage, ContextSnapshot, ErrorCode, Event,
     EventSink, InteractionId, InteractionRequest, InteractionResponse, KernelError, Message,
     MessageRole, ModelChunk, ModelError, ModelProvider, ModelRequest, ModelRole, ModelRoute,
-    OnTimeout, Policy, ReasoningLevel, SecretKind, SegmentRecord, Session, SessionSnapshot,
-    TodoList, TodoState, TodoStatus, ToolArgs, ToolCallId, ToolCallRequest, ToolOutcome, TurnEvent,
-    TurnRecord, TurnState, VerificationMode, VerificationReport,
+    OnTimeout, Policy, ReasoningLevel, RiskLevel, SecretKind, SegmentRecord, Session,
+    SessionSnapshot, TodoList, TodoState, TodoStatus, ToolArgs, ToolCallId, ToolCallRequest,
+    ToolError, ToolOutcome, ToolResult, TurnEvent, TurnRecord, TurnState, VerificationMode,
+    VerificationReport,
 };
 
 use crate::background::BackgroundTasks;
@@ -1287,7 +1288,7 @@ impl<M: ModelProvider> TurnDriver<M> {
             stats.model_calls = stats.model_calls.saturating_add(1);
 
             let route = self.policy.model_route(ModelRole::Main);
-            let request = ModelRequest {
+            let mut request = ModelRequest {
                 messages: messages.clone(),
                 tools: if final_call {
                     Vec::new()
@@ -1301,6 +1302,10 @@ impl<M: ModelProvider> TurnDriver<M> {
                 reasoning: stats.reasoning,
             };
             let mut attempt = 0;
+            // Calls whose arguments were not valid JSON. They are shown to
+            // the model as failed calls (so it can correct them) but never
+            // reach the dispatcher.
+            let mut malformed_errors: HashMap<ToolCallId, String> = HashMap::new();
             let (
                 round_text,
                 round_reasoning,
@@ -1331,6 +1336,14 @@ impl<M: ModelProvider> TurnDriver<M> {
                             && failure.code == ErrorCode::InvalidResponse
                             && attempt < MAX_MODEL_RETRIES
                         {
+                            // A verbatim resend at the same context usually
+                            // repeats a malformed tool call. Say what was
+                            // wrong so the retry can correct it.
+                            if let Some(note) = invalid_tool_arguments_note(&failure) {
+                                let note = Arc::new(Message::user(note));
+                                request.messages.push(note.clone());
+                                messages.push(note);
+                            }
                             attempt += 1;
                             continue 'attempt;
                         }
@@ -1375,6 +1388,7 @@ impl<M: ModelProvider> TurnDriver<M> {
                 // wire still has to echo the field on the tool-call message.
                 let mut round_thought = false;
                 let mut calls = Vec::new();
+                let mut malformed: Vec<(String, String)> = Vec::new();
                 let mut pending_interactions: Vec<InteractionRequest> = Vec::new();
 
                 // A stream that keeps delivering chunks is alive, however long
@@ -1427,6 +1441,11 @@ impl<M: ModelProvider> TurnDriver<M> {
                                 && failure.code == ErrorCode::InvalidResponse
                                 && attempt < MAX_MODEL_RETRIES
                             {
+                                if let Some(note) = invalid_tool_arguments_note(&failure) {
+                                    let note = Arc::new(Message::user(note));
+                                    request.messages.push(note.clone());
+                                    messages.push(note);
+                                }
                                 attempt += 1;
                                 text.truncate(text_before);
                                 continue 'attempt;
@@ -1459,6 +1478,9 @@ impl<M: ModelProvider> TurnDriver<M> {
                             round_signature = Some(signature);
                         }
                         Ok(Some(Ok(ModelChunk::ToolCall(call)))) => calls.push(call),
+                        Ok(Some(Ok(ModelChunk::MalformedToolCall { name, message }))) => {
+                            malformed.push((name, message));
+                        }
                         Ok(Some(Ok(ModelChunk::Interaction(request)))) => {
                             pending_interactions.push(request);
                         }
@@ -1490,6 +1512,54 @@ impl<M: ModelProvider> TurnDriver<M> {
                         .as_millis()
                         .min(u128::from(u64::MAX)) as u64,
                 });
+
+                // A response that both asks for a decision and calls a tool is
+                // ambiguous; a second response usually separates them. Treat it
+                // like any other malformed model output: retry once. On the
+                // final call the caller clears tools anyway, so let it through.
+                if !final_call
+                    && ((!calls.is_empty() && !pending_interactions.is_empty())
+                        || pending_interactions.len() > 1)
+                {
+                    let message = if pending_interactions.len() > 1 {
+                        "model returned more than one interaction in one response"
+                    } else {
+                        "model returned tool calls and an interaction in one response"
+                    };
+                    let failure = ModelError::new(ErrorCode::InvalidResponse, message, true);
+                    if attempt < MAX_MODEL_RETRIES {
+                        attempt += 1;
+                        text.truncate(text_before);
+                        continue 'attempt;
+                    }
+                    self.step(fsm, turn_id, TurnEvent::StreamFailure)?;
+                    self.record_model_failure(
+                        turn_id,
+                        &route,
+                        model_started,
+                        failure.code,
+                        &failure.message,
+                    );
+                    return Err(KernelError::Model(failure));
+                }
+
+                // A call with invalid JSON still becomes a tool call in the
+                // transcript: the assistant message carries it with empty
+                // arguments, and the result is a failure the model can correct
+                // on its next call. Nothing malformed is executed.
+                for (name, message) in malformed {
+                    let call = ToolCallRequest {
+                        id: ToolCallId::next(),
+                        name: if name.is_empty() {
+                            "unknown".to_owned()
+                        } else {
+                            name
+                        },
+                        args: ToolArgs::new(),
+                    };
+                    malformed_errors.insert(call.id, message);
+                    calls.push(call);
+                }
 
                 break (
                     round_text,
@@ -1523,19 +1593,6 @@ impl<M: ModelProvider> TurnDriver<M> {
             }
 
             if !pending_interactions.is_empty() {
-                if !calls.is_empty() {
-                    self.step(fsm, turn_id, TurnEvent::StreamFailure)?;
-                    return Err(KernelError::Model(ModelError::internal(
-                        "model returned tool calls and an interaction in one response",
-                    )));
-                }
-                if pending_interactions.len() > 1 {
-                    self.step(fsm, turn_id, TurnEvent::StreamFailure)?;
-                    return Err(KernelError::Model(ModelError::internal(
-                        "model returned more than one interaction in one response",
-                    )));
-                }
-
                 let Some(mut request) = pending_interactions.pop() else {
                     return Err(KernelError::Internal {
                         message: "interaction queue was empty".to_owned(),
@@ -1646,12 +1703,72 @@ impl<M: ModelProvider> TurnDriver<M> {
                 messages.push(Arc::new(tool_call_message));
 
                 let calls_for_audit = calls.clone();
+                for call in &calls {
+                    let Some(message) = malformed_errors.get(&call.id) else {
+                        continue;
+                    };
+                    self.events.append(Event::ToolStarted {
+                        turn_id,
+                        call_id: call.id,
+                        tool: call.name.clone(),
+                        risk: RiskLevel::Dangerous,
+                        args_preview: Some("arguments were not valid JSON".to_owned()),
+                    });
+                    self.events.append(Event::ToolFinished {
+                        turn_id,
+                        call_id: call.id,
+                        tool: call.name.clone(),
+                        ok: false,
+                        error: Some(ErrorCode::InvalidResponse),
+                        duration_ms: 0,
+                        output_preview: Some(message.clone()),
+                    });
+                }
                 let todo_before = self.todo_revision();
                 let todo_state_before = self.todo_state();
-                let results = self
+                // A malformed call never reaches the dispatcher; it already
+                // has its failure result. The rest keep their order.
+                let executable: Vec<ToolCallRequest> = if malformed_errors.is_empty() {
+                    calls.clone()
+                } else {
+                    calls
+                        .iter()
+                        .filter(|call| !malformed_errors.contains_key(&call.id))
+                        .cloned()
+                        .collect()
+                };
+                let dispatched = self
                     .dispatcher
-                    .dispatch(turn_id, calls, &visible_names, cancel)
+                    .dispatch(turn_id, executable, &visible_names, cancel)
                     .await;
+                let mut by_id: HashMap<ToolCallId, ToolResult> = dispatched
+                    .into_iter()
+                    .map(|result| (result.call_id, result))
+                    .collect();
+                let results: Vec<ToolResult> = calls
+                    .iter()
+                    .map(|call| {
+                        if let Some(message) = malformed_errors.get(&call.id) {
+                            ToolResult::failure(
+                                call.id,
+                                call.name.clone(),
+                                ToolError::invalid_arguments(message.clone()),
+                            )
+                        } else {
+                            by_id.remove(&call.id).unwrap_or_else(|| {
+                                ToolResult::failure(
+                                    call.id,
+                                    call.name.clone(),
+                                    ToolError::new(
+                                        ErrorCode::Internal,
+                                        "tool call produced no result",
+                                        false,
+                                    ),
+                                )
+                            })
+                        }
+                    })
+                    .collect();
                 if cancel.is_cancelled() {
                     return Err(KernelError::Cancelled { stage: "tools" });
                 }
@@ -2166,6 +2283,20 @@ fn fallback_memo(
         text.push_str(&line);
     }
     Some((trim_to_budget(&text, budget), used))
+}
+
+/// A retried model call gets a note when the previous answer's tool call had
+/// invalid JSON. A verbatim resend at the same context usually repeats it.
+fn invalid_tool_arguments_note(failure: &keel_core::ModelError) -> Option<String> {
+    if failure.code != ErrorCode::InvalidResponse
+        || !failure.message.starts_with("invalid tool arguments")
+    {
+        return None;
+    }
+    Some(format!(
+        "Your previous tool call was rejected: {}. Re-issue the same call with complete, valid JSON.",
+        failure.message
+    ))
 }
 
 /// Replaces old tool-result bodies with a short marker, keeping the latest

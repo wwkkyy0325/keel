@@ -374,6 +374,9 @@ async fn emit_finished(
     for call in calls {
         let chunk = match call {
             FinishedCall::Tool(call) => ModelChunk::ToolCall(call),
+            FinishedCall::Malformed { name, message } => {
+                ModelChunk::MalformedToolCall { name, message }
+            }
             FinishedCall::Interaction(request) => ModelChunk::Interaction(request),
         };
         if tx.send(Ok(chunk)).await.is_err() {

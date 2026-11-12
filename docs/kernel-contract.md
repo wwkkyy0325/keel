@@ -91,12 +91,16 @@ Stable within a major version:
   parallel, capped at eight at a time; mutating calls stay serialized.
 - The tool protocol: names, parameter kinds, risk levels and result envelopes.
   `Tool::concurrent()` lets a mutating tool join the parallel batch; the
-  declared risk stays for the UI and audit. `ToolResult::with_usage` attaches
-  tokens spent outside the main model loop (a sub-agent), and the driver adds
-  them to the turn usage.
+  declared risk stays for the UI and audit. `Tool::timeout()` lets a tool
+  declare a ceiling above the session's `tool_timeout` for one call; the
+  dispatcher uses the larger value, and the lesser when the tool declares
+  none. `ToolResult::with_usage` attaches tokens spent outside the main model
+  loop (a sub-agent), and the driver adds them to the turn usage.
   A tool declared `read_only` may only declare read access; the dispatcher
   rejects a write or execute request before the permission gate runs, so the
-  concurrent read batch cannot hide a mutation.
+  concurrent read batch cannot hide a mutation. A tool call whose arguments
+  are not valid JSON is a `ModelChunk::MalformedToolCall`: the driver records
+  it as a failed tool result the model can correct and never dispatches it.
 - Path confinement: before the gate, the dispatcher canonicalizes every
   declared path (for a write target that does not exist yet, through its
   deepest existing ancestor), so a symlink inside the workspace cannot point
@@ -113,7 +117,9 @@ Stable within a major version:
   tools but should not raise these silently.
 - Command launch: on Windows a bare program name that is not found falls back
   to a `.cmd`/`.bat` shim on PATH, so allowlisted package managers start
-  without a shell.
+  without a shell. A child process is created with `CREATE_NO_WINDOW`, so a
+  GUI host does not flash a console for each command; output is still
+  captured through the pipes.
 - Trash recovery: `TrashStore::list`/`find` (defaults report that a backend
   cannot list) and the `list_trash`/`restore_file` tools. `restore_file` takes
   the target path from the tool argument, so the permission gate approves the
@@ -149,7 +155,9 @@ Stable within a major version:
   `LocalBackgroundTasks` and the `shell` `background = "true"` argument. The
   host registry runs at most four at once, records each start with
   `BackgroundStarted`, kills the process tree on drop and at the two-hour cap,
-  and caps a command at two hours. Results enter at the model-loop safe point
+  and caps a command at two hours. `LocalBackgroundTasks::stop` kills one
+  running task by its `bg-N` handle and leaves it registered, so the exit is
+  still delivered to the model. Results enter at the model-loop safe point
   as a `[background <id> finished]` message and are audited with
   `BackgroundResult`; a result that misses the last call waits for the next
   turn.
@@ -250,9 +258,11 @@ with its UI, and does not need the reference CLI.
 | Path confinement | `a_symlink_cannot_read_outside_the_workspace`, `a_symlink_cannot_write_outside_the_workspace`, `parent_components_do_not_pop_the_filesystem_root` |
 | Extra roots | `an_extra_read_root_allows_reads_and_confirms_writes`, `an_extra_write_root_allows_reads_and_writes`, `the_most_specific_root_wins`, `a_filesystem_root_is_rejected`, `a_root_added_after_construction_survives_grant_revocation`, `adding_the_same_root_twice_keeps_the_first_scope` |
 | Tool output spill | `reading_a_spilled_output_is_allowed`, `the_rest_of_keel_stays_denied` |
+| Tool timeout | `tool_timeout_returns_a_timeout_error`, `a_tool_can_raise_its_timeout` |
+| Malformed tool call | `a_malformed_tool_call_becomes_a_tool_failure`, `a_malformed_call_becomes_a_malformed_finished_call` |
 | `Summarizer` | `crates/keel-runtime` summarizer unit tests |
 | `TrashStore` | `crates/keel-runtime` trash unit tests |
-| Background commands | `a_background_command_reports_its_output_and_exit`, `the_background_limit_is_enforced`, `a_background_start_is_audited`, `dropping_the_registry_kills_the_process_tree`, `a_background_result_enters_before_the_next_model_call` |
+| Background commands | `a_background_command_reports_its_output_and_exit`, `a_running_command_can_be_stopped`, `the_background_limit_is_enforced`, `a_background_start_is_audited`, `dropping_the_registry_kills_the_process_tree`, `a_background_result_enters_before_the_next_model_call` |
 | Sub-agents | `a_spawn_returns_the_child_report_and_usage`, `a_failed_child_is_a_tool_failure`, `a_tool_that_declares_concurrency_overlaps_its_siblings` |
 | Turn continuation and budget | `a_turn_continues_while_the_task_list_has_unfinished_items`, `the_turn_budget_forces_the_final_call_without_telling_the_model` |
 | Session snapshot | `a_snapshot_restores_the_derived_state`, `a_snapshot_from_a_newer_format_is_rejected` |

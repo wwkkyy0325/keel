@@ -2267,3 +2267,224 @@ async fn a_malformed_tool_payload_is_retried_once() {
         "the draft from the failed attempt must not survive the retry"
     );
 }
+
+/// A response that both asks a question and calls a tool is ambiguous; the
+/// driver retries once and the clean answer stands.
+struct MixedResponseModel {
+    calls: Mutex<u32>,
+}
+
+#[async_trait]
+impl ModelProvider for MixedResponseModel {
+    async fn stream(
+        &self,
+        _request: ModelRequest,
+        _cancel: &CancelToken,
+    ) -> Result<ModelStream, ModelError> {
+        let first = {
+            let mut calls = self
+                .calls
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *calls += 1;
+            *calls == 1
+        };
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        if first {
+            let mut args = ToolArgs::new();
+            args.insert("text", ArgValue::String("hi".to_owned()));
+            let _ = tx
+                .send(Ok(ModelChunk::ToolCall(keel_core::ToolCallRequest {
+                    id: ToolCallId::next(),
+                    name: "echo".to_owned(),
+                    args,
+                })))
+                .await;
+            let _ = tx
+                .send(Ok(ModelChunk::Interaction(
+                    keel_core::InteractionRequest::new(
+                        TurnId::new(0),
+                        keel_core::InteractionKind::Clarify,
+                        "which?",
+                    ),
+                )))
+                .await;
+        } else {
+            let _ = tx.send(Ok(ModelChunk::TextDelta("done".to_owned()))).await;
+        }
+        let _ = tx
+            .send(Ok(ModelChunk::Finished {
+                usage: TokenUsage::default(),
+            }))
+            .await;
+        Ok(ModelStream::new(rx))
+    }
+}
+
+#[tokio::test]
+async fn a_tool_call_and_an_interaction_in_one_response_are_retried() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&["echo"], 4, PermissionLevel::WorkspaceAuto);
+    let model = MixedResponseModel {
+        calls: Mutex::new(0),
+    };
+    let driver = common::build_driver(model, config, events.clone(), dir.path(), two_call_limits());
+
+    let outcome = driver.run("hi", CancelToken::new()).await;
+
+    assert!(outcome.is_done(), "{outcome:?}");
+    assert_eq!(
+        outcome.answer.body, "done",
+        "the ambiguous response must not reach the interaction port"
+    );
+}
+
+/// A malformed tool call is retried with a note naming the failure, so the
+/// model can correct the call instead of repeating the same JSON.
+struct InvalidToolArgumentsModel {
+    calls: Mutex<u32>,
+    corrected: Arc<Mutex<bool>>,
+}
+
+#[async_trait]
+impl ModelProvider for InvalidToolArgumentsModel {
+    async fn stream(
+        &self,
+        request: ModelRequest,
+        _cancel: &CancelToken,
+    ) -> Result<ModelStream, ModelError> {
+        let first = {
+            let mut calls = self
+                .calls
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *calls += 1;
+            *calls == 1
+        };
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        if first {
+            let _ = tx
+                .send(Err(ModelError::new(
+                    ErrorCode::InvalidResponse,
+                    "invalid tool arguments: expected value at line 1 column 13; received: {\"path\": }",
+                    true,
+                )))
+                .await;
+        } else {
+            *self
+                .corrected
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+                request.messages.iter().any(|message| {
+                    message.role == MessageRole::User
+                        && message.content.contains("tool call was rejected")
+                });
+            let _ = tx.send(Ok(ModelChunk::TextDelta("done".to_owned()))).await;
+            let _ = tx
+                .send(Ok(ModelChunk::Finished {
+                    usage: TokenUsage::default(),
+                }))
+                .await;
+        }
+        Ok(ModelStream::new(rx))
+    }
+}
+
+#[tokio::test]
+async fn a_malformed_tool_call_is_retried_with_a_correction() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&["echo"], 4, PermissionLevel::WorkspaceAuto);
+    let corrected = Arc::new(Mutex::new(false));
+    let model = InvalidToolArgumentsModel {
+        calls: Mutex::new(0),
+        corrected: corrected.clone(),
+    };
+    let driver = common::build_driver(model, config, events.clone(), dir.path(), two_call_limits());
+
+    let outcome = driver.run("hi", CancelToken::new()).await;
+
+    assert!(outcome.is_done(), "{outcome:?}");
+    assert_eq!(outcome.answer.body, "done");
+    assert!(
+        *corrected
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        "the retry must tell the model what was wrong"
+    );
+}
+
+/// A tool call with invalid JSON becomes a failed tool row the model can
+/// correct; it must not fail the turn or reach the tool.
+struct MalformedCallModel {
+    calls: Mutex<u32>,
+}
+
+#[async_trait]
+impl ModelProvider for MalformedCallModel {
+    async fn stream(
+        &self,
+        _request: ModelRequest,
+        _cancel: &CancelToken,
+    ) -> Result<ModelStream, ModelError> {
+        let first = {
+            let mut calls = self
+                .calls
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *calls += 1;
+            *calls == 1
+        };
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        if first {
+            let _ = tx
+                .send(Ok(ModelChunk::MalformedToolCall {
+                    name: "echo".to_owned(),
+                    message: "invalid tool arguments: expected value at line 1 column 15; received: {\"new\": raw".to_owned(),
+                }))
+                .await;
+        } else {
+            let _ = tx.send(Ok(ModelChunk::TextDelta("done".to_owned()))).await;
+        }
+        let _ = tx
+            .send(Ok(ModelChunk::Finished {
+                usage: TokenUsage::default(),
+            }))
+            .await;
+        Ok(ModelStream::new(rx))
+    }
+}
+
+#[tokio::test]
+async fn a_malformed_tool_call_becomes_a_tool_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = Arc::new(EventLog::new());
+    let config = common::runtime_config(&["echo"], 4, PermissionLevel::WorkspaceAuto);
+    let model = MalformedCallModel {
+        calls: Mutex::new(0),
+    };
+    let driver = common::build_driver(model, config, events.clone(), dir.path(), two_call_limits());
+
+    let outcome = driver.run("hi", CancelToken::new()).await;
+
+    assert!(outcome.is_done(), "{outcome:?}");
+    assert_eq!(outcome.answer.body, "done");
+    let failed = events
+        .for_turn(outcome.turn_id)
+        .into_iter()
+        .find_map(|record| match record.event {
+            Event::ToolFinished {
+                tool,
+                ok,
+                output_preview,
+                ..
+            } if tool == "echo" => Some((ok, output_preview)),
+            _ => None,
+        })
+        .expect("the malformed call is reported");
+    let (ok, preview) = failed;
+    let preview = preview.unwrap_or_default();
+    assert!(!ok);
+    assert!(preview.contains("invalid tool arguments"), "{preview}");
+}

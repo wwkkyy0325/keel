@@ -30,6 +30,10 @@ const READER_GRACE: Duration = Duration::from_secs(1);
 const HARD_TIMEOUT: Duration = Duration::from_secs(2 * 60 * 60);
 /// How often the inactivity window is checked.
 const IDLE_TICK: Duration = Duration::from_millis(500);
+/// A GUI host has no console; without this a console child opens its own
+/// black window for the duration of the command.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// Developer programs shared by the shell tool and command verifiers. Shells
 /// are excluded so arguments cannot be re-interpreted.
@@ -187,6 +191,8 @@ fn build(program: &OsStr, spec: &CommandSpec<'_>) -> Command {
         // A timed-out wrapper must not leave its descendants running.
         command.as_std_mut().process_group(0);
     }
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
     for (name, _) in std::env::vars() {
         if is_sensitive_env(&name) {
             command.env_remove(&name);
@@ -243,6 +249,11 @@ pub fn spawn_background(
         {
             use std::os::unix::process::CommandExt;
             command.process_group(0);
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(CREATE_NO_WINDOW);
         }
         for (name, _) in std::env::vars() {
             if is_sensitive_env(&name) {
@@ -400,8 +411,10 @@ impl Drop for TreeGuard {
 pub(crate) fn kill_tree(pid: u32) {
     #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
         let _ = std::process::Command::new("taskkill")
             .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .creation_flags(CREATE_NO_WINDOW)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();

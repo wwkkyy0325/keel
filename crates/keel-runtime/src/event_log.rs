@@ -54,6 +54,17 @@ impl EventLog {
         self.inner().entries.clone()
     }
 
+    /// Records with a sequence greater than `seq`. A live poller reads only
+    /// the new tail, instead of cloning the whole turn's log on every tick.
+    pub fn since(&self, seq: u64) -> Vec<EventRecord> {
+        self.inner()
+            .entries
+            .iter()
+            .filter(|record| record.seq > seq)
+            .cloned()
+            .collect()
+    }
+
     pub fn for_turn(&self, turn_id: TurnId) -> Vec<EventRecord> {
         self.inner()
             .entries
@@ -136,5 +147,28 @@ fn redact_event(event: Event) -> Event {
             duration_ms,
         },
         other => other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn since_reads_only_the_new_tail() {
+        let log = EventLog::new();
+        for n in 0..3 {
+            log.append(Event::TurnStarted {
+                turn_id: TurnId::new(1),
+                input: n.to_string(),
+            });
+        }
+
+        let records = log.since(1);
+
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].seq, 2);
+        assert_eq!(records[1].seq, 3);
+        assert!(log.since(3).is_empty());
     }
 }

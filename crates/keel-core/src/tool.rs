@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::Serialize;
@@ -292,6 +293,14 @@ pub trait Tool: Send + Sync {
     /// declared for the UI and the audit.
     fn concurrent(&self) -> bool {
         false
+    }
+
+    /// A tool that legitimately runs longer than the session's tool timeout
+    /// may raise its own ceiling. The dispatcher enforces the larger of the
+    /// two, so a call cannot exceed the configured limit unless the tool
+    /// declares that it needs to.
+    fn timeout(&self) -> Option<Duration> {
+        None
     }
 
     async fn call(&self, args: ToolArgs, ctx: &ToolCtx) -> ToolResult;

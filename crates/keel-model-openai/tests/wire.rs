@@ -238,6 +238,7 @@ fn streamed_tool_arguments_are_accumulated() {
             );
         }
         FinishedCall::Interaction(_) => panic!("expected a tool call"),
+        FinishedCall::Malformed { .. } => panic!("expected a tool call"),
     }
 }
 
@@ -261,5 +262,6 @@ fn control_tool_call_becomes_an_interaction() {
             assert_eq!(interaction.prompt, "pick");
         }
         FinishedCall::Tool(_) => panic!("expected an interaction"),
+        FinishedCall::Malformed { .. } => panic!("expected an interaction"),
     }
 }

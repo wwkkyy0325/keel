@@ -228,7 +228,14 @@ pub fn parse_tool_args(value: &Value) -> Result<ToolArgs, ModelError> {
         .ok_or_else(|| invalid("tool arguments must be a JSON object"))?;
     let mut args = ToolArgs::new();
     for (key, value) in object {
-        args.insert(key.clone(), parse_arg(value)?);
+        let parsed = parse_arg(value).map_err(|error| {
+            ModelError::new(
+                error.code,
+                format!("`{key}`: {}", error.message),
+                error.retryable,
+            )
+        })?;
+        args.insert(key.clone(), parsed);
     }
     Ok(args)
 }
@@ -239,7 +246,7 @@ fn parse_arg(value: &Value) -> Result<ArgValue, ModelError> {
         Value::Number(value) => value
             .as_i64()
             .map(ArgValue::Integer)
-            .ok_or_else(|| invalid("tool argument numbers must be integers")),
+            .ok_or_else(|| retryable_invalid("tool argument numbers must be integers")),
         Value::Bool(value) => Ok(ArgValue::Boolean(*value)),
         Value::Array(values) => {
             let mut strings = Vec::with_capacity(values.len());
@@ -247,13 +254,15 @@ fn parse_arg(value: &Value) -> Result<ArgValue, ModelError> {
                 strings.push(
                     value
                         .as_str()
-                        .ok_or_else(|| invalid("string-list arguments must contain strings"))?
+                        .ok_or_else(|| {
+                            retryable_invalid("string-list arguments must contain strings")
+                        })?
                         .to_owned(),
                 );
             }
             Ok(ArgValue::StringList(strings))
         }
-        Value::Null | Value::Object(_) => Err(invalid("unsupported tool argument type")),
+        Value::Null | Value::Object(_) => Err(retryable_invalid("unsupported tool argument type")),
     }
 }
 
@@ -495,8 +504,24 @@ impl StreamDecoder {
             let input = if partial.input.trim().is_empty() {
                 Value::Object(Map::new())
             } else {
-                serde_json::from_str(&partial.input)
-                    .map_err(|error| retryable_invalid(format!("invalid tool input: {error}")))?
+                match serde_json::from_str(&partial.input) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        let preview: String = partial.input.chars().take(160).collect();
+                        let more = if partial.input.chars().count() > 160 {
+                            "…"
+                        } else {
+                            ""
+                        };
+                        chunks.push(ModelChunk::MalformedToolCall {
+                            name: partial.name,
+                            message: format!(
+                                "invalid tool input: {error}; received: {preview}{more}"
+                            ),
+                        });
+                        continue;
+                    }
+                }
             };
             if partial.name == CONTROL_TOOL_NAME {
                 chunks.push(ModelChunk::Interaction(parse_interaction_json(&input)?));
@@ -828,6 +853,26 @@ mod tests {
             .apply(&json!({"type": "error", "error": {"message": "overloaded"}}))
             .unwrap_err();
         assert!(error.message.contains("overloaded"));
+        assert!(error.retryable);
+    }
+
+    #[test]
+    fn a_malformed_string_list_is_retryable() {
+        let error = parse_tool_args(&json!({"paths": ["a", 1]})).unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidResponse);
+        assert!(error.retryable);
+        assert!(error.message.contains("paths"), "{}", error.message);
+    }
+
+    #[test]
+    fn a_non_integer_argument_is_retryable() {
+        let error = parse_tool_args(&json!({"count": 1.5})).unwrap_err();
+        assert!(error.retryable);
+    }
+
+    #[test]
+    fn an_object_argument_is_retryable() {
+        let error = parse_tool_args(&json!({"options": {"a": 1}})).unwrap_err();
         assert!(error.retryable);
     }
 }

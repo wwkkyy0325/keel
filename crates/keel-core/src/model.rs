@@ -56,6 +56,13 @@ pub enum ModelChunk {
     /// require it when the block is echoed back on a tool follow-up.
     ThinkingSignature(String),
     ToolCall(ToolCallRequest),
+    /// The model produced a tool call whose arguments were not valid JSON.
+    /// The driver turns it into a tool failure the model can correct; it must
+    /// never reach the dispatcher.
+    MalformedToolCall {
+        name: String,
+        message: String,
+    },
     /// The model asks for user input. This is a control-plane chunk, never a
     /// domain tool call.
     Interaction(InteractionRequest),

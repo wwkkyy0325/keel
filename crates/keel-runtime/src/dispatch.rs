@@ -86,6 +86,13 @@ impl ToolDispatcher {
         self.permission.base_level()
     }
 
+    /// The timeout for one call: the configured limit, unless the tool
+    /// declares that it legitimately needs longer.
+    fn effective_timeout(&self, tool: &dyn Tool) -> Duration {
+        tool.timeout()
+            .map_or(self.timeout, |declared| declared.max(self.timeout))
+    }
+
     /// Adds a session scope for the rest of the session (host `/add-dir`).
     pub fn add_root(
         &self,
@@ -195,7 +202,7 @@ impl ToolDispatcher {
         for prepared in reads {
             let ctx = self.tool_ctx(turn_id, prepared.call_id, cancel.clone());
             let events = self.events.clone();
-            let timeout = self.timeout;
+            let timeout = self.effective_timeout(prepared.tool.as_ref());
             let cancel = cancel.clone();
             let permits = permits.clone();
             join.spawn(async move {
@@ -277,12 +284,13 @@ impl ToolDispatcher {
                     ToolError::cancelled(),
                 )
             } else {
+                let timeout = self.effective_timeout(prepared.tool.as_ref());
                 run_tool(
                     prepared.tool,
                     prepared.name.clone(),
                     prepared.args,
                     ctx,
-                    self.timeout,
+                    timeout,
                     cancel,
                 )
                 .await

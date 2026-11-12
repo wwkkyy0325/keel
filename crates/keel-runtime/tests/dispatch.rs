@@ -402,6 +402,62 @@ async fn tool_timeout_returns_a_timeout_error() {
     );
 }
 
+/// A tool that declares a larger ceiling than the session's tool timeout.
+struct PatientTool {
+    delay: Duration,
+}
+
+#[async_trait]
+impl Tool for PatientTool {
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "patient".to_owned(),
+            description: "patient".to_owned(),
+            risk: RiskLevel::ReadOnly,
+            params: Vec::<ParamSpec>::new(),
+        }
+    }
+
+    fn permission_requests(&self, _args: &ToolArgs) -> Result<Vec<PermissionRequest>, ToolError> {
+        Ok(Vec::new())
+    }
+
+    fn timeout(&self) -> Option<Duration> {
+        Some(Duration::from_millis(500))
+    }
+
+    async fn call(&self, _args: ToolArgs, ctx: &ToolCtx) -> ToolResult {
+        tokio::time::sleep(self.delay).await;
+        ToolResult::success(ctx.call_id, "patient", "ok")
+    }
+}
+
+#[tokio::test]
+async fn a_tool_can_raise_its_timeout() {
+    let dir = tempfile::tempdir().unwrap();
+    let registry = registry(vec![Arc::new(PatientTool {
+        delay: Duration::from_millis(100),
+    })]);
+    let (dispatcher, _events) = dispatcher(
+        registry,
+        dir.path(),
+        Duration::from_millis(20),
+        PermissionLevel::FullAuto,
+    );
+
+    let results = dispatcher
+        .dispatch(
+            TurnId::new(1),
+            vec![call(1, "patient", ToolArgs::new())],
+            &visible(&["patient"]),
+            &CancelToken::new(),
+        )
+        .await;
+
+    assert_eq!(results.len(), 1);
+    assert!(results[0].is_success(), "{:?}", results[0].error());
+}
+
 #[tokio::test]
 async fn unknown_tool_returns_not_found() {
     let dir = tempfile::tempdir().unwrap();

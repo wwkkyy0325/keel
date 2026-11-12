@@ -75,7 +75,14 @@ pub fn parse_tool_args(value: &Value) -> Result<ToolArgs, ModelError> {
         .ok_or_else(|| invalid("tool arguments must be a JSON object"))?;
     let mut args = ToolArgs::new();
     for (key, value) in object {
-        args.insert(key.clone(), parse_arg(value)?);
+        let parsed = parse_arg(value).map_err(|error| {
+            ModelError::new(
+                error.code,
+                format!("`{key}`: {}", error.message),
+                error.retryable,
+            )
+        })?;
+        args.insert(key.clone(), parsed);
     }
     Ok(args)
 }
@@ -145,6 +152,12 @@ pub fn parse_interaction_json(value: &Value) -> Result<InteractionRequest, Model
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FinishedCall {
     Tool(ToolCallRequest),
+    /// The call's arguments were not valid JSON. The driver turns this into a
+    /// tool failure instead of retrying or failing the turn.
+    Malformed {
+        name: String,
+        message: String,
+    },
     Interaction(InteractionRequest),
 }
 
@@ -183,7 +196,17 @@ impl ToolCallAccumulator {
                 .and_then(|function| function.get("arguments"))
                 .and_then(Value::as_str)
             {
-                partial.arguments.push_str(arguments);
+                // The OpenAI wire sends each delta as a new fragment. Some
+                // OpenAI-compatible endpoints instead resend the full
+                // arguments-so-far; appending those builds `{...}{...}` and
+                // fails the JSON parse. A delta that extends the buffer
+                // replaces it; an exact repeat leaves one copy.
+                if partial.arguments.is_empty() || arguments.starts_with(partial.arguments.as_str())
+                {
+                    partial.arguments = arguments.to_owned();
+                } else {
+                    partial.arguments.push_str(arguments);
+                }
             }
         }
         Ok(())
@@ -198,9 +221,27 @@ impl ToolCallAccumulator {
             let arguments = if partial.arguments.trim().is_empty() {
                 Value::Object(Map::new())
             } else {
-                serde_json::from_str(&partial.arguments).map_err(|error| {
-                    retryable_invalid(format!("invalid tool arguments: {error}"))
-                })?
+                match serde_json::from_str(&partial.arguments) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        // Keep the error short but diagnosable: without a
+                        // sample of what the model sent, a JSON flake cannot
+                        // be told apart from a host-side accumulation bug.
+                        let preview: String = partial.arguments.chars().take(160).collect();
+                        let more = if partial.arguments.chars().count() > 160 {
+                            "…"
+                        } else {
+                            ""
+                        };
+                        finished.push(FinishedCall::Malformed {
+                            name: partial.name,
+                            message: format!(
+                                "invalid tool arguments: {error}; received: {preview}{more}"
+                            ),
+                        });
+                        continue;
+                    }
+                }
             };
             if partial.name == CONTROL_TOOL_NAME {
                 finished.push(FinishedCall::Interaction(parse_interaction_json(
@@ -399,7 +440,7 @@ fn parse_arg(value: &Value) -> Result<ArgValue, ModelError> {
         Value::Number(value) => value
             .as_i64()
             .map(ArgValue::Integer)
-            .ok_or_else(|| invalid("tool argument numbers must be integers")),
+            .ok_or_else(|| retryable_invalid("tool argument numbers must be integers")),
         Value::Bool(value) => Ok(ArgValue::Boolean(*value)),
         Value::Array(values) => {
             let mut strings = Vec::with_capacity(values.len());
@@ -407,13 +448,15 @@ fn parse_arg(value: &Value) -> Result<ArgValue, ModelError> {
                 strings.push(
                     value
                         .as_str()
-                        .ok_or_else(|| invalid("string-list arguments must contain strings"))?
+                        .ok_or_else(|| {
+                            retryable_invalid("string-list arguments must contain strings")
+                        })?
                         .to_owned(),
                 );
             }
             Ok(ArgValue::StringList(strings))
         }
-        Value::Null | Value::Object(_) => Err(invalid("unsupported tool argument type")),
+        Value::Null | Value::Object(_) => Err(retryable_invalid("unsupported tool argument type")),
     }
 }
 
@@ -554,5 +597,83 @@ mod tests {
             body["messages"][1]["content"][1]["image_url"]["url"],
             "data:image/png;base64,AQID"
         );
+    }
+
+    #[test]
+    fn a_malformed_string_list_is_retryable() {
+        let error = parse_tool_args(&json!({"paths": ["a", 1]})).unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidResponse);
+        assert!(error.retryable);
+        assert!(error.message.contains("paths"), "{}", error.message);
+    }
+
+    #[test]
+    fn a_non_integer_argument_is_retryable() {
+        let error = parse_tool_args(&json!({"count": 1.5})).unwrap_err();
+        assert!(error.retryable);
+    }
+
+    #[test]
+    fn an_object_argument_is_retryable() {
+        let error = parse_tool_args(&json!({"options": {"a": 1}})).unwrap_err();
+        assert!(error.retryable);
+    }
+
+    fn accumulated(fragments: &[&str]) -> Result<Vec<FinishedCall>, ModelError> {
+        let mut accumulator = ToolCallAccumulator::default();
+        for (position, fragment) in fragments.iter().enumerate() {
+            let delta = if position == 0 {
+                json!([{"index": 0, "function": {"name": "shell", "arguments": fragment}}])
+            } else {
+                json!([{"index": 0, "function": {"arguments": fragment}}])
+            };
+            accumulator.apply(&delta)?;
+        }
+        accumulator.finish()
+    }
+
+    fn program(calls: &[FinishedCall]) -> String {
+        let FinishedCall::Tool(call) = &calls[0] else {
+            panic!("expected a tool call");
+        };
+        match call.args.get("program") {
+            Some(ArgValue::String(value)) => value.clone(),
+            other => panic!("expected a string program, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn streamed_fragments_are_appended() {
+        let calls = accumulated(&["{\"program\":", "\"npm\",", "\"args\":[\"run\"]}"]).unwrap();
+        assert_eq!(program(&calls), "npm");
+    }
+
+    #[test]
+    fn a_cumulative_resend_replaces_the_buffer() {
+        // Some OpenAI-compatible endpoints resend the full arguments so far
+        // instead of only the new fragment.
+        let calls = accumulated(&[
+            "{\"program\":",
+            "{\"program\":\"npm\",",
+            "{\"program\":\"npm\",\"args\":[\"run\"]}",
+        ])
+        .unwrap();
+        assert_eq!(program(&calls), "npm");
+    }
+
+    #[test]
+    fn an_exact_repeat_is_not_doubled() {
+        let calls = accumulated(&["{\"program\":\"npm\"}", "{\"program\":\"npm\"}"]).unwrap();
+        assert_eq!(program(&calls), "npm");
+    }
+
+    #[test]
+    fn a_malformed_call_becomes_a_malformed_finished_call() {
+        let calls = accumulated(&["{\"path\": }"]).unwrap();
+        let FinishedCall::Malformed { name, message } = &calls[0] else {
+            panic!("expected a malformed call, got {calls:?}");
+        };
+        assert_eq!(name, "shell");
+        assert!(message.contains("received: {\"path\": }"), "{message}");
     }
 }
