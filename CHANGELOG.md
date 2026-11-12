@@ -36,6 +36,10 @@ project pins a version and updates deliberately; see `docs/kernel-contract.md`.
   `edit_file` call with an unquoted `new` value and failed after the retry.
   The new test `a_malformed_tool_call_becomes_a_tool_failure` keeps the turn
   alive and reports the failure as a tool result.
+- A `D:\dev` workspace run rejected `tau2-bench/.venv/Scripts/python.exe` as
+  not allowlisted: the verifier root carried a `\\?\` prefix and the joined
+  program path did not. The verifier now canonicalizes both before the
+  containment check.
 
 ## 0.2.16 — 2026-11-11
 
@@ -674,3 +678,4 @@ First complete kernel and reference host.
 - Five companion personas, 20 turns each: 100/100.
 - Kernel contract tests, including the full event order for a tool turn, and
   301 Rust tests (254 in the kernel crates).
+

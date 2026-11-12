@@ -122,12 +122,21 @@ impl AcceptanceVerifier {
             || path
                 .components()
                 .any(|component| component == Component::ParentDir)
-            || !path.starts_with(&self.root)
-            || !path.is_file()
         {
             return false;
         }
-        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        // Compare canonical paths: the workspace may arrive with a `\\?\`
+        // verbatim prefix while a joined venv path does not, or the reverse.
+        let Ok(root) = std::fs::canonicalize(&self.root) else {
+            return false;
+        };
+        let Ok(canonical) = std::fs::canonicalize(path) else {
+            return false;
+        };
+        if !canonical.starts_with(&root) || !canonical.is_file() {
+            return false;
+        }
+        let Some(name) = canonical.file_name().and_then(|name| name.to_str()) else {
             return false;
         };
         command::is_allowed(name, &self.allowlist)

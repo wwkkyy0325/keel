@@ -220,7 +220,10 @@ async fn a_workspace_program_path_runs_when_its_name_is_allowlisted() {
     let dir = tempfile::tempdir().unwrap();
     let program = dir.path().join(interpreter_name());
     std::fs::copy(std::env::current_exe().unwrap(), &program).unwrap();
-    let verifier = AcceptanceVerifier::new(dir.path());
+    // The verifier root is canonical (`\\?\` on Windows) while the program
+    // path is not; the containment check has to compare the resolved form.
+    let root = std::fs::canonicalize(dir.path()).unwrap();
+    let verifier = AcceptanceVerifier::new(root);
     let items = vec![item(
         "venv",
         true,
