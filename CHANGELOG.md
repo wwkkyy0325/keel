@@ -41,6 +41,15 @@ project pins a version and updates deliberately; see `docs/kernel-contract.md`.
   program path did not. The verifier now canonicalizes both before the
   containment check.
 
+### License
+
+- The project moved from Apache-2.0 to MIT. Use, modification, redistribution,
+  sublicensing and sale are unrestricted; the only obligation is keeping the
+  copyright line and the permission notice with the code. The workspace
+  manifest declares `license = "MIT"`, `docs/license-audit.md` and
+  `docs/spec/05-provenance.md` record the change. Dependencies keep their own
+  licenses and `cargo deny` still enforces the allowlist.
+
 ## 0.2.16 — 2026-11-11
 
 ### Kernel

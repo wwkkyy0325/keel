@@ -18,7 +18,8 @@ the evidence trail for the clean-room claim.
 
 | Date | Source | License | Used for | Notes |
 |---|---|---|---|---|
-| 2026-10-31 | Apache License 2.0 text | Apache-2.0 | `LICENSE` | Standard license text |
+| 2026-10-31 | Apache License 2.0 text | Apache-2.0 | `LICENSE` | Standard license text; replaced 2026-11-13 |
+| 2026-11-13 | MIT license text | MIT | `LICENSE` | Standard license text; the project moved to MIT for unrestricted use with a retained copyright notice |
 | 2026-10-31 | HumanEval+ / MBPP+ (EvalPlus) | Apache-2.0 | Planned code-correctness smoke cases | Downloaded locally, not vendored |
 | 2026-10-31 | BigCodeBench | Apache-2.0 | Planned library-usage cases | Downloaded locally, not vendored |
 | 2026-10-31 | SWE-bench harness | MIT; each repository keeps its license | Planned later repo-level cases | Run in isolated workspaces; no code copied |

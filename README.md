@@ -559,4 +559,5 @@ security issues privately as described in `SECURITY.md`.
 
 ## License
 
-Apache-2.0. See `LICENSE`.
+MIT. Use, modify, redistribute and sell it freely; keep the copyright line and
+the permission notice with the code. See `LICENSE`.

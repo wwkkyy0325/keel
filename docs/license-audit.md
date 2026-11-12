@@ -4,12 +4,14 @@ Date: 2026-11-01. This is an engineering audit, not legal advice.
 
 ## Project license
 
-Keel is Apache-2.0; the full text is in `LICENSE`. The workspace crates declare
-`license = "Apache-2.0"` in `Cargo.toml`.
+Keel is MIT; the full text is in `LICENSE`. The workspace crates declare
+`license = "MIT"` in `Cargo.toml`.
 
-Open item: the Apache text has no copyright owner line and there is no
-`NOTICE` file. Add one before a public release if the project needs an
-attribution notice.
+MIT puts one obligation on a user: keep the copyright line and the permission
+notice with the code. Everything else — use, modification, redistribution,
+sublicensing, sale — is unrestricted, and there is no `NOTICE` file to
+maintain. A derived project that copies code carries the notice; one that only
+depends on the crates inherits the license through `Cargo.toml`.
 
 ## Rust dependencies
 

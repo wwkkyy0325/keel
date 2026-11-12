@@ -124,7 +124,7 @@ temporal graph, embedding service or MCP memory server lives under `ports/`,
 | `CLAUDE.md` | rules for the implementation session |
 | `CONTRIBUTING.md` | workflow and verification |
 | `PROVENANCE.md` | clean-room source statement |
-| `LICENSE` | Apache-2.0 |
+| `LICENSE` | MIT |
 | `.gitignore` | target, secrets, data, logs |
 | `.editorconfig` | line endings, indentation |
 | `rustfmt.toml`, `clippy.toml`, `deny.toml` | format, lint, dependency/license gates |
