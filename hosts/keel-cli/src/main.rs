@@ -110,7 +110,7 @@ impl ModelProvider for DemoModel {
         cancel: &CancelToken,
     ) -> Result<ModelStream, ModelError> {
         let call = self.calls.fetch_add(1, Ordering::Relaxed);
-        let step = if call % 2 == 0 {
+        let step = if call.is_multiple_of(2) {
             demo_tool_step()
         } else {
             MockStep::Text(DEMO_ANSWER.to_owned())

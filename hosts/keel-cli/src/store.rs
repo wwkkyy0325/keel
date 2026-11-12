@@ -370,7 +370,9 @@ impl Store {
                     turn.answer_json,
                     turn.error,
                     turn.usage_json,
-                    turn.duration_ms,
+                    // SQLite has no unsigned integer; a duration in
+                    // milliseconds cannot approach i64::MAX.
+                    turn.duration_ms as i64,
                     now,
                 ],
             )

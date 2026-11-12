@@ -1723,11 +1723,11 @@ fn marker_position(text: &str, marker: &str) -> Option<usize> {
         let before = text[..start]
             .chars()
             .next_back()
-            .map_or(true, |character| !character.is_alphanumeric());
+            .is_none_or(|character| !character.is_alphanumeric());
         let after = text[end..]
             .chars()
             .next()
-            .map_or(true, |character| !character.is_alphanumeric());
+            .is_none_or(|character| !character.is_alphanumeric());
         if before && after {
             return Some(start);
         }

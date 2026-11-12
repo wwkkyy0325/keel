@@ -20,7 +20,7 @@ cd keel
 cargo run -p keel-cli -- --profile variants/coding/profile.toml --input "hello"
 ```
 
-Rust 1.80 or newer. The mock profile needs no API key and makes no network
+Rust 1.89 or newer. The mock profile needs no API key and makes no network
 calls. For a real model, copy `.env.example` to `.env`, set one key and use the
 matching profile; credentials never belong in a profile or a chat.
 

@@ -13,7 +13,7 @@ members = [
 [workspace.package]
 version = "0.2.16"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.89"
 license = "MIT"
 repository = "https://github.com/wwkkyy0325/keel"
 homepage = "https://github.com/wwkkyy0325/keel"
@@ -36,7 +36,7 @@ reqwest = { version = "0.12", default-features = false, features = [
   "stream",
   "rustls-tls-native-roots",
 ] }
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

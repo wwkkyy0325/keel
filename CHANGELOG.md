@@ -41,6 +41,19 @@ project pins a version and updates deliberately; see `docs/kernel-contract.md`.
   program path did not. The verifier now canonicalizes both before the
   containment check.
 
+### Dependencies
+
+- `rusqlite` moves from 0.32 to 0.41, which bundles `libsqlite3-sys` 0.39.1 and
+  SQLite 3.54.1. This clears RUSTSEC-2026-0459 (CVE-2026-119375): a crafted
+  database file opened together with a sibling `-wal` whose page size differs
+  could make queries return uninitialized page-cache bytes. `cargo deny check`
+  reports advisories, bans, licenses and sources all ok.
+- The minimum supported Rust version moves from 1.80 to 1.89, the floor
+  `rusqlite` 0.41 declares. The workspace manifest, `clippy.toml` and the
+  README state the same number.
+- The store writes `duration_ms` as `i64`: rusqlite 0.41 no longer accepts a
+  `u64` parameter, and SQLite has no unsigned integer.
+
 ### License
 
 - The project moved from Apache-2.0 to MIT. Use, modification, redistribution,
